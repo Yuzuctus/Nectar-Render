@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "md-to-pdf-gui"
+version = "0.2.0"
+description = "Desktop app to convert Markdown to styled PDF/HTML with live preview, syntax highlighting, and preset themes"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{ name = "Yuzuctus" }]
+keywords = ["markdown", "pdf", "converter", "weasyprint", "tkinter"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Other Environment",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Text Processing :: Markup :: Markdown",
+]
+dependencies = [
+  "markdown>=3.6",
+  "pygments>=2.18",
+  "weasyprint>=68.1",
+  "beautifulsoup4>=4.12",
+  "bleach>=6.2",
+  "pypdf>=5.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+md-to-pdf = "md_to_pdf.main:main"
+
+[project.urls]
+Repository = "https://github.com/Yuzuctus/MD-TO-PDF"
+Issues = "https://github.com/Yuzuctus/MD-TO-PDF/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "requires_weasyprint: marks tests requiring WeasyPrint runtime",
+]

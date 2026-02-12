@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+
+# Editors
+.vscode/
+.idea/
+
+# Local application state
+.md_to_pdf/
+
+# Generated outputs
+output/
+examples/output/
+
+# Logs
+*.log
+
+# Temporary preview files
+_style_preview*.html
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+*.lnk

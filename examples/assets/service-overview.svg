@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="420" viewBox="0 0 960 420" role="img" aria-labelledby="title desc">
+  <title id="title">Vue d'ensemble du flux MD vers PDF</title>
+  <desc id="desc">Schema simple representant la lecture du Markdown, la generation HTML et la sortie PDF.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#e2e8f0" />
+    </linearGradient>
+  </defs>
+  <rect width="960" height="420" fill="url(#bg)" rx="24" />
+  <rect x="70" y="120" width="220" height="140" rx="18" fill="#ffffff" stroke="#0f172a" stroke-width="3" />
+  <rect x="370" y="120" width="220" height="140" rx="18" fill="#ffffff" stroke="#0f172a" stroke-width="3" />
+  <rect x="670" y="120" width="220" height="140" rx="18" fill="#ffffff" stroke="#0f172a" stroke-width="3" />
+  <text x="180" y="175" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#0f172a">Markdown</text>
+  <text x="180" y="215" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#334155">Titres, tableaux, notes</text>
+  <text x="480" y="175" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#0f172a">HTML</text>
+  <text x="480" y="215" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#334155">CSS, pagination, images</text>
+  <text x="780" y="175" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="30" fill="#0f172a">PDF</text>
+  <text x="780" y="215" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="18" fill="#334155">A4, compression, partage</text>
+  <path d="M290 190 H355" stroke="#2563eb" stroke-width="10" stroke-linecap="round" />
+  <path d="M590 190 H655" stroke="#2563eb" stroke-width="10" stroke-linecap="round" />
+  <path d="M345 170 L365 190 L345 210" fill="none" stroke="#2563eb" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M645 170 L665 190 L645 210" fill="none" stroke="#2563eb" stroke-width="10" stroke-linecap="round" stroke-linejoin="round" />
+  <text x="480" y="330" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="20" fill="#1e293b">Exemple visuel neutre pour la documentation publique</text>
+</svg>
