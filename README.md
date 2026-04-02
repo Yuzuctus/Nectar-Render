@@ -3,7 +3,7 @@
 > Desktop application to convert Markdown files to styled PDF and HTML with live preview, syntax highlighting, and preset themes.
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)
 
 <!-- ![Screenshot](docs/screenshot.png) -->
 
@@ -118,4 +118,10 @@ pytest -q
 
 ## License
 
-[MIT](LICENSE)
+[PolyForm Noncommercial 1.0.0](LICENSE)
+
+You may use, copy, modify, and redistribute this project for noncommercial purposes.
+Commercial use is not permitted without separate permission from the author.
+
+Versions that were already distributed under MIT before this change remain available
+under MIT for those existing copies.
