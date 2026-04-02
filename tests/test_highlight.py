@@ -1,6 +1,6 @@
 """Tests for the code highlighting module."""
 
-from md_to_pdf.converter.highlight import (
+from nectar_render.converter.highlight import (
     build_pygments_css,
     list_available_styles,
     resolve_style_name,

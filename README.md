@@ -1,4 +1,4 @@
-# MD-TO-PDF GUI
+# Nectar Render
 
 > Desktop application to convert Markdown files to styled PDF and HTML with live preview, syntax highlighting, and preset themes.
 
@@ -42,13 +42,13 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -e ".[dev]"
-md-to-pdf
+nectar-render
 ```
 
 Or run directly:
 
 ```bash
-python -m md_to_pdf.main
+python -m nectar_render.main
 ```
 
 ## Built-in Presets

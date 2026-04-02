@@ -1,13 +1,13 @@
 import os
 from pathlib import Path
 
-from md_to_pdf.config import CompressionOptions, ExportOptions, StyleOptions
-from md_to_pdf.converter.footnotes import extract_footnote_definitions, inject_paged_footnotes
-from md_to_pdf.converter.html_builder import build_document_html
-from md_to_pdf.converter.markdown_parser import normalize_obsidian_image_embeds, normalize_pagebreak_markers, parse_markdown
-from md_to_pdf.services.pdf_compression_service import PdfCompressionService
-import md_to_pdf.utils.paths as paths_module
-import md_to_pdf.utils.weasyprint_runtime as runtime_module
+from nectar_render.config import CompressionOptions, ExportOptions, StyleOptions
+from nectar_render.converter.footnotes import extract_footnote_definitions, inject_paged_footnotes
+from nectar_render.converter.html_builder import build_document_html
+from nectar_render.converter.markdown_parser import normalize_obsidian_image_embeds, normalize_pagebreak_markers, parse_markdown
+from nectar_render.services.pdf_compression_service import PdfCompressionService
+import nectar_render.utils.paths as paths_module
+import nectar_render.utils.weasyprint_runtime as runtime_module
 
 
 def test_pagebreak_marker_normalization() -> None:
@@ -212,7 +212,7 @@ def test_application_data_dir_uses_appdata_on_windows(monkeypatch, tmp_path: Pat
     monkeypatch.setattr(paths_module.sys, "platform", "win32")
     monkeypatch.setenv("APPDATA", str(tmp_path))
 
-    assert paths_module.application_data_dir() == tmp_path / "md-to-pdf"
+    assert paths_module.application_data_dir() == tmp_path / "nectar-render"
 
 
 def test_prepare_weasyprint_environment_uses_existing_msys2_dirs(monkeypatch, tmp_path: Path) -> None:

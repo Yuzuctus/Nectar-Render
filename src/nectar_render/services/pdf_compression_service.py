@@ -87,7 +87,7 @@ class PdfCompressionService:
         with tempfile.NamedTemporaryFile(
             mode="wb",
             suffix=".pdf",
-            prefix="md_to_pdf_comp_",
+            prefix="nectar_render_comp_",
             dir=source_path.parent,
             delete=False,
         ) as tmp_file:
@@ -144,7 +144,7 @@ class PdfCompressionService:
         with tempfile.NamedTemporaryFile(
             mode="wb",
             suffix=".pdf",
-            prefix="md_to_pdf_meta_",
+            prefix="nectar_render_meta_",
             dir=source_path.parent,
             delete=False,
         ) as tmp_file:

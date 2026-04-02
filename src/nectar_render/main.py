@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import tkinter as tk
 
-from .ui.app import MarkdownToPdfApp
+from .ui.app import NectarRenderApp
 from .utils.logging import configure_logging
 from .utils.weasyprint_runtime import prepare_weasyprint_environment
 
@@ -20,7 +20,7 @@ def main() -> None:
             "; ".join(str(path) for path in runtime_status.configured_directories),
         )
     root = tk.Tk()
-    MarkdownToPdfApp(root)
+    NectarRenderApp(root)
     root.mainloop()
 
 

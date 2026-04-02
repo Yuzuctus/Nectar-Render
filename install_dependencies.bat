@@ -78,13 +78,13 @@ if errorlevel 1 (
 
 call :configure_weasyprint_runtime
 
-"%PYTHON_CMD%" -c "from md_to_pdf.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
+"%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
 if errorlevel 1 (
   echo [INFO] WeasyPrint is installed but system DLLs appear to be missing.
   echo [INFO] Attempting automatic installation of MSYS2 + Pango...
   call :install_weasyprint_runtime
   call :configure_weasyprint_runtime
-  "%PYTHON_CMD%" -c "from md_to_pdf.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
+  "%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
   if errorlevel 1 (
     echo [WARNING] WeasyPrint is installed but system DLLs are still missing.
     echo [WARNING] For PDF on Windows: check MSYS2 + Pango then try again.

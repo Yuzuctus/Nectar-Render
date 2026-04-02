@@ -16,19 +16,19 @@ if errorlevel 1 (
 )
 
 if exist "%PROJECT_ROOT%.venv\Scripts\python.exe" (
-  "%PROJECT_ROOT%.venv\Scripts\python.exe" -m md_to_pdf.main
+  "%PROJECT_ROOT%.venv\Scripts\python.exe" -m nectar_render.main
   goto :end
 )
 
 where py >nul 2>&1
 if %errorlevel%==0 (
-  py -m md_to_pdf.main
+  py -m nectar_render.main
   goto :end
 )
 
 where python >nul 2>&1
 if %errorlevel%==0 (
-  python -m md_to_pdf.main
+  python -m nectar_render.main
   goto :end
 )
 

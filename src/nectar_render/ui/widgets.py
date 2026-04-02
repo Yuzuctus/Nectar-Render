@@ -1,4 +1,4 @@
-"""Reusable Tkinter widgets for the MD-TO-PDF application."""
+"""Reusable Tkinter widgets for the Nectar Render application."""
 
 from __future__ import annotations
 

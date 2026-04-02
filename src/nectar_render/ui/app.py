@@ -1,4 +1,4 @@
-"""Main GUI application for Markdown-to-PDF/HTML conversion."""
+"""Main GUI application for Nectar Render."""
 
 from __future__ import annotations
 
@@ -58,12 +58,12 @@ _HEADING_COLOR_KEYS = [f"heading_h{lvl}_color_var" for lvl in range(1, 7)]
 _HEADING_SIZE_KEYS = [f"heading_h{lvl}_size_var" for lvl in range(1, 7)]
 
 
-class MarkdownToPdfApp:
-    """Tkinter GUI for converting Markdown files to PDF/HTML."""
+class NectarRenderApp:
+    """Tkinter GUI for Nectar Render."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.root.title("Markdown to PDF/HTML")
+        self.root.title("Nectar Render")
         self.root.geometry("1120x820")
 
         self.config = AppConfig()
@@ -217,8 +217,8 @@ class MarkdownToPdfApp:
         header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header.columnconfigure(1, weight=1)
 
-        ttk.Label(header, text="Markdown to PDF / HTML", style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(header, text="Desktop converter", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
+        ttk.Label(header, text="Nectar Render", style="Title.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="Markdown to PDF / HTML desktop converter", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(2, 0))
 
         header_actions = ttk.Frame(header)
         header_actions.grid(row=0, column=1, rowspan=2, sticky="e")

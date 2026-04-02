@@ -1,7 +1,7 @@
 """Tests for the HTML builder module."""
 
-from md_to_pdf.config import StyleOptions
-from md_to_pdf.converter.html_builder import (
+from nectar_render.config import StyleOptions
+from nectar_render.converter.html_builder import (
     _css_color,
     _clamp_int,
     _clamp_float,

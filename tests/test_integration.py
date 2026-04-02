@@ -3,8 +3,8 @@
 import pytest
 from pathlib import Path
 
-from md_to_pdf.config import ExportOptions, StyleOptions
-from md_to_pdf.converter.exporter import build_html_from_markdown
+from nectar_render.config import ExportOptions, StyleOptions
+from nectar_render.converter.exporter import build_html_from_markdown
 
 
 SAMPLE_MD = Path(__file__).resolve().parent.parent / "examples" / "sample.md"

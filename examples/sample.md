@@ -1,4 +1,4 @@
-# MD-TO-PDF Feature Showcase
+# Nectar Render Feature Showcase
 
 This document demonstrates every feature supported by the converter. Open it in the app, pick a preset, and export to **PDF+HTML** to see it all in action.
 

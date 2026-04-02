@@ -22,7 +22,7 @@ venv/
 .idea/
 
 # Local application state
-.md_to_pdf/
+.nectar-render/
 
 # Generated outputs
 output/

@@ -1,6 +1,6 @@
 """Tests for built-in presets."""
 
-from md_to_pdf.ui.presets import (
+from nectar_render.ui.presets import (
     BUILTIN_PRESETS,
     BUILTIN_PRESET_NAMES,
     get_builtin_preset,

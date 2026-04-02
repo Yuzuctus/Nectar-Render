@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "md-to-pdf-gui"
+name = "nectar-render"
 version = "0.2.0"
 description = "Desktop app to convert Markdown to styled PDF/HTML with live preview, syntax highlighting, and preset themes"
 readme = "README.md"
@@ -40,11 +40,11 @@ dev = [
 ]
 
 [project.scripts]
-md-to-pdf = "md_to_pdf.main:main"
+nectar-render = "nectar_render.main:main"
 
 [project.urls]
-Repository = "https://github.com/Yuzuctus/MD-TO-PDF"
-Issues = "https://github.com/Yuzuctus/MD-TO-PDF/issues"
+Repository = "https://github.com/Yuzuctus/Nectar-Render"
+Issues = "https://github.com/Yuzuctus/Nectar-Render/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
