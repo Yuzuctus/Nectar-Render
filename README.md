@@ -11,7 +11,7 @@
 
 - Convert Markdown to **PDF**, **HTML**, or both in one pass
 - Tkinter GUI with light and dark themes
-- **5 built-in presets**: Academic, Modern, Technical, Minimal, Dark Code
+- **9 built-in presets**: Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, Elegant
 - Syntax highlighting for code blocks (7+ Pygments themes)
 - Full typography control: fonts, sizes, colors for body, headings (H1-H6), and code
 - Page break markers: `<!-- pagebreak -->`, `\pagebreak`, `[[PAGEBREAK]]`
@@ -53,13 +53,7 @@ python -m nectar_render.main
 
 ## Built-in Presets
 
-| Preset | Body Font | Code Theme | Margins | Style |
-|--------|-----------|------------|---------|-------|
-| **Academic** | Times New Roman | friendly | 30mm | Serif, formal, generous spacing |
-| **Modern** | Segoe UI | default | 25.4mm | Sans-serif, blue headings, striped tables |
-| **Technical** | Calibri | monokai | 20mm | Compact, green accents, dense layout |
-| **Minimal** | Arial | default | 15mm | Bare bones, maximum content space |
-| **Dark Code** | Segoe UI | dracula | 25.4mm | Dark code blocks, blue heading accents |
+Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, and Elegant are available out of the box.
 
 ## WeasyPrint on Windows
 
@@ -107,6 +101,8 @@ examples/assets/diagrams/sequence.svg
 
 ```bash
 pytest -q
+ruff check src tests
+ruff format --check src tests
 ```
 
 ## Contributing

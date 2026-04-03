@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import ttk
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,9 @@ def fuzzy_match(query: str, candidate: str) -> bool:
     return True
 
 
-def filter_font_families(query: str, families: list[str], limit: int = 300) -> list[str]:
+def filter_font_families(
+    query: str, families: list[str], limit: int = 300
+) -> list[str]:
     """Return the subset of *families* that fuzzy-match *query*."""
     if not query.strip():
         return list(families)
@@ -64,25 +67,32 @@ class FontAutocomplete:
         values: list[str],
         width: int,
         allow_custom_values: bool = True,
-        on_commit: callable | None = None,
+        on_commit: Callable[..., object] | None = None,
     ) -> None:
         self.root = root
         self.var = textvariable
         self._all_values: list[str] = list(values)
         self._allow_custom_values = allow_custom_values
         current = (self.var.get() or "").strip()
-        self._last_valid_value = current if current in self._all_values else (self._all_values[0] if self._all_values else "")
+        self._last_valid_value = (
+            current
+            if current in self._all_values
+            else (self._all_values[0] if self._all_values else "")
+        )
         if self._last_valid_value:
             self.var.set(self._last_valid_value)
         self._job: str | None = None
         self._is_open = False
         self._on_commit = on_commit
+        self._global_click_binding: str | None = None
 
         # --- visible widgets --------------------------------------------------
         self.frame = ttk.Frame(parent)
         self.entry = ttk.Entry(self.frame, textvariable=self.var, width=width)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.button = ttk.Button(self.frame, text="\u25bc", width=2, command=self._toggle_popup)
+        self.button = ttk.Button(
+            self.frame, text="\u25bc", width=2, command=self._toggle_popup
+        )
         self.button.pack(side=tk.LEFT, padx=(6, 0))
 
         # --- persistent popup (hidden) ----------------------------------------
@@ -92,7 +102,9 @@ class FontAutocomplete:
         self.popup.withdraw()
 
         self.listbox = tk.Listbox(self.popup, exportselection=False, height=12)
-        self.scrollbar = ttk.Scrollbar(self.popup, orient=tk.VERTICAL, command=self.listbox.yview)
+        self.scrollbar = ttk.Scrollbar(
+            self.popup, orient=tk.VERTICAL, command=self.listbox.yview
+        )
         self.listbox.configure(yscrollcommand=self.scrollbar.set)
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -109,7 +121,11 @@ class FontAutocomplete:
         self.entry.bind("<Escape>", self._on_escape)
         self.entry.bind("<FocusOut>", self._on_focus_out)
 
-        self.root.bind_all("<Button-1>", self._on_global_click, add="+")
+        binding_id = self.root.bind("<Button-1>", self._on_global_click, add="+")
+        if isinstance(binding_id, str) and binding_id:
+            self._global_click_binding = binding_id
+
+        self.root.bind("<Destroy>", self._on_root_destroy, add="+")
 
     # --- public API -----------------------------------------------------------
 
@@ -117,6 +133,26 @@ class FontAutocomplete:
         self._all_values = list(values)
         if self._is_open:
             self._refresh_listbox()
+
+    def destroy(self) -> None:
+        if self._job:
+            try:
+                self.root.after_cancel(self._job)
+            except tk.TclError:
+                pass
+            self._job = None
+
+        if self._global_click_binding:
+            try:
+                self.root.unbind("<Button-1>", self._global_click_binding)
+            except tk.TclError:
+                pass
+            self._global_click_binding = None
+
+        try:
+            self.popup.destroy()
+        except tk.TclError:
+            pass
 
     # --- popup visibility (withdraw / deiconify, never destroy) ---------------
 
@@ -329,3 +365,7 @@ class FontAutocomplete:
             return
 
         self._hide_popup()
+
+    def _on_root_destroy(self, event: tk.Event[tk.Misc]) -> None:
+        if event.widget is self.root:
+            self.destroy()

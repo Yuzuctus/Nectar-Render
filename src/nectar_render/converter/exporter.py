@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import sys
 
 from ..config import CompressionOptions, StyleOptions
 from ..utils.weasyprint_runtime import (
     WeasyPrintRuntimeError,
-    build_windows_runtime_help,
+    build_runtime_help,
     prepare_weasyprint_environment,
 )
 from .html_builder import build_document_html
@@ -26,7 +25,9 @@ def build_html_from_markdown(
         assets_root=assets_root,
         sanitize_html=style.sanitize_html,
     )
-    return build_document_html(body_html=body_html, style=style, page_size=page_size, title=title)
+    return build_document_html(
+        body_html=body_html, style=style, page_size=page_size, title=title
+    )
 
 
 def export_html(
@@ -58,13 +59,11 @@ def export_pdf(
     base_url: Path | None = None,
     compression: CompressionOptions | None = None,
 ) -> tuple[Path, int]:
-    runtime_status = prepare_weasyprint_environment()
+    prepare_weasyprint_environment()
     try:
         from weasyprint import HTML
     except (ImportError, OSError) as exc:
-        if sys.platform == "win32":
-            raise WeasyPrintRuntimeError(build_windows_runtime_help(exc, runtime_status)) from exc
-        raise
+        raise WeasyPrintRuntimeError(build_runtime_help(exc)) from exc
 
     html = build_html_from_markdown(
         markdown_text,

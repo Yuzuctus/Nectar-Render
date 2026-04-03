@@ -15,7 +15,9 @@ _DEFINITION_RE = re.compile(r"^\[\^(?P<id>[^\]]+)\]:\s?(?P<text>.*)$")
 _REFERENCE_RE = re.compile(r"\[\^(?P<id>[^\]]+)\]")
 
 
-def _collect_multiline_note(lines: list[str], start_index: int, first_line_text: str) -> tuple[str, int]:
+def _collect_multiline_note(
+    lines: list[str], start_index: int, first_line_text: str
+) -> tuple[str, int]:
     chunks = [first_line_text.rstrip()]
     index = start_index + 1
     while index < len(lines):
@@ -47,11 +49,15 @@ def extract_footnote_definitions(markdown_text: str) -> FootnoteExtractionResult
             continue
 
         footnote_id = match.group("id").strip()
-        note_text, next_index = _collect_multiline_note(lines, index, match.group("text"))
+        note_text, next_index = _collect_multiline_note(
+            lines, index, match.group("text")
+        )
         definitions[footnote_id] = note_text
         index = next_index
 
-    return FootnoteExtractionResult(markdown_without_definitions="\n".join(kept_lines), definitions=definitions)
+    return FootnoteExtractionResult(
+        markdown_without_definitions="\n".join(kept_lines), definitions=definitions
+    )
 
 
 def inject_paged_footnotes(markdown_text: str, enabled: bool) -> str:
@@ -75,10 +81,10 @@ def inject_paged_footnotes(markdown_text: str, enabled: bool) -> str:
         safe_note = escape(note)
         safe_footnote_id = escape(footnote_id, quote=True)
         return (
-            f"<sup class=\"footnote-ref\" id=\"fnref-{safe_footnote_id}\">"
-            f"<a href=\"#fn-{safe_footnote_id}\">{note_number}</a>"
+            f'<sup class="footnote-ref" id="fnref-{safe_footnote_id}">'
+            f'<a href="#fn-{safe_footnote_id}">{note_number}</a>'
             f"</sup>"
-            f"<span class=\"footnote\" data-footnote-id=\"{safe_footnote_id}\">{safe_note}</span>"
+            f'<span class="footnote" data-footnote-id="{safe_footnote_id}">{safe_note}</span>'
         )
 
     with_refs = _REFERENCE_RE.sub(replace_ref, markdown_body)
@@ -87,16 +93,16 @@ def inject_paged_footnotes(markdown_text: str, enabled: bool) -> str:
 
     footnotes_items = "".join(
         (
-            f"<li id=\"fn-{escape(note_id, quote=True)}\">"
+            f'<li id="fn-{escape(note_id, quote=True)}">'
             f"{escape(extraction.definitions.get(note_id, ''))} "
-            f"<a href=\"#fnref-{escape(note_id, quote=True)}\">↩</a>"
+            f'<a href="#fnref-{escape(note_id, quote=True)}">↩</a>'
             f"</li>"
         )
         for note_id in ordered_ids
     )
     footnotes_html = (
         "\n\n"
-        "<section class=\"footnotes-list\">"
+        '<section class="footnotes-list">'
         "<hr />"
         "<ol>"
         f"{footnotes_items}"

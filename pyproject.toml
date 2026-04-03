@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nectar-render"
-version = "0.2.0"
+dynamic = ["version"]
 description = "Desktop app to convert Markdown to styled PDF/HTML with live preview, syntax highlighting, and preset themes"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -37,6 +37,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8.0",
+  "ruff>=0.11.0",
 ]
 
 [project.scripts]
@@ -51,6 +52,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "nectar_render.__version__"}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

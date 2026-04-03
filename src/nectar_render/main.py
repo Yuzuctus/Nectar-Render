@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-import tkinter as tk
+from collections.abc import Sequence
 
-from .ui.app import NectarRenderApp
+from .cli import build_parser, run_cli
 from .utils.logging import configure_logging
 from .utils.weasyprint_runtime import prepare_weasyprint_environment
 
@@ -11,7 +11,11 @@ from .utils.weasyprint_runtime import prepare_weasyprint_environment
 logger = logging.getLogger(__name__)
 
 
-def main() -> None:
+def _run_gui() -> int:
+    import tkinter as tk
+
+    from .ui.app import NectarRenderApp
+
     configure_logging()
     runtime_status = prepare_weasyprint_environment()
     if runtime_status.configured_directories:
@@ -22,7 +26,18 @@ def main() -> None:
     root = tk.Tk()
     NectarRenderApp(root)
     root.mainloop()
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
+    if args.input is not None:
+        return run_cli(args)
+
+    return _run_gui()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

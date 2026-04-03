@@ -83,8 +83,15 @@ class ConversionService:
                 base_url=markdown_file.parent,
                 compression=export.compression,
             )
-            compression_result = self.pdf_compression.compress(pdf_path, export.compression)
-            result.pdf_path = pdf_path
+            compression_result = self.pdf_compression.compress(
+                pdf_path, export.compression
+            )
+            if not compression_result.path.exists():
+                msg = f"PDF export completed but final file is missing: {compression_result.path}"
+                logger.error(msg)
+                raise FileNotFoundError(msg)
+
+            result.pdf_path = compression_result.path
             result.pdf_page_count = page_count
             result.pdf_size_before_bytes = compression_result.original_size
             result.pdf_size_after_bytes = compression_result.final_size

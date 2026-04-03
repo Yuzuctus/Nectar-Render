@@ -1,5 +1,6 @@
 """Tests for built-in presets."""
 
+from nectar_render.cli import build_parser
 from nectar_render.ui.presets import (
     BUILTIN_PRESETS,
     BUILTIN_PRESET_NAMES,
@@ -39,8 +40,8 @@ _REQUIRED_STYLE_KEYS = {
 }
 
 
-def test_five_builtin_presets_exist() -> None:
-    assert len(BUILTIN_PRESETS) == 5
+def test_nine_builtin_presets_exist() -> None:
+    assert len(BUILTIN_PRESETS) == 9
 
 
 def test_builtin_preset_names_are_sorted() -> None:
@@ -54,7 +55,12 @@ def test_all_presets_contain_required_keys() -> None:
 
 
 def test_presets_do_not_contain_file_path_keys() -> None:
-    non_style_keys = {"markdown_var", "output_dir_var", "ui_theme_var", "auto_preview_var"}
+    non_style_keys = {
+        "markdown_var",
+        "output_dir_var",
+        "ui_theme_var",
+        "auto_preview_var",
+    }
     for name, preset in BUILTIN_PRESETS.items():
         found = non_style_keys & set(preset.keys())
         assert not found, f"Preset '{name}' should not contain non-style keys: {found}"
@@ -68,23 +74,32 @@ def test_font_sizes_are_reasonable() -> None:
 
 def test_margins_are_positive() -> None:
     for name, preset in BUILTIN_PRESETS.items():
-        for key in ("margin_top_var", "margin_right_var", "margin_bottom_var", "margin_left_var"):
+        for key in (
+            "margin_top_var",
+            "margin_right_var",
+            "margin_bottom_var",
+            "margin_left_var",
+        ):
             assert preset[key] > 0, f"{name}: {key} must be positive"
 
 
 def test_image_scale_is_valid_percentage() -> None:
     for name, preset in BUILTIN_PRESETS.items():
         scale = preset["image_scale_var"]
-        assert 40 <= scale <= 100, f"{name}: image_scale_var {scale} out of 40-100 range"
+        assert 40 <= scale <= 100, (
+            f"{name}: image_scale_var {scale} out of 40-100 range"
+        )
 
 
 def test_is_builtin_preset_true() -> None:
-    assert is_builtin_preset("Modern")
-    assert is_builtin_preset("Modern (built-in)")
+    assert is_builtin_preset("Academic")
+    assert is_builtin_preset("Academic (built-in)")
 
 
 def test_is_builtin_preset_false() -> None:
     assert not is_builtin_preset("My Custom Preset")
+    assert not is_builtin_preset("Modern")
+    assert not is_builtin_preset("Dark Code")
 
 
 def test_get_builtin_preset_returns_copy() -> None:
@@ -102,3 +117,13 @@ def test_get_builtin_preset_strips_suffix() -> None:
     preset = get_builtin_preset("Technical (built-in)")
     assert preset is not None
     assert preset["code_theme_var"] == "monokai"
+
+
+def test_cli_help_is_synchronized_with_builtin_presets() -> None:
+    parser = build_parser()
+    help_text = parser.format_help()
+
+    for name in BUILTIN_PRESET_NAMES:
+        assert name in help_text
+    assert "Modern" not in help_text
+    assert "Dark Code" not in help_text

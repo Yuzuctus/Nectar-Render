@@ -42,3 +42,7 @@ def test_build_pygments_css_monokai_differs_from_default() -> None:
     default_css = build_pygments_css("default")
     monokai_css = build_pygments_css("monokai")
     assert default_css != monokai_css
+
+
+def test_build_pygments_css_falls_back_to_default_for_unknown_style() -> None:
+    assert build_pygments_css("nonexistent_theme_xyz") == build_pygments_css("default")

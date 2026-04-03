@@ -8,6 +8,7 @@ from pathlib import Path
 
 _DLL_DIRECTORY_HANDLES: list[object] = []
 _REGISTERED_DLL_DIRECTORIES: set[str] = set()
+_RUNTIME_STATUS_CACHE: dict[tuple[str, str, str], "WeasyPrintRuntimeStatus"] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +52,9 @@ def _split_env_directories(raw_value: str | None) -> list[Path]:
 
 def _candidate_runtime_directories() -> list[Path]:
     candidates: list[Path] = []
-    candidates.extend(_split_env_directories(os.environ.get("WEASYPRINT_DLL_DIRECTORIES")))
+    candidates.extend(
+        _split_env_directories(os.environ.get("WEASYPRINT_DLL_DIRECTORIES"))
+    )
 
     msys2_roots: list[Path] = []
     configured_root = os.environ.get("MSYS2_ROOT", "").strip()
@@ -83,6 +86,14 @@ def _candidate_runtime_directories() -> list[Path]:
     return _dedupe_paths(candidates)
 
 
+def _runtime_cache_key() -> tuple[str, str, str]:
+    return (
+        sys.platform,
+        os.environ.get("MSYS2_ROOT", "").strip(),
+        os.environ.get("WEASYPRINT_DLL_DIRECTORIES", "").strip(),
+    )
+
+
 def _register_dll_directory(path: Path) -> None:
     add_dll_directory = getattr(os, "add_dll_directory", None)
     if add_dll_directory is None:
@@ -101,11 +112,23 @@ def _register_dll_directory(path: Path) -> None:
     _REGISTERED_DLL_DIRECTORIES.add(key)
 
 
-def prepare_weasyprint_environment() -> WeasyPrintRuntimeStatus:
+def prepare_weasyprint_environment(
+    force_refresh: bool = False,
+) -> WeasyPrintRuntimeStatus:
+    cache_key = _runtime_cache_key()
+    if not force_refresh:
+        cached = _RUNTIME_STATUS_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
     searched_directories = tuple(_candidate_runtime_directories())
 
     if sys.platform != "win32":
-        return WeasyPrintRuntimeStatus(configured_directories=(), searched_directories=searched_directories)
+        status = WeasyPrintRuntimeStatus(
+            configured_directories=(), searched_directories=searched_directories
+        )
+        _RUNTIME_STATUS_CACHE[cache_key] = status
+        return status
 
     configured_directories: list[Path] = []
     for directory in searched_directories:
@@ -116,11 +139,40 @@ def prepare_weasyprint_environment() -> WeasyPrintRuntimeStatus:
 
     configured_directories = _dedupe_paths(configured_directories)
     if configured_directories:
-        os.environ["WEASYPRINT_DLL_DIRECTORIES"] = ";".join(str(path) for path in configured_directories)
+        os.environ["WEASYPRINT_DLL_DIRECTORIES"] = ";".join(
+            str(path) for path in configured_directories
+        )
 
-    return WeasyPrintRuntimeStatus(
+    status = WeasyPrintRuntimeStatus(
         configured_directories=tuple(configured_directories),
         searched_directories=searched_directories,
+    )
+    _RUNTIME_STATUS_CACHE[cache_key] = status
+    return status
+
+
+def build_runtime_help(error: BaseException) -> str:
+    """Build a user-friendly error message for any platform."""
+    if sys.platform == "win32":
+        return build_windows_runtime_help(error)
+    if sys.platform == "darwin":
+        return (
+            f"WeasyPrint could not load required system libraries.\n\n"
+            f"Technical detail: {error}\n\n"
+            f"Recommended fix:\n"
+            f"  brew install pango libffi\n\n"
+            f"Then restart the application.\n"
+            f"HTML export remains available even if PDF export fails."
+        )
+    return (
+        f"WeasyPrint could not load required system libraries.\n\n"
+        f"Technical detail: {error}\n\n"
+        f"Recommended fix (Debian/Ubuntu):\n"
+        f"  sudo apt install libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0\n\n"
+        f"Recommended fix (Fedora/RHEL):\n"
+        f"  sudo dnf install pango gdk-pixbuf2\n\n"
+        f"Then restart the application.\n"
+        f"HTML export remains available even if PDF export fails."
     )
 
 

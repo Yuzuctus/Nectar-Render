@@ -4,6 +4,7 @@ import re
 
 from pygments.formatters import HtmlFormatter
 from pygments.styles import get_all_styles, get_style_by_name
+from pygments.util import ClassNotFound
 
 
 _STYLE_ALIASES = {
@@ -33,7 +34,10 @@ def _parse_color_to_rgb(color: str) -> tuple[int, int, int] | None:
             return (red, green, blue)
         return None
 
-    match = re.fullmatch(r"rgba?\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3})(?:,\s*(?:\d+(?:\.\d+)?|\.\d+))?\)", normalized)
+    match = re.fullmatch(
+        r"rgba?\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3})(?:,\s*(?:\d+(?:\.\d+)?|\.\d+))?\)",
+        normalized,
+    )
     if not match:
         return None
 
@@ -56,11 +60,21 @@ def _is_dark_style(style_name: str) -> bool:
 
 def list_available_styles() -> list[str]:
     styles = sorted(set(get_all_styles()))
-    light_styles = [style_name for style_name in styles if not _is_dark_style(style_name)]
+    light_styles = [
+        style_name for style_name in styles if not _is_dark_style(style_name)
+    ]
     dark_styles = [style_name for style_name in styles if _is_dark_style(style_name)]
 
-    light_aliases = [alias for alias in _STYLE_ALIASES if alias not in styles and not _is_dark_style(alias)]
-    dark_aliases = [alias for alias in _STYLE_ALIASES if alias not in styles and _is_dark_style(alias)]
+    light_aliases = [
+        alias
+        for alias in _STYLE_ALIASES
+        if alias not in styles and not _is_dark_style(alias)
+    ]
+    dark_aliases = [
+        alias
+        for alias in _STYLE_ALIASES
+        if alias not in styles and _is_dark_style(alias)
+    ]
 
     return light_aliases + light_styles + dark_aliases + dark_styles
 
@@ -71,6 +85,9 @@ def resolve_style_name(style_name: str) -> str:
 
 
 def build_pygments_css(style_name: str) -> str:
-    formatter = HtmlFormatter(style=resolve_style_name(style_name))
+    try:
+        formatter = HtmlFormatter(style=resolve_style_name(style_name))
+    except ClassNotFound:
+        formatter = HtmlFormatter(style="default")
     pygments_css = formatter.get_style_defs(".codehilite")
     return f"{pygments_css}\n.codehilite pre {{ background: inherit; }}"

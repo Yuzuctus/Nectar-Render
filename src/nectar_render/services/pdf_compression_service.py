@@ -24,7 +24,9 @@ class PdfCompressionResult:
 
 
 class PdfCompressionService:
-    def compress(self, pdf_path: Path, options: CompressionOptions) -> PdfCompressionResult:
+    def compress(
+        self, pdf_path: Path, options: CompressionOptions
+    ) -> PdfCompressionResult:
         original_size = pdf_path.stat().st_size
 
         if not options.enabled:
@@ -50,19 +52,48 @@ class PdfCompressionService:
                 working_path = compressed
                 tool_used = "qpdf"
             else:
-                logger.warning("qpdf compression unavailable/failed, keeping original PDF: %s", pdf_path)
+                logger.warning(
+                    "qpdf compression unavailable/failed, keeping original PDF: %s",
+                    pdf_path,
+                )
 
         if options.remove_metadata:
             metadata_clean = self._remove_metadata(working_path)
             if metadata_clean is not None:
+                if working_path != pdf_path:
+                    working_path.unlink(missing_ok=True)
                 working_path = metadata_clean
                 tool_used = tool_used or "pypdf"
 
         if working_path != pdf_path:
             final_size = working_path.stat().st_size
             if final_size <= original_size:
-                pdf_path.unlink(missing_ok=True)
-                working_path.replace(pdf_path)
+                try:
+                    working_path.replace(pdf_path)
+                except Exception:
+                    logger.exception(
+                        "Error replacing original PDF with compressed copy: %s",
+                        pdf_path,
+                    )
+                    working_path.unlink(missing_ok=True)
+                    if options.keep_original_on_fail and pdf_path.exists():
+                        return PdfCompressionResult(
+                            path=pdf_path,
+                            applied=False,
+                            original_size=original_size,
+                            final_size=original_size,
+                            tool=tool_used,
+                        )
+                    raise
+
+                if not pdf_path.exists():
+                    msg = (
+                        "Compressed PDF promotion finished without a final output file: "
+                        f"{pdf_path}"
+                    )
+                    logger.error(msg)
+                    raise FileNotFoundError(msg)
+
                 applied = final_size < original_size
                 return PdfCompressionResult(
                     path=pdf_path,
@@ -82,7 +113,9 @@ class PdfCompressionService:
             tool=tool_used,
         )
 
-    def _run_qpdf(self, qpdf_path: str, source_path: Path, profile: str, timeout_sec: int) -> Path | None:
+    def _run_qpdf(
+        self, qpdf_path: str, source_path: Path, profile: str, timeout_sec: int
+    ) -> Path | None:
         compression_level = "9" if profile.lower() == "max" else "6"
         with tempfile.NamedTemporaryFile(
             mode="wb",
@@ -120,7 +153,11 @@ class PdfCompressionService:
 
         if completed.returncode != 0:
             temp_path.unlink(missing_ok=True)
-            logger.warning("qpdf returned non-zero exit code (%s): %s", completed.returncode, completed.stderr.strip())
+            logger.warning(
+                "qpdf returned non-zero exit code (%s): %s",
+                completed.returncode,
+                completed.stderr.strip(),
+            )
             return None
 
         if not temp_path.exists() or temp_path.stat().st_size <= 0:

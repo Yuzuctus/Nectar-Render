@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from nectar_render.config import ExportOptions, StyleOptions
+from nectar_render.config import StyleOptions
 from nectar_render.converter.exporter import build_html_from_markdown
 
 

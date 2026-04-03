@@ -10,6 +10,7 @@ import markdown as md
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 
+from ..utils.markdown import iter_lines_outside_fences
 from .footnotes import inject_paged_footnotes
 
 
@@ -18,8 +19,6 @@ _PAGEBREAK_MARKERS = [
     r"\\pagebreak",
     r"\[\[PAGEBREAK\]\]",
 ]
-
-_FENCE_START_RE = re.compile(r"^\s*(```+|~~~+)")
 _OBSIDIAN_IMAGE_EMBED_RE = re.compile(r"!\[\[([^\]]+)\]\]")
 
 _ALLOWED_HTML_TAGS = [
@@ -66,28 +65,33 @@ _ALLOWED_HTML_ATTRIBUTES: dict[str, list[str]] = {
 }
 
 _ALLOWED_HTML_PROTOCOLS = ["http", "https", "mailto", "data", "file"]
+_IMAGE_INDEX_CACHE: dict[str, dict[str, list[Path]]] = {}
+_HEADING_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6"}
+_BLOCK_TAGS = {
+    "blockquote",
+    "div",
+    "figure",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "ol",
+    "p",
+    "pre",
+    "table",
+    "ul",
+}
 
 
 def _replace_pagebreak_markers_outside_fences(markdown_text: str) -> str:
-    lines = markdown_text.splitlines(keepends=True)
-    in_fence = False
-    fence_delim = ""
+    fence_map = iter_lines_outside_fences(markdown_text)
+    original_lines = markdown_text.splitlines(keepends=True)
     normalized_lines: list[str] = []
 
-    for line in lines:
-        stripped = line.lstrip()
-        fence_match = _FENCE_START_RE.match(stripped)
-        if fence_match:
-            fence = fence_match.group(1)
-            if not in_fence:
-                in_fence = True
-                fence_delim = fence[0]
-            elif fence[0] == fence_delim:
-                in_fence = False
-                fence_delim = ""
-            normalized_lines.append(line)
-            continue
-
+    for i, line in enumerate(original_lines):
+        in_fence = fence_map[i][1] if i < len(fence_map) else False
         if in_fence:
             normalized_lines.append(line)
             continue
@@ -96,7 +100,7 @@ def _replace_pagebreak_markers_outside_fences(markdown_text: str) -> str:
         for marker in _PAGEBREAK_MARKERS:
             normalized_line = re.sub(
                 marker,
-                "\n\n<div class=\"page-break\"></div>\n\n",
+                '\n\n<div class="page-break"></div>\n\n',
                 normalized_line,
                 flags=re.IGNORECASE,
             )
@@ -153,6 +157,28 @@ def _build_image_index(root: Path) -> dict[str, list[Path]]:
         key = path.name.lower()
         index.setdefault(key, []).append(path)
     return index
+
+
+def _image_index_cache_key(root: Path) -> str:
+    return str(root.resolve())
+
+
+def _get_image_index(root: Path) -> dict[str, list[Path]]:
+    cache_key = _image_index_cache_key(root)
+    cached = _IMAGE_INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    index = _build_image_index(root)
+    _IMAGE_INDEX_CACHE[cache_key] = index
+    return index
+
+
+def invalidate_image_index_cache(assets_root: Path | None = None) -> None:
+    if assets_root is None:
+        _IMAGE_INDEX_CACHE.clear()
+        return
+    _IMAGE_INDEX_CACHE.pop(_image_index_cache_key(assets_root), None)
 
 
 def _pick_best_candidate(candidates: list[Path], assets_root: Path) -> Path:
@@ -213,9 +239,87 @@ def _normalize_image_blocks(soup: BeautifulSoup) -> None:
             previous_block = block
 
 
+def _top_level_blocks(soup: BeautifulSoup) -> list[Tag]:
+    return [
+        child
+        for child in soup.contents
+        if isinstance(child, Tag) and child.name in _BLOCK_TAGS
+    ]
+
+
+def _classes(tag: Tag) -> list[str]:
+    return [str(name) for name in tag.get("class", [])]
+
+
+def _add_class(tag: Tag, class_name: str) -> None:
+    classes = _classes(tag)
+    if class_name not in classes:
+        tag["class"] = [*classes, class_name]
+
+
+def _is_page_break(tag: Tag) -> bool:
+    return "page-break" in _classes(tag)
+
+
+def _is_heading(tag: Tag) -> bool:
+    return tag.name in _HEADING_TAGS
+
+
+def _is_short_intro_block(tag: Tag) -> bool:
+    if tag.name not in {"p", "blockquote"}:
+        return False
+    if tag.find(["table", "pre", "img", "ul", "ol", "div"]):
+        return False
+    return 0 < len(tag.get_text(" ", strip=True)) <= 220
+
+
+def _is_compact_list(tag: Tag) -> bool:
+    if tag.name not in {"ul", "ol"}:
+        return False
+
+    items = tag.find_all("li", recursive=False)
+    if not items or len(items) > 6:
+        return False
+
+    total_text_length = 0
+    for item in items:
+        if item.find(["ul", "ol", "table", "pre", "blockquote", "img"]):
+            return False
+
+        item_text = item.get_text(" ", strip=True)
+        if not item_text or len(item_text) > 140:
+            return False
+        total_text_length += len(item_text)
+
+    return total_text_length <= 360
+
+
+def _apply_pagination_hints(soup: BeautifulSoup) -> None:
+    blocks = _top_level_blocks(soup)
+
+    for index, block in enumerate(blocks):
+        if _is_page_break(block):
+            continue
+
+        previous_block = blocks[index - 1] if index > 0 else None
+        if previous_block is not None and not _is_page_break(previous_block):
+            if _is_heading(previous_block):
+                _add_class(block, "keep-with-prev")
+            if _is_short_intro_block(previous_block) and _is_compact_list(block):
+                _add_class(block, "keep-with-prev")
+
+        if _is_heading(block):
+            _add_class(block, "keep-with-next")
+
+        if _is_compact_list(block):
+            _add_class(block, "compact-list")
+            _add_class(block, "keep-together")
+
+
 def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     _normalize_image_blocks(soup)
+    _apply_pagination_hints(soup)
 
     if assets_root is None:
         return str(soup)
@@ -239,7 +343,7 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
             continue
 
         if image_index is None:
-            image_index = _build_image_index(assets_root)
+            image_index = _get_image_index(assets_root)
 
         file_name = Path(normalized_src).name.lower()
         candidates = image_index.get(file_name, [])
@@ -295,7 +399,6 @@ def parse_markdown(
         extension_configs=extension_configs,
         output_format="html5",
     )
-    html_with_resolved_images = _resolve_image_sources(html, assets_root=assets_root)
     if sanitize_html:
-        return sanitize_html_fragment(html_with_resolved_images)
-    return html_with_resolved_images
+        html = sanitize_html_fragment(html)
+    return _resolve_image_sources(html, assets_root=assets_root)

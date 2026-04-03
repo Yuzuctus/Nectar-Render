@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 OUTPUT_FORMATS = ("PDF", "HTML", "PDF+HTML")
+PAGE_SIZES = ("A4", "Letter", "Legal", "A3", "A5")
 CODE_THEMES = ("default", "friendly", "monokai", "native", "xcode", "vim", "dracula")
 UI_THEMES = ("Light", "Dark")
 PDF_COMPRESSION_PROFILES = ("balanced", "max")
@@ -12,7 +13,14 @@ PDF_COMPRESSION_PROFILES = ("balanced", "max")
 DEFAULT_BODY_FONT = "Segoe UI"
 DEFAULT_CODE_FONT = "Consolas"
 DEFAULT_HEADING_COLOR = "#1f2937"
-FALLBACK_FONTS = ("Segoe UI", "Calibri", "Arial", "Consolas", "Courier New", "Times New Roman")
+FALLBACK_FONTS = (
+    "Segoe UI",
+    "Calibri",
+    "Arial",
+    "Consolas",
+    "Courier New",
+    "Times New Roman",
+)
 
 
 @dataclass(slots=True)
@@ -44,6 +52,7 @@ class StyleOptions:
     margin_left_mm: float = 25.4
     footer_text: str = ""
     footer_align: str = "right"
+    footer_color: str = "#6b7280"
     include_footnotes: bool = True
     footnote_font_size: float = 9.0
     footnote_text_color: str = "#374151"
@@ -65,7 +74,9 @@ class StyleOptions:
 class ExportOptions:
     output_format: str = "PDF"
     page_size: str = "A4"
-    compression: "CompressionOptions" = field(default_factory=lambda: CompressionOptions())
+    compression: "CompressionOptions" = field(
+        default_factory=lambda: CompressionOptions()
+    )
 
 
 @dataclass(slots=True)
