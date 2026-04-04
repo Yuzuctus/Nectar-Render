@@ -65,7 +65,7 @@ Regular text with **bold**, *italic*, ***bold italic***, `inline code`, and ~~st
 | Code highlighting | Stable | 7+ themes via Pygments |
 | Obsidian embeds | Stable | `![[image.png]]` syntax supported |
 | PDF compression | Optional | Requires qpdf for best results |
-| Built-in presets | New | Academic, Modern, Technical, Minimal, Dark Code |
+| Built-in presets | New | Academic, Magazine, Corporate, Technical, Minimal |
 
 ---
 
@@ -107,7 +107,7 @@ async function convertMarkdown(filePath) {
 
 ```json
 {
-  "preset": "Modern",
+  "preset": "Magazine",
   "style": {
     "body_font": "Segoe UI",
     "code_theme": "default",

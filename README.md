@@ -1,6 +1,6 @@
 # Nectar Render
 
-> Desktop application to convert Markdown files to styled PDF and HTML with live preview, syntax highlighting, and preset themes.
+Desktop application to convert Markdown files to styled PDF and HTML with browser preview, syntax highlighting, and preset themes.
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 ![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)
@@ -21,6 +21,18 @@
 - Optional PDF compression via `qpdf`
 - Save and load custom presets
 - Undo/redo for all style changes (Ctrl+Z / Ctrl+Alt+Z)
+
+## Architecture
+
+The current codebase is organized in four layers:
+
+- `core/` contains the canonical style and preset models.
+- `application/` contains use cases such as conversion and preview.
+- `adapters/` contains rendering, storage, and runtime integration.
+- `adapters/rendering/` is the canonical Markdown -> HTML -> PDF pipeline.
+- `interfaces/desktop/` contains the Tkinter application, widgets, controllers, and state mapping.
+
+The legacy packages `ui/`, `converter/`, `services/`, `presets.py`, and `style_schema.py` are compatibility shims kept for now so older imports still work. New code should use the canonical layers above.
 
 ## Quick Start
 
@@ -50,6 +62,27 @@ Or run directly:
 ```bash
 python -m nectar_render.main
 ```
+
+## CLI
+
+The CLI is the simplest way to run conversions without opening the desktop app.
+
+```bash
+nectar-render --input examples/sample.md --format pdf
+nectar-render --input examples/sample.md --format html
+nectar-render --input examples/sample.md --format pdf+html --preset Academic
+```
+
+Available options:
+
+- `--input`, `-i`: Markdown input file
+- `--output`, `-o`: Output directory
+- `--format`, `-f`: `pdf`, `html`, or `pdf+html`
+- `--page-size`: `A4`, `Letter`, `Legal`, `A3`, `A5`
+- `--preset`, `-p`: built-in style preset
+- `--no-compression`: disable PDF compression
+
+The CLI uses the same application layer and rendering pipeline as the desktop app.
 
 ## Built-in Presets
 
@@ -81,6 +114,7 @@ winget install --id qpdf.qpdf
 ```
 
 Two profiles are available: **balanced** (default) and **max**.
+Post-processing is only kept when the resulting PDF does not grow beyond the original file size.
 
 ## Example
 
@@ -97,13 +131,29 @@ examples/assets/diagrams/sequence.svg
 3. Select **PDF+HTML** format
 4. Click **Convert**
 
-## Tests
+## Desktop Status
+
+The desktop application is the primary interface today. Tkinter-specific code lives under `interfaces/desktop/`.
+
+The older `ui/` package is still present as a compatibility layer during the migration. It should be treated as legacy plumbing, not as the canonical home for new code.
+
+The older `converter/` package is also legacy plumbing now. The active rendering implementation lives under `adapters/rendering/`.
+
+## Tests and Verification
+
+The repository includes unit and integration tests for the parser, renderer, CLI, PDF compression, and state management.
 
 ```bash
 pytest -q
 ruff check src tests
 ruff format --check src tests
 ```
+
+## Notes
+
+- On Windows, PDF export depends on WeasyPrint and native GTK/Pango libraries.
+- `qpdf` is optional but recommended for smaller PDFs.
+- A future web interface is planned, and the current `core` / `application` split is intended to make that migration simpler.
 
 ## Contributing
 

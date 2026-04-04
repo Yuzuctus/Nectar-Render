@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def _run_gui() -> int:
     import tkinter as tk
 
-    from .ui.app import NectarRenderApp
+    from .interfaces.desktop.app import NectarRenderApp
 
     configure_logging()
     runtime_status = prepare_weasyprint_environment()

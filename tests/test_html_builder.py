@@ -7,6 +7,7 @@ from nectar_render.converter.html_builder import (
     _clamp_float,
     build_document_html,
 )
+from nectar_render.style_schema import style_from_state
 
 
 class TestCssColor:
@@ -80,6 +81,21 @@ class TestBuildDocumentHtml:
             "<pre><code>x</code></pre>", StyleOptions(code_theme="monokai"), "A4"
         )
         assert ".codehilite" in html
+
+    def test_style_state_bounds_match_rendered_css(self) -> None:
+        style = style_from_state(
+            {
+                "body_size_var": 2,
+                "line_height_var": 9.9,
+                "image_scale_var": 250,
+            }
+        )
+
+        html = build_document_html('<p>Demo</p><p><img src="x.png"/></p>', style, "A4")
+
+        assert "font-size: 8px;" in html
+        assert "line-height: 2.4;" in html
+        assert "max-width: 100.0%" in html
 
     def test_includes_page_size(self) -> None:
         html = build_document_html("<p>Test</p>", StyleOptions(), "A4")

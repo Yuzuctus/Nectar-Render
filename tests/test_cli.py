@@ -85,3 +85,34 @@ def test_run_cli_rejects_unknown_preset(monkeypatch, tmp_path: Path, capsys) -> 
     assert "unknown preset 'Modern'" in error_output
     for name in cli_module.BUILTIN_PRESET_NAMES:
         assert name in error_output
+
+
+def test_run_cli_hides_pdf_size_when_postprocess_not_applied(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    markdown_file = tmp_path / "demo.md"
+    markdown_file.write_text("# Demo", encoding="utf-8")
+
+    class FakeService:
+        def convert(
+            self, markdown_file: Path, output_directory: Path, style, export
+        ) -> ConversionResult:
+            pdf_path = output_directory / "demo.pdf"
+            return ConversionResult(
+                pdf_path=pdf_path,
+                pdf_page_count=3,
+                pdf_size_before_bytes=10_000,
+                pdf_size_after_bytes=10_000,
+                pdf_compression_applied=False,
+            )
+
+    monkeypatch.setattr(cli_module, "configure_logging", lambda: None)
+    monkeypatch.setattr(cli_module, "prepare_weasyprint_environment", lambda: None)
+    monkeypatch.setattr(cli_module, "ConversionService", FakeService)
+
+    args = cli_module.build_parser().parse_args(["--input", str(markdown_file)])
+
+    assert cli_module.run_cli(args) == 0
+    output = capsys.readouterr().out
+    assert "PDF pages: 3" in output
+    assert "PDF size:" not in output

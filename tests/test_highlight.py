@@ -1,5 +1,6 @@
 """Tests for the code highlighting module."""
 
+import nectar_render.converter.highlight as highlight_module
 from nectar_render.converter.highlight import (
     build_pygments_css,
     list_available_styles,
@@ -46,3 +47,24 @@ def test_build_pygments_css_monokai_differs_from_default() -> None:
 
 def test_build_pygments_css_falls_back_to_default_for_unknown_style() -> None:
     assert build_pygments_css("nonexistent_theme_xyz") == build_pygments_css("default")
+
+
+def test_list_available_styles_uses_cache(monkeypatch) -> None:
+    calls = {"get_all_styles": 0}
+
+    def fake_get_all_styles():
+        calls["get_all_styles"] += 1
+        return ["default", "native"]
+
+    def fake_is_dark_style(style_name: str) -> bool:
+        return style_name == "native"
+
+    list_available_styles.cache_clear()
+    monkeypatch.setattr(highlight_module, "get_all_styles", fake_get_all_styles)
+    monkeypatch.setattr(highlight_module, "_is_dark_style", fake_is_dark_style)
+
+    first = list_available_styles()
+    second = list_available_styles()
+
+    assert first == second
+    assert calls["get_all_styles"] == 1

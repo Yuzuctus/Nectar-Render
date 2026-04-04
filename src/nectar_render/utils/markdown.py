@@ -41,10 +41,3 @@ def iter_lines_outside_fences(text: str) -> list[tuple[str, bool]]:
         result.append((line, in_fence))
 
     return result
-
-
-def is_inside_fence(lines_fence_map: list[tuple[str, bool]], line_index: int) -> bool:
-    """Check if a given line index is inside a code fence."""
-    if 0 <= line_index < len(lines_fence_map):
-        return lines_fence_map[line_index][1]
-    return False

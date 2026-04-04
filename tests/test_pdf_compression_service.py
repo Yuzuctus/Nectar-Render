@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from pypdf import PdfWriter
 
 from nectar_render.config import CompressionOptions
 from nectar_render.services.pdf_compression_service import PdfCompressionService
@@ -34,6 +35,66 @@ class TestCompressionDisabled:
         options = CompressionOptions(enabled=False)
         service.compress(dummy_pdf, options)
         assert dummy_pdf.read_bytes() == original_bytes
+
+    @patch("shutil.which", return_value=None)
+    def test_remove_metadata_still_runs_when_compression_disabled(
+        self, mock_which, service, tmp_path: Path, monkeypatch
+    ):
+        pdf_path = tmp_path / "with-metadata.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_metadata({"/Title": "Demo"})
+        with pdf_path.open("wb") as handle:
+            writer.write(handle)
+
+        original_size = pdf_path.stat().st_size
+
+        def fake_remove_metadata(source_path: Path) -> Path:
+            temp_path = source_path.parent / "metadata-clean.pdf"
+            temp_path.write_bytes(b"x" * (original_size - 16))
+            return temp_path
+
+        monkeypatch.setattr(service, "_remove_metadata", fake_remove_metadata)
+        result = service.compress(
+            pdf_path,
+            CompressionOptions(enabled=False, remove_metadata=True),
+        )
+
+        assert result.path == pdf_path
+        assert result.applied is True
+        assert result.tool == "pypdf"
+        assert result.final_size < original_size
+
+    @patch("shutil.which", return_value=None)
+    def test_remove_metadata_larger_output_keeps_original(
+        self, mock_which, service, tmp_path: Path, monkeypatch
+    ):
+        pdf_path = tmp_path / "with-metadata.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=72, height=72)
+        writer.add_metadata({"/Title": "Demo"})
+        with pdf_path.open("wb") as handle:
+            writer.write(handle)
+
+        original_bytes = pdf_path.read_bytes()
+        original_size = pdf_path.stat().st_size
+
+        def fake_remove_metadata(source_path: Path) -> Path:
+            temp_path = source_path.parent / "metadata-clean-larger.pdf"
+            temp_path.write_bytes(b"y" * (original_size + 32))
+            return temp_path
+
+        monkeypatch.setattr(service, "_remove_metadata", fake_remove_metadata)
+        result = service.compress(
+            pdf_path,
+            CompressionOptions(enabled=False, remove_metadata=True),
+        )
+
+        assert result.path == pdf_path
+        assert result.applied is False
+        assert result.final_size == original_size
+        assert pdf_path.read_bytes() == original_bytes
+        assert not (tmp_path / "metadata-clean-larger.pdf").exists()
 
 
 class TestQpdfCompression:
@@ -80,6 +141,68 @@ class TestQpdfCompression:
 
         assert not result.applied
         assert result.final_size == original_size
+
+    @patch("shutil.which", return_value="/usr/bin/qpdf")
+    @patch("subprocess.run")
+    def test_metadata_cleanup_does_not_promote_larger_pdf(
+        self, mock_run, mock_which, service, dummy_pdf, monkeypatch
+    ):
+        original_size = dummy_pdf.stat().st_size
+
+        def run_side_effect(cmd, **kwargs):
+            temp_path = Path(cmd[-1])
+            temp_path.write_bytes(b"x" * (original_size * 2))
+            return MagicMock(returncode=0, stderr="")
+
+        def remove_metadata_side_effect(source_path: Path):
+            temp_path = source_path.parent / "metadata-clean.pdf"
+            temp_path.write_bytes(b"y" * (original_size + 10))
+            return temp_path
+
+        mock_run.side_effect = run_side_effect
+        monkeypatch.setattr(service, "_remove_metadata", remove_metadata_side_effect)
+
+        result = service.compress(
+            dummy_pdf,
+            CompressionOptions(enabled=True, remove_metadata=True),
+        )
+
+        assert not result.applied
+        assert result.path == dummy_pdf
+        assert result.final_size == original_size
+        assert dummy_pdf.stat().st_size == original_size
+        assert not (dummy_pdf.parent / "metadata-clean.pdf").exists()
+
+    @patch("shutil.which", return_value="/usr/bin/qpdf")
+    @patch("subprocess.run")
+    def test_qpdf_then_metadata_growth_keeps_smaller_qpdf_result(
+        self, mock_run, mock_which, service, dummy_pdf, monkeypatch
+    ):
+        original_size = dummy_pdf.stat().st_size
+
+        def qpdf_side_effect(cmd, **kwargs):
+            temp_path = Path(cmd[-1])
+            temp_path.write_bytes(b"s" * (original_size - 64))
+            return MagicMock(returncode=0, stderr="")
+
+        def fake_remove_metadata(source_path: Path) -> Path:
+            temp_path = source_path.parent / "metadata-growth.pdf"
+            temp_path.write_bytes(b"m" * (original_size + 64))
+            return temp_path
+
+        mock_run.side_effect = qpdf_side_effect
+        monkeypatch.setattr(service, "_remove_metadata", fake_remove_metadata)
+        result = service.compress(
+            dummy_pdf,
+            CompressionOptions(enabled=True, profile="balanced", remove_metadata=True),
+        )
+
+        assert result.path == dummy_pdf
+        assert result.applied is True
+        assert result.tool == "qpdf"
+        assert result.final_size < original_size
+        assert dummy_pdf.stat().st_size == result.final_size
+        assert not (dummy_pdf.parent / "metadata-growth.pdf").exists()
 
     @patch("shutil.which", return_value="/usr/bin/qpdf")
     @patch("subprocess.run")

@@ -158,9 +158,11 @@ def test_image_index_is_cached_for_same_assets_root(
     build_calls: list[Path] = []
     original_builder = markdown_parser_module._build_image_index
 
-    def _counting_builder(root: Path) -> dict[str, list[Path]]:
+    def _counting_builder(
+        root: Path, file_names: set[str] | None = None
+    ) -> dict[str, list[Path]]:
         build_calls.append(root)
-        return original_builder(root)
+        return original_builder(root, file_names)
 
     monkeypatch.setattr(markdown_parser_module, "_build_image_index", _counting_builder)
 
@@ -183,9 +185,11 @@ def test_image_index_cache_can_be_invalidated(monkeypatch, tmp_path: Path) -> No
     build_calls: list[Path] = []
     original_builder = markdown_parser_module._build_image_index
 
-    def _counting_builder(root: Path) -> dict[str, list[Path]]:
+    def _counting_builder(
+        root: Path, file_names: set[str] | None = None
+    ) -> dict[str, list[Path]]:
         build_calls.append(root)
-        return original_builder(root)
+        return original_builder(root, file_names)
 
     monkeypatch.setattr(markdown_parser_module, "_build_image_index", _counting_builder)
 
@@ -198,6 +202,45 @@ def test_image_index_cache_can_be_invalidated(monkeypatch, tmp_path: Path) -> No
     )
 
     assert build_calls == [tmp_path, tmp_path]
+
+
+def test_direct_image_resolution_skips_index_fallback(
+    monkeypatch, tmp_path: Path
+) -> None:
+    image_path = tmp_path / "images" / "diagram.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"fake")
+
+    def fail_get_image_index(root: Path, file_names: set[str]) -> dict[str, list[Path]]:
+        raise AssertionError("image index fallback should not run for direct hits")
+
+    monkeypatch.setattr(
+        markdown_parser_module, "_get_image_index", fail_get_image_index
+    )
+
+    html = parse_markdown(
+        "![Diag](images/diagram.png)", include_footnotes=False, assets_root=tmp_path
+    )
+
+    assert image_path.resolve().as_uri() in html
+
+
+def test_image_index_cache_is_bounded_by_root_count(tmp_path: Path) -> None:
+    invalidate_image_index_cache()
+
+    for index in range(markdown_parser_module._IMAGE_CACHE_MAX_ROOTS + 3):
+        assets_root = tmp_path / f"root-{index}"
+        image_path = assets_root / "nested" / "schema.png"
+        image_path.parent.mkdir(parents=True)
+        image_path.write_bytes(b"fake")
+        parse_markdown(
+            "![Schema](schema.png)", include_footnotes=False, assets_root=assets_root
+        )
+
+    assert (
+        len(markdown_parser_module._IMAGE_INDEX_CACHE)
+        <= markdown_parser_module._IMAGE_CACHE_MAX_ROOTS
+    )
 
 
 def test_image_url_encoded_path_and_query_are_resolved(tmp_path: Path) -> None:
@@ -246,11 +289,10 @@ def test_consecutive_images_are_split_into_image_blocks(tmp_path: Path) -> None:
     assert len(image_blocks) >= 2
 
 
-def test_parse_markdown_can_sanitize_html_when_enabled() -> None:
+def test_parse_markdown_sanitizes_html_by_default() -> None:
     html = parse_markdown(
         'Avant<script>alert(1)</script><p onclick="x()">ok</p>',
         include_footnotes=False,
-        sanitize_html=True,
     )
     assert "<script" not in html
     assert "onclick=" not in html
@@ -263,6 +305,26 @@ def test_parse_markdown_keeps_raw_html_when_sanitization_disabled() -> None:
         sanitize_html=False,
     )
     assert "<script>alert(1)</script>" in html
+
+
+def test_parse_markdown_neutralizes_file_links_when_sanitization_enabled() -> None:
+    html = parse_markdown(
+        '<a href="file:///C:/secret.txt">x</a>',
+        include_footnotes=False,
+        sanitize_html=True,
+    )
+    assert 'href="file:///C:/secret.txt"' not in html
+    assert "<a>x</a>" in html
+
+
+def test_parse_markdown_neutralizes_data_images_when_sanitization_enabled() -> None:
+    html = parse_markdown(
+        '<img src="data:image/png;base64,AAAA" alt="x"/>',
+        include_footnotes=False,
+        sanitize_html=True,
+    )
+    assert 'src="data:image/png;base64,AAAA"' not in html
+    assert '<img alt="x"/>' in html or '<img alt="x">' in html
 
 
 def test_heading_chain_gets_pagination_anchor_classes() -> None:

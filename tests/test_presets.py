@@ -1,6 +1,7 @@
 """Tests for built-in presets."""
 
 from nectar_render.cli import build_parser
+from nectar_render.style_schema import style_state_keys
 from nectar_render.ui.presets import (
     BUILTIN_PRESETS,
     BUILTIN_PRESET_NAMES,
@@ -9,35 +10,7 @@ from nectar_render.ui.presets import (
 )
 
 
-# All style keys that a preset should define
-_REQUIRED_STYLE_KEYS = {
-    "body_font_var",
-    "heading_font_var",
-    "body_size_var",
-    "line_height_var",
-    "heading_color_var",
-    "code_font_var",
-    "code_size_var",
-    "code_line_height_var",
-    "code_theme_var",
-    "margin_top_var",
-    "margin_right_var",
-    "margin_bottom_var",
-    "margin_left_var",
-    "footer_text_var",
-    "footer_align_var",
-    "include_notes_var",
-    "footnote_size_var",
-    "footnote_text_color_var",
-    "footnote_marker_color_var",
-    "table_stripes_var",
-    "table_odd_color_var",
-    "table_even_color_var",
-    "table_pad_y_var",
-    "table_pad_x_var",
-    "image_scale_var",
-    "show_horizontal_rules_var",
-}
+_REQUIRED_STYLE_KEYS = set(style_state_keys())
 
 
 def test_nine_builtin_presets_exist() -> None:

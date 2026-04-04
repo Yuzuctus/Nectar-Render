@@ -35,12 +35,12 @@ if "%PYTHON_CMD%"=="" (
 )
 
 echo [INFO] Checking Python dependencies...
-"%PYTHON_CMD%" -c "import importlib.util,sys;mods=['markdown','pygments','bs4','weasyprint','pytest'];missing=[m for m in mods if importlib.util.find_spec(m) is None];sys.exit(0 if not missing else 1)"
+"%PYTHON_CMD%" -c "import importlib.util,sys;mods=['markdown','pygments','bs4','weasyprint','bleach','pypdf'];missing=[m for m in mods if importlib.util.find_spec(m) is None];sys.exit(0 if not missing else 1)"
 if errorlevel 1 (
-  echo [INFO] Installing/upgrading project dependencies...
+  echo [INFO] Installing/upgrading project runtime dependencies...
   "%PYTHON_CMD%" -m pip install --upgrade pip
   if errorlevel 1 goto :fail
-  "%PYTHON_CMD%" -m pip install -e ".[dev]"
+  "%PYTHON_CMD%" -m pip install -e .
   if errorlevel 1 goto :fail
 ) else (
   echo [INFO] Dependencies already installed.
@@ -52,14 +52,14 @@ if errorlevel 1 (
 
   where winget >nul 2>&1
   if not errorlevel 1 (
-    winget install --id qpdf.qpdf --accept-package-agreements --accept-source-agreements --silent >nul 2>&1
+    winget install --id qpdf.qpdf --accept-package-agreements --accept-source-agreements --silent
   )
 
   where qpdf >nul 2>&1
   if errorlevel 1 (
     where choco >nul 2>&1
     if not errorlevel 1 (
-      choco install qpdf -y >nul 2>&1
+      choco install qpdf -y
     )
   )
 
@@ -78,13 +78,13 @@ if errorlevel 1 (
 
 call :configure_weasyprint_runtime
 
-"%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
+"%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint"
 if errorlevel 1 (
   echo [INFO] WeasyPrint is installed but system DLLs appear to be missing.
   echo [INFO] Attempting automatic installation of MSYS2 + Pango...
   call :install_weasyprint_runtime
   call :configure_weasyprint_runtime
-  "%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint" >nul 2>&1
+  "%PYTHON_CMD%" -c "from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); import weasyprint"
   if errorlevel 1 (
     echo [WARNING] WeasyPrint is installed but system DLLs are still missing.
     echo [WARNING] For PDF on Windows: check MSYS2 + Pango then try again.
@@ -129,7 +129,7 @@ if errorlevel 1 (
 )
 
 if not exist "C:\msys64\usr\bin\bash.exe" (
-  winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements --silent >nul 2>&1
+  winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements --silent
 )
 
 if not exist "C:\msys64\usr\bin\bash.exe" (
@@ -140,7 +140,7 @@ if not exist "C:\msys64\usr\bin\bash.exe" (
 )
 
 echo [INFO] Installing Pango via MSYS2...
-"C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-pango" >nul 2>&1
+"C:\msys64\usr\bin\bash.exe" -lc "pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-pango"
 if errorlevel 1 (
   echo [WARNING] Automatic Pango installation failed.
   echo [WARNING] Run manually:
