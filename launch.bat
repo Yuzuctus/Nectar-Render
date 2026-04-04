@@ -4,7 +4,6 @@ setlocal
 cd /d "%~dp0"
 
 set "PROJECT_ROOT=%~dp0"
-set "PYTHONPATH=%PROJECT_ROOT%src;%PYTHONPATH%"
 
 call "%PROJECT_ROOT%install_dependencies.bat"
 if errorlevel 1 (

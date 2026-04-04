@@ -7,6 +7,7 @@ import tkinter as tk
 from pathlib import Path
 
 import nectar_render.ui.state_manager as state_manager_module
+import pytest
 from nectar_render.ui.state_manager import StateManager
 
 
@@ -136,6 +137,22 @@ def test_load_last_state_ignores_invalid_json(tmp_path: Path) -> None:
     assert tk_vars["format_var"].get() == "PDF"
 
 
+def test_load_last_state_logs_warning_for_invalid_json(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    manager, _root, _tk_vars, _status_var, _ensured_fonts = _build_state_manager(
+        tmp_path
+    )
+    manager.state_file.write_bytes(b"{not-json")
+
+    with caplog.at_level("WARNING", logger=state_manager_module.logger.name):
+        manager.load_last_state()
+
+    assert "Failed to load JSON file" in caplog.text
+    assert str(manager.state_file) in caplog.text
+    assert "JSONDecodeError" in caplog.text
+
+
 def test_load_selected_user_preset_normalizes_untrusted_state(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -168,3 +185,24 @@ def test_load_selected_user_preset_normalizes_untrusted_state(
     assert tk_vars["body_size_var"].get() == 24
     assert tk_vars["image_scale_var"].get() == 40.0
     assert status_var.get() == "Preset loaded: Broken"
+
+
+def test_save_json_file_replaces_target_atomically(monkeypatch, tmp_path: Path) -> None:
+    target = tmp_path / "state.json"
+    target.write_text('{"stale": true}', encoding="utf-8")
+    payload = {"state": {"format_var": "PDF+HTML"}}
+    replace_calls: list[tuple[Path, Path]] = []
+    original_replace = Path.replace
+
+    def tracking_replace(self: Path, target_path: Path) -> Path:
+        replace_calls.append((self, target_path))
+        return original_replace(self, target_path)
+
+    monkeypatch.setattr(Path, "replace", tracking_replace)
+
+    state_manager_module._save_json_file(target, payload)
+
+    assert replace_calls
+    assert replace_calls[0][1] == target
+    assert json.loads(target.read_text(encoding="utf-8")) == payload
+    assert not list(tmp_path.glob("state.*.tmp"))
