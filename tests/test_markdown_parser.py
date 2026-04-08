@@ -165,6 +165,20 @@ def test_image_filename_is_found_in_subfolders(tmp_path: Path) -> None:
     assert "nested/schema.png" in html
 
 
+def test_svg_image_filename_is_found_in_subfolders(tmp_path: Path) -> None:
+    image_path = tmp_path / "assets" / "nested" / "diagram.svg"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>',
+        encoding="utf-8",
+    )
+
+    html = parse_markdown(
+        "![Diagram](diagram.svg)", include_footnotes=False, assets_root=tmp_path
+    )
+    assert "nested/diagram.svg" in html
+
+
 def test_image_index_is_cached_for_same_assets_root(
     monkeypatch, tmp_path: Path
 ) -> None:

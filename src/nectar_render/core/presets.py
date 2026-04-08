@@ -302,10 +302,3 @@ def get_builtin_preset(name: str) -> StyleOptions | None:
     if preset is None:
         return None
     return StyleOptions(**asdict(preset))
-
-
-def get_builtin_preset_options(name: str) -> dict[str, object] | None:
-    preset = get_builtin_preset(name)
-    if preset is None:
-        return None
-    return asdict(preset)

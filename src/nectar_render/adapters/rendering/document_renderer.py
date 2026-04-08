@@ -12,12 +12,14 @@ def build_markdown_body_html(
     *,
     style: StyleOptions,
     assets_root: Path | None = None,
+    api_mode: bool = False,
 ) -> str:
     return parse_markdown(
         markdown_text,
         include_footnotes=style.include_footnotes,
         assets_root=assets_root,
         sanitize_html=style.sanitize_html,
+        api_mode=api_mode,
     )
 
 
@@ -28,11 +30,13 @@ def build_markdown_document_html(
     page_size: str,
     title: str,
     assets_root: Path | None = None,
+    api_mode: bool = False,
 ) -> str:
     body_html = build_markdown_body_html(
         markdown_text,
         style=style,
         assets_root=assets_root,
+        api_mode=api_mode,
     )
     return build_document_html(
         body_html=body_html,

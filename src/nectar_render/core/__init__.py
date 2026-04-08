@@ -2,7 +2,6 @@ from .presets import (
     BUILTIN_PRESET_NAMES,
     BUILTIN_PRESET_STYLES,
     get_builtin_preset,
-    get_builtin_preset_options,
     is_builtin_preset,
 )
 from .styles import (
@@ -40,7 +39,6 @@ __all__ = [
     "StyleOptions",
     "UI_THEMES",
     "get_builtin_preset",
-    "get_builtin_preset_options",
     "is_builtin_preset",
     "normalize_style_option_value",
     "sanitize_text_value",

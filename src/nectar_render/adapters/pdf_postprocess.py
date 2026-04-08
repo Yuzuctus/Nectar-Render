@@ -51,13 +51,14 @@ class PdfCompressionService:
                 )
                 if compressed is not None:
                     compressed_size = compressed.stat().st_size
-                    if compressed_size < original_size:
+                    current_size = working_path.stat().st_size
+                    if compressed_size < current_size:
                         working_path = compressed
                         tool_used = "qpdf"
                     else:
                         compressed.unlink(missing_ok=True)
                         logger.info(
-                            "Skipping qpdf output because it is not smaller than the original: %s",
+                            "Skipping qpdf output because it is not smaller than the current file: %s",
                             pdf_path,
                         )
                 else:
@@ -70,7 +71,8 @@ class PdfCompressionService:
             metadata_clean = self._remove_metadata(working_path)
             if metadata_clean is not None:
                 metadata_size = metadata_clean.stat().st_size
-                if metadata_size <= original_size:
+                current_size = working_path.stat().st_size
+                if metadata_size <= current_size:
                     if working_path != pdf_path:
                         working_path.unlink(missing_ok=True)
                     working_path = metadata_clean
@@ -78,7 +80,7 @@ class PdfCompressionService:
                 else:
                     metadata_clean.unlink(missing_ok=True)
                     logger.info(
-                        "Skipping metadata-cleaned PDF because it is larger than the original: %s",
+                        "Skipping metadata-cleaned PDF because it is larger than the current file: %s",
                         pdf_path,
                     )
 

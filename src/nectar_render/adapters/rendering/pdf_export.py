@@ -21,6 +21,7 @@ def build_html_from_markdown(
     page_size: str,
     title: str,
     assets_root: Path | None = None,
+    api_mode: bool = False,
 ) -> str:
     return build_markdown_document_html(
         markdown_text,
@@ -28,6 +29,7 @@ def build_html_from_markdown(
         page_size=page_size,
         title=title,
         assets_root=assets_root,
+        api_mode=api_mode,
     )
 
 
@@ -39,6 +41,7 @@ def export_html(
     title: str,
     assets_root: Path | None = None,
     document_html: str | None = None,
+    api_mode: bool = False,
 ) -> Path:
     html = document_html
     if html is None:
@@ -48,6 +51,7 @@ def export_html(
             page_size=page_size,
             title=title,
             assets_root=assets_root,
+            api_mode=api_mode,
         )
     return write_html_document(output_path, html)
 
@@ -61,6 +65,7 @@ def export_pdf(
     base_url: Path | None = None,
     compression: CompressionOptions | None = None,
     document_html: str | None = None,
+    api_mode: bool = False,
 ) -> tuple[Path, int]:
     prepare_weasyprint_environment()
     try:
@@ -76,6 +81,7 @@ def export_pdf(
             page_size=page_size,
             title=title,
             assets_root=base_url,
+            api_mode=api_mode,
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = HTML(string=html, base_url=str(base_url) if base_url else None).render()

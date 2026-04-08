@@ -1,32 +1,32 @@
 # Nectar Render
 
-CLI tool and library to convert Markdown files to styled PDF and HTML with syntax highlighting and preset themes.
+CLI tool, Python library, and web stack to convert Markdown into styled PDF and HTML documents.
 
 ![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)
 ![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)
 
-## Features
+## Highlights
 
-- Convert Markdown to **PDF**, **HTML**, or both in one pass
-- **9 built-in presets**: Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, Elegant
-- Syntax highlighting for code blocks (7+ Pygments themes)
-- Full typography control: fonts, sizes, colors for body, headings (H1-H6), and code
-- Page break markers: `<!-- pagebreak -->`, `\pagebreak`, `[[PAGEBREAK]]`
-- Smart pagination to avoid orphaned headings and split tables
-- Footnotes compatible with PDF rendering (CSS `float: footnote`)
-- Obsidian image embeds: `![[image.png]]`
-- Optional PDF compression via `qpdf`
+- Convert Markdown to `PDF`, `HTML`, or both (`PDF+HTML`) in one run
+- 9 built-in presets: Academic, Corporate, Creative, Developer, Elegant, Magazine, Minimal, Notebook, Technical
+- Full style controls (typography, heading levels, margins, tables, code theme, footnotes, image scale)
+- Image modes: `WITH_IMAGES`, `ALT_ONLY`, `STRIP`
+- Obsidian image embeds (`![[image.png]]`) and page break markers (`<!-- pagebreak -->`, `\pagebreak`, `[[PAGEBREAK]]`)
+- Optional PDF post-processing with `qpdf` + metadata stripping fallback
+- Multiple entry points: Python API, CLI, FastAPI backend, and static frontend
 
-## Architecture
+## Project Components
 
-The codebase is organized in four layers:
+| Component | Path | Purpose |
+|---|---|---|
+| Python package | `src/nectar_render/` | Core conversion pipeline and public API |
+| CLI | `src/nectar_render/cli.py` | Local file conversion workflow |
+| FastAPI backend | `backend/` | HTTP endpoints for web/API integrations |
+| Web frontend | `frontend/` | Browser UI for upload, styling, and conversion |
 
-- `core/` contains the canonical style and preset models.
-- `application/` contains use cases such as conversion and preview.
-- `adapters/` contains rendering, storage, and runtime integration.
-- `adapters/rendering/` is the Markdown -> HTML -> PDF pipeline.
+## Installation
 
-## Quick Start
+### 1) Core package (library + CLI)
 
 ```bash
 python -m venv .venv
@@ -35,102 +35,211 @@ python -m venv .venv
 # Linux/macOS:
 source .venv/bin/activate
 
-pip install -e ".[dev]"
-nectar-render
+pip install -e .
 ```
 
-Or run directly:
+### 2) Development tools (tests/lint)
 
 ```bash
-python -m nectar_render.main
+pip install -e ".[dev]"
 ```
 
-## CLI
+### 3) Backend dependencies (optional)
+
+The API uses extra packages that are intentionally separated from the core package:
+
+```bash
+pip install -r backend/requirements.txt
+```
+
+## CLI Usage
+
+Run the entry point:
 
 ```bash
 nectar-render --input examples/sample.md --format pdf
-nectar-render --input examples/sample.md --format html
-nectar-render --input examples/sample.md --format pdf+html --preset Academic
 ```
 
-Available options:
+Or run as a module:
 
-- `--input`, `-i`: Markdown input file
-- `--output`, `-o`: Output directory
+```bash
+python -m nectar_render.main --input examples/sample.md --format pdf+html --preset academic
+```
+
+Common options:
+
+- `--input`, `-i` (required): Markdown file
+- `--output`, `-o`: output directory (default: `<input_dir>/output`)
 - `--format`, `-f`: `pdf`, `html`, or `pdf+html`
-- `--page-size`: `A4`, `Letter`, `Legal`, `A3`, `A5`
-- `--preset`, `-p`: built-in style preset
-- `--no-compression`: disable PDF compression
+- `--page-size`: `a4`, `letter`, `legal`, `a3`, `a5`
+- `--preset`, `-p`: built-in preset (case-insensitive)
+- `--no-compression`: disables qpdf compression step
 
-## Built-in Presets
+Example:
 
-Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, and Elegant are available out of the box.
+```bash
+nectar-render --input examples/sample.md --format pdf+html --page-size a4 --preset Developer
+```
 
-## WeasyPrint on Windows
+## Python API Example
 
-HTML export works out of the box. PDF export requires native GTK/Pango libraries.
+```python
+from pathlib import Path
 
-The app auto-detects common installation paths:
+from nectar_render.application.conversion import ConversionService, ImageMode
+from nectar_render.core.styles import CompressionOptions, ExportOptions, StyleOptions
 
-- `C:\msys64\ucrt64\bin`
-- `C:\msys64\mingw64\bin`
-- `WEASYPRINT_DLL_DIRECTORIES` environment variable
+service = ConversionService()
 
-If you see errors like `cannot load library 'libgobject-2.0-0'`, install MSYS2 and Pango:
+result = service.convert(
+    markdown_file=Path("examples/sample.md"),
+    output_directory=Path("output"),
+    style=StyleOptions(),
+    export=ExportOptions(
+        output_format="PDF+HTML",
+        page_size="A4",
+        compression=CompressionOptions(enabled=True, profile="balanced"),
+    ),
+    image_mode=ImageMode.WITH_IMAGES,
+)
+
+print(result.pdf_path)
+print(result.html_path)
+```
+
+## FastAPI Backend
+
+Start the API server:
+
+```bash
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Available endpoints:
+
+- `GET /analyze/health`
+- `POST /analyze/` (upload one `.md` file, returns missing image names)
+- `POST /convert` (multipart form conversion endpoint)
+
+Minimal conversion request:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/convert" \
+  -F "markdown_text=# Hello\n\nGenerated by API" \
+  -F "output_format=PDF" \
+  -o output.pdf
+```
+
+Important API behavior:
+
+- Accepted output formats: `PDF`, `HTML`, `PDF+HTML`
+- `PDF+HTML` returns a `.zip` (`output.pdf` + `output.html`)
+- In `WITH_IMAGES`, unresolved references return `422` with `{"missing_images": [...]}`
+- In `WITH_IMAGES`, external URLs and absolute image paths are rejected
+
+API payload limits:
+
+- Markdown: `2 MB` max
+- Max asset count: `128`
+- Max per-asset size: `10 MB`
+- Max total assets size: `50 MB`
+- Allowed uploaded asset extensions: `.apng`, `.avif`, `.bmp`, `.gif`, `.jpeg`, `.jpg`, `.png`, `.tif`, `.tiff`, `.webp`
+
+### CORS
+
+By default, the API allows:
+
+- `http://localhost:3000`
+- `http://127.0.0.1:3000`
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Override with:
+
+```powershell
+$env:NECTAR_CORS_ORIGINS = "http://localhost:3000,http://localhost:5173"
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+## Frontend Web UI
+
+The frontend is static HTML/CSS/JS (no build step required).
+
+1. Start the backend on port `8000`
+2. Serve the `frontend/` directory on another port, for example:
+
+```bash
+python -m http.server 3000 --directory frontend
+```
+
+3. Open `http://127.0.0.1:3000`
+
+API base URL resolution in the frontend:
+
+1. `window.NECTAR_API_BASE` (if set)
+2. `<meta name="nectar-api-base" content="...">` (if present)
+3. `http://localhost:8000` fallback in localhost contexts
+
+## PDF Rendering Notes
+
+HTML export works with Python dependencies only.
+
+PDF export uses WeasyPrint and requires native libraries on each OS:
+
+- Windows: GTK/Pango runtime required
+- Linux/macOS: system libraries required by WeasyPrint
+
+Windows helper (`prepare_weasyprint_environment`) auto-detects common paths, including:
+
+- `WEASYPRINT_DLL_DIRECTORIES` env var
+- `MSYS2_ROOT` env var
+- `C:\msys64\ucrt64\bin`, `C:\msys64\mingw64\bin`, `C:\msys64\clang64\bin`
+- `C:\tools\msys64\...`
+- GTK runtime paths under `C:\Program Files\...`
+
+Recommended Windows setup:
 
 ```powershell
 winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements
 C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed mingw-w64-ucrt-x86_64-pango"
 ```
 
-## PDF Compression
+## PDF Post-Processing
 
-`qpdf` is optional but recommended for smaller PDF files:
+- `qpdf` is optional (install separately)
+- Compression profiles: `balanced` (default) and `max`
+- Metadata cleanup is handled via `pypdf`
+- Post-processed output is only promoted when size is not worse than the original
+
+Install `qpdf` on Windows:
 
 ```powershell
 winget install --id qpdf.qpdf
 ```
 
-Two profiles are available: **balanced** (default) and **max**.
-Post-processing is only kept when the resulting PDF does not grow beyond the original file size.
+## Examples
 
-## Example
+Sample Markdown and assets are included:
 
-The repository includes a showcase file:
+- `examples/sample.md`
+- `examples/assets/service-overview.svg`
+- `examples/assets/diagrams/sequence.svg`
 
-```
-examples/sample.md
-examples/assets/service-overview.svg
-examples/assets/diagrams/sequence.svg
-```
-
-Convert it using the CLI:
+## Test and Quality Checks
 
 ```bash
-nectar-render --input examples/sample.md --format pdf+html
-```
-
-## Tests and Verification
-
-The repository includes unit and integration tests for the parser, renderer, CLI, PDF compression, and state management.
-
-```bash
-pytest -q
+pytest -q -m "not requires_weasyprint"
 ruff check src tests
 ruff format --check src tests
 ```
 
-## Notes
-
-- On Windows, PDF export depends on WeasyPrint and native GTK/Pango libraries.
-- `qpdf` is optional but recommended for smaller PDFs.
-- A future web interface is planned, and the current `core` / `application` split is intended to make that migration simpler.
+CI runs on Ubuntu and Windows with Python `3.11`, `3.12`, and `3.13`.
 
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Run `pytest` before submitting
+3. Run tests and lint checks
 4. Open a pull request
 
 ## License
@@ -140,5 +249,4 @@ ruff format --check src tests
 You may use, copy, modify, and redistribute this project for noncommercial purposes.
 Commercial use is not permitted without separate permission from the author.
 
-Versions that were already distributed under MIT before this change remain available
-under MIT for those existing copies.
+Versions distributed under MIT before the license change remain available under MIT for those existing copies.

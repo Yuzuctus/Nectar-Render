@@ -10,26 +10,23 @@ function resolveApiBase() {
     }
 
     const { protocol, hostname, origin } = window.location;
-    if ((hostname === 'localhost' || hostname === '127.0.0.1') && /^https?:$/.test(protocol)) {
-        return `${protocol}//${hostname}:8000`;
+    if ((hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') && /^https?:$/.test(protocol)) {
+        return `${protocol}//127.0.0.1:8000`;
     }
     if (/^https?:$/.test(protocol) && origin && origin !== 'null') {
         return origin.replace(/\/+$/, '');
     }
-    return 'http://localhost:8000';
+    return 'http://127.0.0.1:8000';
 }
 
-const API_BASE = resolveApiBase();
+let API_BASE = resolveApiBase();
 
-// Google Fonts that need to be loaded dynamically
 const GOOGLE_FONTS = [
     'Inter', 'Lato', 'Merriweather', 'Montserrat', 'Nunito', 'Open Sans',
     'Playfair Display', 'Poppins', 'Raleway', 'Roboto', 'Source Sans Pro',
     'Fira Code', 'Fira Mono', 'IBM Plex Mono', 'Inconsolata', 'JetBrains Mono',
     'Roboto Mono', 'Source Code Pro', 'Ubuntu Mono'
 ];
-
-// Track loaded Google Fonts to avoid duplicate <link> tags
 const loadedGoogleFonts = new Set();
 
 const PRESETS = {
@@ -114,7 +111,8 @@ const DEFAULTS = {
     table_row_odd_color: '#ffffff', table_row_even_color: '#f3f4f6',
     table_cell_padding_y_px: 6, table_cell_padding_x_px: 8,
     image_scale: 0.9, sanitize_html: true, show_horizontal_rules: true,
-    compress_pdf: false, strip_metadata: false,
+    compress_pdf: true, compression_profile: 'balanced', strip_metadata: true,
+    compression_timeout: 45, keep_original_on_fail: true,
 };
 
 const STYLE_INPUT_IDS = [
@@ -129,15 +127,20 @@ const STYLE_INPUT_IDS = [
     'tableRowStripes', 'tableRowOddColor', 'tableRowEvenColor',
     'tableCellPaddingY', 'tableCellPaddingX',
     'imageScale', 'sanitizeHtml', 'showHorizontalRules',
-    'compressPdf', 'stripMetadata',
+    'compressPdf', 'compressionProfile', 'stripMetadata',
+    'compressionTimeout', 'keepOriginalOnFail',
 ];
+
+const HEADING_COLOR_IDS = ['h1Color', 'h2Color', 'h3Color', 'h4Color', 'h5Color', 'h6Color'];
 
 let selectedFile = null;
 let selectedMarkdownText = '';
 let pdfBlob = null;
 let imageFiles = [];
 let downloadFilename = 'output.pdf';
-// PART 8: Track last blob URL to prevent memory leaks
+let userModifiedFields = new Set();
+let currentPresetValues = null;
+let previewRevision = 0;
 window._lastBlobUrl = null;
 
 const step1 = document.getElementById('step1');
@@ -145,20 +148,21 @@ const step2 = document.getElementById('step2');
 const step3 = document.getElementById('step3');
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
-const spinner = document.getElementById('spinner');
-const convertSpinner = document.getElementById('convertSpinner');
 const nextBtn = document.getElementById('nextBtn');
 const backBtn = document.getElementById('backBtn');
 const convertBtn = document.getElementById('convertBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const startOverBtn = document.getElementById('startOverBtn');
 const presetSelect = document.getElementById('presetSelect');
-const imageDropZone = document.getElementById('imageDropZone');
-const imageFilesInput = document.getElementById('imageFilesInput');
-const imageFileList = document.getElementById('imageFileList');
 const convertError = document.getElementById('convertError');
 const toast = document.getElementById('toast');
-// PART 2 & 3: New UI elements
+const apiStatus = document.getElementById('apiStatus');
+
+const sidebarImageDrop = document.getElementById('sidebarImageDrop');
+const imageFilesInput = document.getElementById('imageFilesInput');
+const imageFileList = document.getElementById('imageFileList');
+const sidebarImagesSection = document.getElementById('sidebarImagesSection');
+
 const missingImagesDialog = document.getElementById('missingImagesDialog');
 const missingImagesList = document.getElementById('missingImagesList');
 const continueWithoutImages = document.getElementById('continueWithoutImages');
@@ -166,15 +170,15 @@ const addMissingImages = document.getElementById('addMissingImages');
 const loadingOverlay = document.getElementById('loadingOverlay');
 const loadingText = document.getElementById('loadingText');
 
-// PART 8: Add bounds check to showStep
 function showStep(n) {
     const steps = [step1, step2, step3];
     if (n < 1 || n > steps.length) {
-        console.warn(`showStep: Invalid step number ${n}`);
         return;
     }
-    steps.forEach(s => s.classList.remove('active'));
-    steps.forEach(s => s.classList.add('hidden'));
+    steps.forEach((s) => {
+        s.classList.remove('active');
+        s.classList.add('hidden');
+    });
     steps[n - 1].classList.remove('hidden');
     steps[n - 1].classList.add('active');
 }
@@ -187,12 +191,11 @@ function showToast(msg, type = 'info') {
     toast._timer = setTimeout(() => toast.classList.add('hidden'), 4000);
 }
 
-// PART 3: Loading overlay helpers
 function showLoadingOverlay(format) {
     const formatText = {
-        'PDF': 'Generation du PDF...',
-        'HTML': 'Generation du HTML...',
-        'PDF+HTML': 'Generation du ZIP...'
+        PDF: 'Generation du PDF...',
+        HTML: 'Generation du HTML...',
+        'PDF+HTML': 'Generation du ZIP...',
     };
     loadingText.textContent = formatText[format] || 'Conversion en cours...';
     loadingOverlay.classList.remove('hidden', 'fade-out');
@@ -201,13 +204,34 @@ function showLoadingOverlay(format) {
 function hideLoadingOverlay(immediate = false) {
     if (immediate) {
         loadingOverlay.classList.add('hidden');
-    } else {
-        loadingOverlay.classList.add('fade-out');
-        setTimeout(() => loadingOverlay.classList.add('hidden'), 300);
+        return;
     }
+    loadingOverlay.classList.add('fade-out');
+    setTimeout(() => loadingOverlay.classList.add('hidden'), 300);
 }
 
-// PART 5: Google Font loader
+function setupTabs() {
+    const tabsNav = document.querySelector('.tabs-nav');
+    if (!tabsNav) return;
+
+    tabsNav.addEventListener('click', (e) => {
+        const tabBtn = e.target.closest('.tab-btn');
+        if (!tabBtn) return;
+
+        const targetTab = tabBtn.dataset.tab;
+        document.querySelectorAll('.tab-btn').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.tab === targetTab);
+        });
+        document.querySelectorAll('.tab-panel').forEach((panel) => {
+            panel.classList.toggle('active', panel.dataset.tab === targetTab);
+        });
+
+        document.dispatchEvent(new CustomEvent('nectar:tab-change', {
+            detail: { tab: targetTab },
+        }));
+    });
+}
+
 function loadGoogleFont(fontName) {
     if (!GOOGLE_FONTS.includes(fontName) || loadedGoogleFonts.has(fontName)) {
         return;
@@ -219,66 +243,101 @@ function loadGoogleFont(fontName) {
     document.head.appendChild(link);
 }
 
-// PART 5: Update font preview
 function updateFontPreview(selectId, previewId) {
     const select = document.getElementById(selectId);
     const preview = document.getElementById(previewId);
     if (!select || !preview) return;
-    
+
     const fontName = select.value;
     loadGoogleFont(fontName);
     preview.style.fontFamily = `"${fontName}", sans-serif`;
 }
 
-// PART 5: Setup font select listeners
 function setupFontSelects() {
     const fontSelects = [
         { select: 'bodyFont', preview: 'bodyFontPreview' },
         { select: 'headingFont', preview: 'headingFontPreview' },
-        { select: 'codeFont', preview: 'codeFontPreview' }
     ];
-    
+
     fontSelects.forEach(({ select, preview }) => {
         const el = document.getElementById(select);
-        if (el) {
-            el.addEventListener('change', () => updateFontPreview(select, preview));
-            // Initialize preview
-            updateFontPreview(select, preview);
-        }
+        if (!el) return;
+        el.addEventListener('change', () => updateFontPreview(select, preview));
+        updateFontPreview(select, preview);
     });
 }
 
 function setupColorHex() {
-    document.querySelectorAll('input[type="color"]').forEach(input => {
-        const hexSpan = input.parentElement.querySelector('.hex-view');
-        if (hexSpan) {
-            hexSpan.textContent = input.value;
-            input.addEventListener('input', () => { hexSpan.textContent = input.value; });
-        }
-    });
-}
+    const colorPairs = [
+        { color: 'headingColor', hex: 'headingColorHex' },
+        { color: 'footerColor', hex: 'footerColorHex' },
+        { color: 'footnoteTextColor', hex: 'footnoteTextColorHex' },
+        { color: 'footnoteMarkerColor', hex: 'footnoteMarkerColorHex' },
+        { color: 'tableRowOddColor', hex: 'tableRowOddColorHex' },
+        { color: 'tableRowEvenColor', hex: 'tableRowEvenColorHex' },
+    ];
 
-function setupCollapsibleSections() {
-    document.querySelectorAll('.section-header').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const section = btn.closest('.panel-section');
-            section.classList.toggle('open');
+    const headingColorPairs = [
+        { color: 'h1Color', hex: 'h1ColorHex' },
+        { color: 'h2Color', hex: 'h2ColorHex' },
+        { color: 'h3Color', hex: 'h3ColorHex' },
+        { color: 'h4Color', hex: 'h4ColorHex' },
+        { color: 'h5Color', hex: 'h5ColorHex' },
+        { color: 'h6Color', hex: 'h6ColorHex' },
+    ];
+
+    colorPairs.forEach(({ color, hex }) => {
+        const colorInput = document.getElementById(color);
+        const hexInput = document.getElementById(hex);
+        if (!colorInput || !hexInput) return;
+
+        colorInput.addEventListener('input', () => {
+            hexInput.value = colorInput.value;
         });
+
+        hexInput.addEventListener('input', () => {
+            const val = hexInput.value.trim();
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                colorInput.value = val;
+            }
+        });
+
+        hexInput.value = colorInput.value;
     });
-    document.querySelectorAll('.panel-section').forEach(s => s.classList.add('open'));
+
+    headingColorPairs.forEach(({ color, hex }) => {
+        const colorInput = document.getElementById(color);
+        const hexInput = document.getElementById(hex);
+        if (!colorInput || !hexInput) return;
+
+        colorInput.addEventListener('input', () => {
+            hexInput.value = colorInput.value;
+        });
+
+        hexInput.addEventListener('input', () => {
+            const val = hexInput.value.trim();
+            if (val === '') return;
+            if (/^#[0-9A-Fa-f]{6}$/.test(val)) {
+                colorInput.value = val;
+            }
+        });
+
+        hexInput.value = '';
+    });
 }
 
 function updateImageDropZone() {
     const mode = document.querySelector('input[name="imageMode"]:checked')?.value;
-    if (mode === 'WITH_IMAGES') {
-        imageDropZone.classList.remove('hidden');
-    } else {
-        imageDropZone.classList.add('hidden');
-    }
+    if (!sidebarImagesSection) return;
+    sidebarImagesSection.style.display = mode === 'WITH_IMAGES' ? 'flex' : 'none';
 }
 
 function countWords(text) {
-    return text.trim().split(/\s+/).filter(w => w.length > 0).length;
+    return text.trim().split(/\s+/).filter((w) => w.length > 0).length;
+}
+
+function bumpPreviewRevision() {
+    previewRevision += 1;
 }
 
 function formatFileSize(bytes) {
@@ -290,9 +349,15 @@ function formatFileSize(bytes) {
 function applyPresetValues(presetName) {
     const preset = PRESETS[presetName];
     if (!preset) {
+        currentPresetValues = null;
+        userModifiedFields.clear();
         resetToDefaults();
         return;
     }
+
+    currentPresetValues = { ...preset };
+    userModifiedFields.clear();
+
     resetToDefaults();
     Object.entries(preset).forEach(([key, val]) => {
         const el = document.getElementById(keyToId(key));
@@ -302,15 +367,18 @@ function applyPresetValues(presetName) {
         } else if (typeof val === 'number') {
             el.value = val;
             if (key === 'image_scale') {
-                document.getElementById('imageScaleVal').textContent = val.toFixed(2);
+                const scaleVal = document.getElementById('imageScaleVal');
+                if (scaleVal) scaleVal.textContent = val.toFixed(2);
             }
         } else {
             el.value = val;
-            const hexEl = el.parentElement?.querySelector('.hex-view');
-            if (hexEl) hexEl.textContent = val;
+            const hexInput = document.getElementById(`${keyToId(key)}Hex`);
+            if (hexInput) hexInput.value = val;
         }
     });
     updateTableStripeColors();
+    updateFontPreview('bodyFont', 'bodyFontPreview');
+    updateFontPreview('headingFont', 'headingFontPreview');
 }
 
 function resetToDefaults() {
@@ -322,12 +390,13 @@ function resetToDefaults() {
         } else if (typeof val === 'number') {
             el.value = val;
             if (key === 'image_scale') {
-                document.getElementById('imageScaleVal').textContent = val.toFixed(2);
+                const scaleVal = document.getElementById('imageScaleVal');
+                if (scaleVal) scaleVal.textContent = val.toFixed(2);
             }
         } else {
             el.value = val;
-            const hexEl = el.parentElement?.querySelector('.hex-view');
-            if (hexEl) hexEl.textContent = val;
+            const hexInput = document.getElementById(`${keyToId(key)}Hex`);
+            if (hexInput) hexInput.value = val;
         }
     });
     updateTableStripeColors();
@@ -353,7 +422,9 @@ function keyToId(key) {
         table_cell_padding_y_px: 'tableCellPaddingY', table_cell_padding_x_px: 'tableCellPaddingX',
         image_scale: 'imageScale', sanitize_html: 'sanitizeHtml',
         show_horizontal_rules: 'showHorizontalRules',
-        compress_pdf: 'compressPdf', strip_metadata: 'stripMetadata',
+        compress_pdf: 'compressPdf', compression_profile: 'compressionProfile',
+        strip_metadata: 'stripMetadata',
+        compression_timeout: 'compressionTimeout', keep_original_on_fail: 'keepOriginalOnFail',
     };
     return map[key] || key;
 }
@@ -378,26 +449,74 @@ function idToKey(id) {
         tableCellPaddingY: 'table_cell_padding_y_px', tableCellPaddingX: 'table_cell_padding_x_px',
         imageScale: 'image_scale', sanitizeHtml: 'sanitize_html',
         showHorizontalRules: 'show_horizontal_rules',
-        compressPdf: 'compress_pdf', stripMetadata: 'strip_metadata',
+        compressPdf: 'compress_pdf', compressionProfile: 'compression_profile',
+        stripMetadata: 'strip_metadata',
+        compressionTimeout: 'compression_timeout', keepOriginalOnFail: 'keep_original_on_fail',
     };
     return map[id] || id;
 }
 
 function updateTableStripeColors() {
     const stripesEnabled = document.getElementById('tableRowStripes')?.checked;
-    const colorsDiv = document.getElementById('tableStripeColors');
-    if (colorsDiv) {
-        colorsDiv.style.opacity = stripesEnabled ? '1' : '0.4';
-        colorsDiv.style.pointerEvents = stripesEnabled ? 'auto' : 'none';
+    const oddColorGroup = document.getElementById('tableRowOddColor')?.closest('.form-group');
+    const evenColorGroup = document.getElementById('tableRowEvenColor')?.closest('.form-group');
+    [oddColorGroup, evenColorGroup].forEach((group) => {
+        if (!group) return;
+        group.style.opacity = stripesEnabled ? '1' : '0.4';
+        group.style.pointerEvents = stripesEnabled ? 'auto' : 'none';
+    });
+}
+
+function trackFieldModification(fieldId) {
+    if (!currentPresetValues) return;
+
+    let actualId = fieldId;
+    let key;
+    if (fieldId.endsWith('Hex')) {
+        const colorId = fieldId.replace('Hex', '');
+        key = idToKey(colorId);
+        actualId = HEADING_COLOR_IDS.includes(colorId) ? fieldId : colorId;
+    } else {
+        key = idToKey(fieldId);
+    }
+
+    const el = document.getElementById(actualId);
+    if (!el) return;
+
+    let currentValue;
+    if (el.type === 'checkbox') {
+        currentValue = el.checked;
+    } else if (el.type === 'number' || el.type === 'range') {
+        currentValue = parseFloat(el.value);
+    } else {
+        currentValue = el.value;
+    }
+
+    const presetValue = currentPresetValues[key] ?? DEFAULTS[key];
+    if (currentValue !== presetValue) {
+        userModifiedFields.add(key);
+    } else {
+        userModifiedFields.delete(key);
     }
 }
 
 function collectFormFields() {
     const data = {};
-    STYLE_INPUT_IDS.forEach(id => {
+    const headingColorHexIds = ['h1ColorHex', 'h2ColorHex', 'h3ColorHex', 'h4ColorHex', 'h5ColorHex', 'h6ColorHex'];
+    const headingColorKeys = ['heading_h1_color', 'heading_h2_color', 'heading_h3_color', 'heading_h4_color', 'heading_h5_color', 'heading_h6_color'];
+    const hasPreset = presetSelect.value && currentPresetValues;
+
+    STYLE_INPUT_IDS.forEach((id) => {
         const el = document.getElementById(id);
         if (!el) return;
         const key = idToKey(id);
+
+        if (HEADING_COLOR_IDS.includes(id)) {
+            return;
+        }
+        if (hasPreset && !userModifiedFields.has(key)) {
+            return;
+        }
         if (el.type === 'checkbox') {
             data[key] = el.checked ? 'true' : 'false';
             return;
@@ -405,6 +524,16 @@ function collectFormFields() {
         if (el.value !== '') {
             data[key] = el.value;
         }
+    });
+
+    headingColorHexIds.forEach((hexId, index) => {
+        const hexInput = document.getElementById(hexId);
+        if (!hexInput) return;
+        const key = headingColorKeys[index];
+        if (hasPreset && !userModifiedFields.has(key)) {
+            return;
+        }
+        data[key] = hexInput.value.trim();
     });
 
     return data;
@@ -418,6 +547,7 @@ function renderImageFileList() {
 
         const nameSpan = document.createElement('span');
         nameSpan.textContent = f.name;
+        nameSpan.title = f.name;
 
         const removeButton = document.createElement('button');
         removeButton.type = 'button';
@@ -426,6 +556,8 @@ function renderImageFileList() {
         removeButton.addEventListener('click', () => {
             imageFiles.splice(i, 1);
             renderImageFileList();
+            bumpPreviewRevision();
+            document.dispatchEvent(new CustomEvent('nectar:assets-change'));
         });
 
         item.appendChild(nameSpan);
@@ -434,18 +566,287 @@ function renderImageFileList() {
     });
 }
 
-// Drop zone
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+function dedupeImageFiles(files) {
+    const seen = new Set();
+    const deduped = [];
+    files.forEach((file) => {
+        const key = `${file.name}::${file.size}::${file.lastModified}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        deduped.push(file);
+    });
+    return deduped;
+}
+
+function isAcceptedImageFile(file) {
+    if (!file) return false;
+    if (file.type && file.type.startsWith('image/')) return true;
+    const name = String(file.name || '').toLowerCase();
+    return /\.(apng|avif|bmp|gif|jpe?g|png|svg|tif|tiff|webp)$/.test(name);
+}
+
+function processFile(file) {
+    selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        selectedMarkdownText = e.target.result;
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('fileSize').textContent = formatFileSize(file.size);
+        document.getElementById('wordCount').textContent = `${countWords(selectedMarkdownText)} words`;
+        document.getElementById('sidebarFileName').textContent = file.name;
+        document.getElementById('sidebarFileSize').textContent = formatFileSize(file.size);
+        document.getElementById('fileInfo').classList.remove('hidden');
+        nextBtn.classList.remove('hidden');
+        bumpPreviewRevision();
+        document.dispatchEvent(new CustomEvent('nectar:markdown-ready'));
+    };
+    reader.onerror = () => {
+        showToast('Failed to read file', 'error');
+        selectedFile = null;
+        selectedMarkdownText = '';
+        document.getElementById('fileInfo').classList.add('hidden');
+        nextBtn.classList.add('hidden');
+    };
+    reader.onabort = () => {
+        showToast('File reading was aborted', 'error');
+        selectedFile = null;
+        selectedMarkdownText = '';
+        document.getElementById('fileInfo').classList.add('hidden');
+        nextBtn.classList.add('hidden');
+    };
+    reader.readAsText(file);
+}
+
+function buildFormData(overrideImageMode = null) {
+    const formData = new FormData();
+    formData.append('markdown_text', selectedMarkdownText);
+    formData.append('image_mode', overrideImageMode || document.querySelector('input[name="imageMode"]:checked')?.value || 'WITH_IMAGES');
+    formData.append('output_format', document.querySelector('input[name="outputFormat"]:checked')?.value || 'PDF');
+    formData.append('page_size', document.getElementById('pageSize')?.value || 'A4');
+    formData.append('preset', presetSelect.value || '');
+
+    const fields = collectFormFields();
+    Object.entries(fields).forEach(([k, v]) => formData.append(k, v));
+    imageFiles.forEach((f) => formData.append('assets', f));
+    return formData;
+}
+
+async function requestConversion(formData) {
+    await resolveWorkingApiBase();
+    return fetch(`${API_BASE}/convert`, { method: 'POST', body: formData });
+}
+
+function downloadBlob(blob, filename) {
+    if (window._lastBlobUrl) {
+        URL.revokeObjectURL(window._lastBlobUrl);
+    }
+    const url = URL.createObjectURL(blob);
+    window._lastBlobUrl = url;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+function extractFilename(response) {
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
+    if (filenameMatch && filenameMatch[1]) {
+        return filenameMatch[1];
+    }
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('text/html')) {
+        return selectedFile ? selectedFile.name.replace(/\.md$/, '.html') : 'output.html';
+    }
+    if (contentType.includes('zip')) {
+        return selectedFile ? selectedFile.name.replace(/\.md$/, '.zip') : 'output.zip';
+    }
+    return selectedFile ? selectedFile.name.replace(/\.md$/, '.pdf') : 'output.pdf';
+}
+
+function normalizeBackendMessage(message, fallback = 'Operation failed') {
+    const text = String(message || '').trim();
+    if (!text) return fallback;
+    return text;
+}
+
+function networkErrorMessage(error) {
+    if (error?.name === 'TypeError' && /fetch/i.test(String(error.message || ''))) {
+        return `Cannot reach API at ${API_BASE}. Start backend server (uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000) and verify CORS.`;
+    }
+    return error?.message || 'Network request failed';
+}
+
+async function doConvert(overrideImageMode = null) {
+    if (!selectedMarkdownText) return;
+    convertError.classList.add('hidden');
+
+    const outputFormat = document.querySelector('input[name="outputFormat"]:checked')?.value || 'PDF';
+    showLoadingOverlay(outputFormat);
+    convertBtn.disabled = true;
+    convertBtn.innerHTML = '<span class="btn-spinner"></span> Converting...';
+    convertBtn.classList.add('btn-with-spinner');
+
+    try {
+        const formData = buildFormData(overrideImageMode);
+        const response = await requestConversion(formData);
+
+        if (!response.ok) {
+            let errData = null;
+            try {
+                errData = await response.json();
+            } catch {}
+
+            const missingFiles = Array.isArray(errData?.missing_images)
+                ? errData.missing_images
+                : (errData?.detail?.detail === 'missing_images' && Array.isArray(errData?.detail?.files)
+                    ? errData.detail.files
+                    : null);
+
+            if (response.status === 422 && missingFiles) {
+                missingImagesList.innerHTML = '';
+                missingFiles.forEach((file) => {
+                    const li = document.createElement('li');
+                    li.textContent = file;
+                    missingImagesList.appendChild(li);
+                });
+                hideLoadingOverlay(true);
+                convertBtn.disabled = false;
+                convertBtn.textContent = 'Convert';
+                convertBtn.classList.remove('btn-with-spinner');
+                missingImagesDialog.showModal();
+                return;
+            }
+
+            const msg = normalizeBackendMessage(errData?.detail?.detail || errData?.detail, `Conversion failed (${response.status})`);
+            throw new Error(msg);
+        }
+
+        const filename = extractFilename(response);
+        downloadFilename = filename;
+        pdfBlob = await response.blob();
+
+        showToast(`Download ready: ${filename}`, 'success');
+        downloadBlob(pdfBlob, filename);
+        hideLoadingOverlay(false);
+        showStep(3);
+    } catch (err) {
+        hideLoadingOverlay(true);
+        convertError.textContent = networkErrorMessage(err);
+        convertError.classList.remove('hidden');
+    } finally {
+        convertBtn.disabled = false;
+        convertBtn.textContent = 'Convert';
+        convertBtn.classList.remove('btn-with-spinner');
+    }
+}
+
+function setupFieldTracking() {
+    const mainPanel = document.querySelector('.main-panel');
+    if (!mainPanel) return;
+
+    mainPanel.addEventListener('input', (e) => {
+        const target = e.target;
+        if (target.id && STYLE_INPUT_IDS.includes(target.id)) {
+            trackFieldModification(target.id);
+            bumpPreviewRevision();
+        }
+        if (target.classList.contains('hex-input') && target.id) {
+            trackFieldModification(target.id);
+            bumpPreviewRevision();
+        }
+    });
+
+    mainPanel.addEventListener('change', (e) => {
+        const target = e.target;
+        if (target.id && STYLE_INPUT_IDS.includes(target.id)) {
+            trackFieldModification(target.id);
+            bumpPreviewRevision();
+        }
+    });
+}
+
+function updateApiStatus(kind, text) {
+    if (!apiStatus) return;
+    apiStatus.classList.remove('is-checking', 'is-online', 'is-offline');
+    apiStatus.classList.add(kind);
+    const textEl = apiStatus.querySelector('.text');
+    if (textEl) textEl.textContent = text;
+}
+
+async function probeApiBase(baseUrl) {
+    const response = await fetch(`${baseUrl}/analyze/health`, { method: 'GET' });
+    return response.ok;
+}
+
+async function resolveWorkingApiBase() {
+    const preferred = API_BASE;
+    const candidates = [preferred];
+
+    if (!candidates.includes('http://127.0.0.1:8000')) {
+        candidates.push('http://127.0.0.1:8000');
+    }
+    if (!candidates.includes('http://localhost:8000')) {
+        candidates.push('http://localhost:8000');
+    }
+
+    for (const candidate of candidates) {
+        try {
+            const ok = await probeApiBase(candidate);
+            if (ok) {
+                API_BASE = candidate;
+                if (window.NectarUI) {
+                    window.NectarUI.API_BASE = candidate;
+                }
+                return candidate;
+            }
+        } catch {
+        }
+    }
+    return preferred;
+}
+
+async function checkBackendHealth() {
+    updateApiStatus('is-checking', 'Checking backend...');
+    try {
+        await resolveWorkingApiBase();
+        const response = await fetch(`${API_BASE}/analyze/health`, { method: 'GET' });
+        if (!response.ok) {
+            updateApiStatus('is-offline', `Backend error (${response.status})`);
+            return;
+        }
+        updateApiStatus('is-online', `API online (${API_BASE})`);
+    } catch (error) {
+        updateApiStatus('is-offline', `API offline (${API_BASE})`);
+    }
+}
+
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-dropZone.addEventListener('drop', e => {
+dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('dragover');
     const f = e.dataTransfer.files[0];
-    if (f && f.name.toLowerCase().endsWith('.md')) processFile(f);
-    else showToast('Please drop a .md file', 'error');
+    if (f && f.name.toLowerCase().endsWith('.md')) {
+        processFile(f);
+    } else {
+        showToast('Please drop a .md file', 'error');
+    }
 });
-
-dropZone.addEventListener('keydown', e => {
+dropZone.addEventListener('click', (e) => {
+    const target = e.target;
+    if (target instanceof Element && target.closest('.file-btn')) {
+        return;
+    }
+    fileInput.click();
+});
+dropZone.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         fileInput.click();
@@ -455,22 +856,6 @@ dropZone.addEventListener('keydown', e => {
 fileInput.addEventListener('change', () => {
     if (fileInput.files[0]) processFile(fileInput.files[0]);
 });
-
-function processFile(file) {
-    selectedFile = file;
-    const reader = new FileReader();
-    reader.onload = e => {
-        selectedMarkdownText = e.target.result;
-        document.getElementById('fileName').textContent = file.name;
-        document.getElementById('fileSize').textContent = formatFileSize(file.size);
-        document.getElementById('wordCount').textContent = `${countWords(selectedMarkdownText)} words`;
-        document.getElementById('sidebarFileName').textContent = file.name;
-        document.getElementById('sidebarFileSize').textContent = formatFileSize(file.size);
-        document.getElementById('fileInfo').classList.remove('hidden');
-        nextBtn.classList.remove('hidden');
-    };
-    reader.readAsText(file);
-}
 
 nextBtn.addEventListener('click', () => {
     if (!selectedFile) return;
@@ -485,58 +870,86 @@ backBtn.addEventListener('click', () => {
 
 presetSelect.addEventListener('change', () => {
     applyPresetValues(presetSelect.value);
+    bumpPreviewRevision();
+    document.dispatchEvent(new CustomEvent('nectar:preset-change', {
+        detail: { preset: presetSelect.value || '' },
+    }));
 });
 
-document.querySelectorAll('input[name="imageMode"]').forEach(r => {
-    r.addEventListener('change', updateImageDropZone);
-});
+step2.addEventListener('change', (e) => {
+    if (e.target.name === 'imageMode') {
+        updateImageDropZone();
+        bumpPreviewRevision();
+        document.dispatchEvent(new CustomEvent('nectar:image-mode-change', {
+            detail: { imageMode: e.target.value || '' },
+        }));
+        return;
+    }
 
-imageDropZone.addEventListener('dragover', e => { e.preventDefault(); imageDropZone.classList.add('dragover'); });
-imageDropZone.addEventListener('dragleave', () => imageDropZone.classList.remove('dragover'));
-    imageDropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    imageDropZone.classList.remove('dragover');
-    Array.from(e.dataTransfer.files).forEach(f => {
-        if (f.type.startsWith('image/')) imageFiles.push(f);
-    });
-    imageFiles = dedupeImageFiles(imageFiles);
-    renderImageFileList();
-});
-imageDropZone.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        imageFilesInput.click();
+    if (e.target.name === 'outputFormat' || e.target.id === 'pageSize') {
+        bumpPreviewRevision();
     }
 });
 
+if (sidebarImageDrop) {
+    sidebarImageDrop.addEventListener('click', (e) => {
+        const target = e.target;
+        if (target instanceof Element && target.closest('.file-btn')) {
+            return;
+        }
+        imageFilesInput.click();
+    });
+    sidebarImageDrop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        sidebarImageDrop.classList.add('dragover');
+    });
+    sidebarImageDrop.addEventListener('dragleave', () => {
+        sidebarImageDrop.classList.remove('dragover');
+    });
+    sidebarImageDrop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        sidebarImageDrop.classList.remove('dragover');
+        const beforeCount = imageFiles.length;
+        Array.from(e.dataTransfer.files).forEach((f) => {
+            if (isAcceptedImageFile(f)) imageFiles.push(f);
+        });
+        imageFiles = dedupeImageFiles(imageFiles);
+        renderImageFileList();
+        if (imageFiles.length !== beforeCount) {
+            bumpPreviewRevision();
+            document.dispatchEvent(new CustomEvent('nectar:assets-change'));
+        }
+    });
+    sidebarImageDrop.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            imageFilesInput.click();
+        }
+    });
+}
+
 imageFilesInput.addEventListener('change', () => {
-    Array.from(imageFilesInput.files).forEach(f => imageFiles.push(f));
+    const beforeCount = imageFiles.length;
+    Array.from(imageFilesInput.files).forEach((f) => {
+        if (isAcceptedImageFile(f)) imageFiles.push(f);
+    });
     imageFiles = dedupeImageFiles(imageFiles);
     renderImageFileList();
     imageFilesInput.value = '';
+    if (imageFiles.length !== beforeCount) {
+        bumpPreviewRevision();
+        document.dispatchEvent(new CustomEvent('nectar:assets-change'));
+    }
 });
 
-function dedupeImageFiles(files) {
-    const seen = new Set();
-    const deduped = [];
-    files.forEach(file => {
-        const key = `${file.name}::${file.size}::${file.lastModified}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        deduped.push(file);
-    });
-    return deduped;
-}
-
 document.getElementById('tableRowStripes')?.addEventListener('change', updateTableStripeColors);
-
-document.getElementById('imageScale')?.addEventListener('input', e => {
-    document.getElementById('imageScaleVal').textContent = parseFloat(e.target.value).toFixed(2);
+document.getElementById('imageScale')?.addEventListener('input', (e) => {
+    const scaleVal = document.getElementById('imageScaleVal');
+    if (scaleVal) scaleVal.textContent = parseFloat(e.target.value).toFixed(2);
 });
 
 convertBtn.addEventListener('click', () => doConvert());
 
-// PART 2: Missing images dialog handlers
 continueWithoutImages.addEventListener('click', () => {
     missingImagesDialog.close();
     doConvert('ALT_ONLY');
@@ -544,156 +957,37 @@ continueWithoutImages.addEventListener('click', () => {
 
 addMissingImages.addEventListener('click', () => {
     missingImagesDialog.close();
-    // Focus image drop zone and pulse animation
-    imageDropZone.classList.remove('hidden');
-    imageDropZone.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    imageDropZone.classList.add('pulse');
-    setTimeout(() => imageDropZone.classList.remove('pulse'), 3000);
+    if (sidebarImagesSection) sidebarImagesSection.style.display = 'flex';
+    if (sidebarImageDrop) {
+        sidebarImageDrop.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        sidebarImageDrop.classList.add('pulse');
+        setTimeout(() => sidebarImageDrop.classList.remove('pulse'), 3000);
+    }
     imageFilesInput.click();
 });
 
-async function doConvert(overrideImageMode = null) {
-    if (!selectedMarkdownText) return;
-    convertError.classList.add('hidden');
-    
-    const outputFormat = document.querySelector('input[name="outputFormat"]:checked')?.value || 'PDF';
-    
-    // PART 3: Show loading overlay
-    showLoadingOverlay(outputFormat);
-    convertBtn.disabled = true;
-    convertBtn.innerHTML = '<span class="btn-spinner"></span> Conversion en cours...';
-    convertBtn.classList.add('btn-with-spinner');
-
-    try {
-        const formData = new FormData();
-        formData.append('markdown_text', selectedMarkdownText);
-        formData.append('image_mode', overrideImageMode || document.querySelector('input[name="imageMode"]:checked')?.value || 'WITH_IMAGES');
-        formData.append('output_format', outputFormat);
-        formData.append('page_size', document.getElementById('pageSize')?.value || 'A4');
-        formData.append('preset', presetSelect.value || '');
-
-        const fields = collectFormFields();
-        Object.entries(fields).forEach(([k, v]) => formData.append(k, v));
-
-        imageFiles.forEach(f => formData.append('assets', f));
-
-        const response = await fetch(`${API_BASE}/convert`, {
-            method: 'POST',
-            body: formData,
-        });
-
-        if (!response.ok) {
-            let errData;
-            try {
-                errData = await response.json();
-            } catch {}
-            
-            // PART 2: Handle missing images (422)
-            const missingFiles =
-                Array.isArray(errData?.missing_images)
-                    ? errData.missing_images
-                    : (errData?.detail?.detail === 'missing_images' && Array.isArray(errData?.detail?.files)
-                        ? errData.detail.files
-                        : null);
-
-            if (response.status === 422 && missingFiles) {
-                missingImagesList.innerHTML = '';
-                missingFiles.forEach(file => {
-                    const li = document.createElement('li');
-                    li.textContent = file;
-                    missingImagesList.appendChild(li);
-                });
-                hideLoadingOverlay(true);
-                convertBtn.disabled = false;
-                convertBtn.textContent = 'Convert';
-                convertBtn.classList.remove('btn-with-spinner');
-                missingImagesDialog.showModal();
-                return;
-            }
-            
-            const msg = errData?.detail?.detail || errData?.detail || 'Conversion failed';
-            throw new Error(msg);
-        }
-
-        // PART 4: Extract filename from Content-Disposition header
-        const contentDisposition = response.headers.get('content-disposition') || '';
-        let filename = 'output.pdf';
-        const filenameMatch = contentDisposition.match(/filename="?([^";\n]+)"?/);
-        if (filenameMatch && filenameMatch[1]) {
-            filename = filenameMatch[1];
-        } else {
-            // Fallback based on content-type
-            const contentType = response.headers.get('content-type') || '';
-            if (contentType.includes('text/html')) {
-                filename = selectedFile ? selectedFile.name.replace(/\.md$/, '.html') : 'output.html';
-            } else if (contentType.includes('zip')) {
-                filename = selectedFile ? selectedFile.name.replace(/\.md$/, '.zip') : 'output.zip';
-            } else {
-                filename = selectedFile ? selectedFile.name.replace(/\.md$/, '.pdf') : 'output.pdf';
-            }
-        }
-
-        downloadFilename = filename;
-
-        pdfBlob = await response.blob();
-        showToast(`Download ready: ${filename}`, 'success');
-
-        // PART 8: Revoke previous blob URL to prevent memory leak
-        if (window._lastBlobUrl) {
-            URL.revokeObjectURL(window._lastBlobUrl);
-        }
-        const url = URL.createObjectURL(pdfBlob);
-        window._lastBlobUrl = url;
-        
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        // PART 3: Fade out loading overlay
-        hideLoadingOverlay(false);
-        showStep(3);
-    } catch (err) {
-        // PART 3: Immediate hide on error
-        hideLoadingOverlay(true);
-        convertError.textContent = err.message;
-        convertError.classList.remove('hidden');
-    } finally {
-        convertBtn.disabled = false;
-        convertBtn.textContent = 'Convert';
-        convertBtn.classList.remove('btn-with-spinner');
-    }
-}
-
 downloadBtn.addEventListener('click', () => {
     if (!pdfBlob) return;
-    // PART 8: Revoke previous blob URL to prevent memory leak
-    if (window._lastBlobUrl) {
-        URL.revokeObjectURL(window._lastBlobUrl);
-    }
-    const url = URL.createObjectURL(pdfBlob);
-    window._lastBlobUrl = url;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = downloadFilename || 'output.pdf';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    downloadBlob(pdfBlob, downloadFilename || 'output.pdf');
 });
 
 startOverBtn.addEventListener('click', () => {
-    // PART 8: Cleanup blob URL
     if (window._lastBlobUrl) {
         URL.revokeObjectURL(window._lastBlobUrl);
         window._lastBlobUrl = null;
     }
+    if (window._lastPreviewBlobUrl) {
+        URL.revokeObjectURL(window._lastPreviewBlobUrl);
+        window._lastPreviewBlobUrl = null;
+    }
+
     selectedFile = null;
     selectedMarkdownText = '';
     pdfBlob = null;
     downloadFilename = 'output.pdf';
     imageFiles = [];
+    userModifiedFields.clear();
+    currentPresetValues = null;
     fileInput.value = '';
     imageFilesInput.value = '';
     document.getElementById('fileInfo').classList.add('hidden');
@@ -702,13 +996,39 @@ startOverBtn.addEventListener('click', () => {
     presetSelect.value = '';
     resetToDefaults();
     convertError.classList.add('hidden');
+    const previewCanvas = document.getElementById('previewCanvas');
+    const previewFrame = document.getElementById('previewFrame');
+    if (previewCanvas) previewCanvas.classList.remove('has-content');
+    if (previewFrame) previewFrame.removeAttribute('src');
+    const previewStatus = document.getElementById('previewStatus');
+    if (previewStatus) previewStatus.textContent = 'No preview generated yet.';
+    const previewMissingNotice = document.getElementById('previewMissingNotice');
+    const previewMissingList = document.getElementById('previewMissingList');
+    if (previewMissingList) previewMissingList.innerHTML = '';
+    if (previewMissingNotice) previewMissingNotice.classList.add('hidden');
+    bumpPreviewRevision();
     showStep(1);
 });
 
-// Init
+window.NectarUI = {
+    API_BASE,
+    ensureApiBase: resolveWorkingApiBase,
+    buildFormData,
+    getPreviewRevision: () => previewRevision,
+    get imageFiles() {
+        return imageFiles;
+    },
+    get selectedMarkdownText() {
+        return selectedMarkdownText;
+    },
+};
+
+setupTabs();
 setupColorHex();
-setupCollapsibleSections();
 setupFontSelects();
+setupFieldTracking();
 updateImageDropZone();
 updateTableStripeColors();
 resetToDefaults();
+checkBackendHealth();
+window.NectarPreview?.initPreviewPanel?.();

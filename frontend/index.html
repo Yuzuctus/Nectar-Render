@@ -50,6 +50,8 @@
                 <div class="sidebar-brand">
                     <h1>Nectar Render</h1>
                 </div>
+                
+                <!-- Preset Section -->
                 <div class="sidebar-section">
                     <label class="sidebar-label" for="presetSelect">Preset</label>
                     <select id="presetSelect" class="sidebar-select">
@@ -65,12 +67,43 @@
                         <option value="Technical">Technical</option>
                     </select>
                 </div>
+                
+                <!-- File Info Section -->
                 <div class="sidebar-section">
+                    <label class="sidebar-label">File</label>
                     <div class="sidebar-file-info">
-                        <span id="sidebarFileName">—</span>
+                        <span id="sidebarFileName">-</span>
                         <span id="sidebarFileSize"></span>
                     </div>
                 </div>
+
+                <div class="sidebar-section">
+                    <label class="sidebar-label">API</label>
+                    <div id="apiStatus" class="api-status is-checking">
+                        <span class="dot" aria-hidden="true"></span>
+                        <span class="text">Checking backend...</span>
+                    </div>
+                </div>
+                
+                <!-- Images Section -->
+                <div class="sidebar-section sidebar-images-section" id="sidebarImagesSection">
+                    <label class="sidebar-label">Images</label>
+                    <div class="sidebar-image-drop" id="sidebarImageDrop" role="button" tabindex="0" aria-label="Upload image assets">
+                        <svg class="sidebar-image-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                            <circle cx="8.5" cy="8.5" r="1.5"/>
+                            <polyline points="21 15 16 10 5 21"/>
+                        </svg>
+                        <span>Drop images here</span>
+                        <label class="file-btn small">
+                            Add Images
+                            <input type="file" id="imageFilesInput" accept="image/*" multiple hidden>
+                        </label>
+                    </div>
+                    <div id="imageFileList" class="sidebar-image-list"></div>
+                </div>
+                
+                <!-- Actions -->
                 <div class="sidebar-actions">
                     <button id="backBtn" class="btn secondary">&#8592; Back</button>
                     <button id="convertBtn" class="btn primary">Convert</button>
@@ -81,380 +114,423 @@
 
             <!-- MAIN PANEL -->
             <main class="main-panel">
+                <!-- Tab Navigation -->
+                <nav class="tabs-nav">
+                    <button type="button" class="tab-btn active" data-tab="export">Export</button>
+                    <button type="button" class="tab-btn" data-tab="typography">Typography</button>
+                    <button type="button" class="tab-btn" data-tab="layout">Layout</button>
+                    <button type="button" class="tab-btn" data-tab="preview">Preview</button>
+                </nav>
 
-                <!-- 1. Export Settings -->
-                <div class="panel-section" data-section="export">
-                    <button class="section-header" type="button">
-                        <span>Export Settings</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Output format</label>
-                                <div class="radio-group horizontal">
-                                    <label class="radio-label"><input type="radio" name="outputFormat" value="PDF" checked> <span>PDF</span></label>
-                                    <label class="radio-label"><input type="radio" name="outputFormat" value="HTML"> <span>HTML</span></label>
-                                    <label class="radio-label"><input type="radio" name="outputFormat" value="PDF+HTML"> <span>PDF+HTML</span></label>
+                <!-- Tab Panels Container -->
+                <div class="tabs-content">
+                    
+                    <!-- TAB 1: Export -->
+                    <div class="tab-panel active" data-tab="export">
+                        <div class="tab-grid">
+                            <!-- Output Format -->
+                            <div class="option-group">
+                                <div class="option-group-title">Output Format</div>
+                                <div class="form-grid">
+                                    <div class="form-group full-width">
+                                        <div class="radio-group horizontal">
+                                            <label class="radio-label"><input type="radio" name="outputFormat" value="PDF" checked> <span>PDF</span></label>
+                                            <label class="radio-label"><input type="radio" name="outputFormat" value="HTML"> <span>HTML</span></label>
+                                            <label class="radio-label"><input type="radio" name="outputFormat" value="PDF+HTML"> <span>PDF+HTML</span></label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="form-group">
-                                <label for="pageSize">Page size</label>
-                                <select id="pageSize">
-                                    <option value="A4" selected>A4</option>
-                                    <option value="A3">A3</option>
-                                    <option value="Letter">Letter</option>
-                                    <option value="Legal">Legal</option>
-                                    <option value="A5">A5</option>
-                                </select>
+
+                            <!-- Image Mode -->
+                            <div class="option-group">
+                                <div class="option-group-title">Image Handling</div>
+                                <div class="form-grid">
+                                    <div class="form-group full-width">
+                                        <div class="radio-group horizontal">
+                                            <label class="radio-label"><input type="radio" name="imageMode" value="WITH_IMAGES" checked> <span>With images</span></label>
+                                            <label class="radio-label"><input type="radio" name="imageMode" value="ALT_ONLY"> <span>Alt text only</span></label>
+                                            <label class="radio-label"><input type="radio" name="imageMode" value="STRIP"> <span>Strip images</span></label>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Image mode</label>
-                            <div class="radio-group horizontal">
-                                <label class="radio-label"><input type="radio" name="imageMode" value="WITH_IMAGES" checked> <span>With images</span></label>
-                                <label class="radio-label"><input type="radio" name="imageMode" value="ALT_ONLY"> <span>Alt text only</span></label>
-                                <label class="radio-label"><input type="radio" name="imageMode" value="STRIP"> <span>Strip images</span></label>
+
+                            <!-- Compression -->
+                            <div class="option-group">
+                                <div class="option-group-title">PDF Compression</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="compressPdf" checked> Enable compression</label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="compressionProfile">Profile</label>
+                                        <select id="compressionProfile">
+                                            <option value="balanced" selected>Balanced</option>
+                                            <option value="max">Maximum</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="stripMetadata"> Remove metadata</label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="compressionTimeout">Timeout (sec)</label>
+                                        <input type="number" id="compressionTimeout" value="45" min="5" max="300">
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="keepOriginalOnFail" checked> Keep original on fail</label>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                        <div id="imageDropZone" class="image-drop-zone hidden" role="button" tabindex="0" aria-label="Upload image assets">
-                            <p>Drop image files here (referenced from your markdown)</p>
-                            <label class="file-btn small">
-                                Add Images
-                                <input type="file" id="imageFilesInput" accept="image/*" multiple hidden>
-                            </label>
-                            <div id="imageFileList" class="image-file-list"></div>
+
+                            <!-- HTML Options -->
+                            <div class="option-group">
+                                <div class="option-group-title">HTML Options</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="sanitizeHtml" checked> Sanitize HTML</label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="showHorizontalRules" checked> Show horizontal rules</label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- 2. Document Settings -->
-                <div class="panel-section" data-section="document">
-                    <button class="section-header" type="button">
-                        <span>Document Settings</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label>Margins (mm)</label>
+                    <!-- TAB 2: Typography -->
+                    <div class="tab-panel" data-tab="typography">
+                        <div class="tab-grid">
+                            <!-- Body Text -->
+                            <div class="option-group">
+                                <div class="option-group-title">Body Text</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="bodyFont">Font</label>
+                                        <select id="bodyFont" class="font-select">
+                                            <optgroup label="System Fonts">
+                                                <option value="Arial">Arial</option>
+                                                <option value="Calibri">Calibri</option>
+                                                <option value="Cambria">Cambria</option>
+                                                <option value="Georgia">Georgia</option>
+                                                <option value="Helvetica">Helvetica</option>
+                                                <option value="Segoe UI" selected>Segoe UI</option>
+                                                <option value="Tahoma">Tahoma</option>
+                                                <option value="Times New Roman">Times New Roman</option>
+                                                <option value="Trebuchet MS">Trebuchet MS</option>
+                                                <option value="Verdana">Verdana</option>
+                                            </optgroup>
+                                            <optgroup label="Google Fonts">
+                                                <option value="Inter">Inter</option>
+                                                <option value="Lato">Lato</option>
+                                                <option value="Merriweather">Merriweather</option>
+                                                <option value="Montserrat">Montserrat</option>
+                                                <option value="Nunito">Nunito</option>
+                                                <option value="Open Sans">Open Sans</option>
+                                                <option value="Playfair Display">Playfair Display</option>
+                                                <option value="Poppins">Poppins</option>
+                                                <option value="Raleway">Raleway</option>
+                                                <option value="Roboto">Roboto</option>
+                                                <option value="Source Sans Pro">Source Sans Pro</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="bodyFontSize">Size (px)</label>
+                                        <input type="number" id="bodyFontSize" value="12" min="8" max="24">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="lineHeight">Line height</label>
+                                        <input type="number" id="lineHeight" value="1.5" min="1.0" max="2.4" step="0.05">
+                                    </div>
+                                    <div class="form-group full-width">
+                                        <div class="font-preview" id="bodyFontPreview">The quick brown fox jumps over the lazy dog</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Headings -->
+                            <div class="option-group wide">
+                                <div class="option-group-title">Headings</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="headingFont">Font</label>
+                                        <select id="headingFont" class="font-select">
+                                            <optgroup label="System Fonts">
+                                                <option value="Arial">Arial</option>
+                                                <option value="Calibri">Calibri</option>
+                                                <option value="Cambria">Cambria</option>
+                                                <option value="Georgia">Georgia</option>
+                                                <option value="Helvetica">Helvetica</option>
+                                                <option value="Segoe UI" selected>Segoe UI</option>
+                                                <option value="Tahoma">Tahoma</option>
+                                                <option value="Times New Roman">Times New Roman</option>
+                                                <option value="Trebuchet MS">Trebuchet MS</option>
+                                                <option value="Verdana">Verdana</option>
+                                            </optgroup>
+                                            <optgroup label="Google Fonts">
+                                                <option value="Inter">Inter</option>
+                                                <option value="Lato">Lato</option>
+                                                <option value="Merriweather">Merriweather</option>
+                                                <option value="Montserrat">Montserrat</option>
+                                                <option value="Nunito">Nunito</option>
+                                                <option value="Open Sans">Open Sans</option>
+                                                <option value="Playfair Display">Playfair Display</option>
+                                                <option value="Poppins">Poppins</option>
+                                                <option value="Raleway">Raleway</option>
+                                                <option value="Roboto">Roboto</option>
+                                                <option value="Source Sans Pro">Source Sans Pro</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="headingColor">Default color</label>
+                                        <div class="color-field">
+                                            <input type="color" id="headingColor" value="#1f2937">
+                                            <input type="text" class="hex-input" id="headingColorHex" value="#1f2937" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
+                                    <div class="form-group full-width">
+                                        <div class="font-preview" id="headingFontPreview">The quick brown fox jumps over the lazy dog</div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Heading Sizes Grid -->
+                                <div class="subsection-title">Sizes (px)</div>
+                                <div class="heading-grid">
+                                    <div class="heading-field"><label for="h1Size">H1</label><input type="number" id="h1Size" value="28" min="8" max="96"></div>
+                                    <div class="heading-field"><label for="h2Size">H2</label><input type="number" id="h2Size" value="22" min="8" max="96"></div>
+                                    <div class="heading-field"><label for="h3Size">H3</label><input type="number" id="h3Size" value="18" min="8" max="96"></div>
+                                    <div class="heading-field"><label for="h4Size">H4</label><input type="number" id="h4Size" value="16" min="8" max="96"></div>
+                                    <div class="heading-field"><label for="h5Size">H5</label><input type="number" id="h5Size" value="14" min="8" max="96"></div>
+                                    <div class="heading-field"><label for="h6Size">H6</label><input type="number" id="h6Size" value="12" min="8" max="96"></div>
+                                </div>
+                                
+                                <!-- Heading Colors Grid -->
+                                <div class="subsection-title">Colors (empty = inherit)</div>
+                                <div class="heading-grid">
+                                    <div class="heading-color-field"><label>H1</label><input type="color" id="h1Color" value="#1f2937"><input type="text" class="hex-input" id="h1ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                    <div class="heading-color-field"><label>H2</label><input type="color" id="h2Color" value="#1f2937"><input type="text" class="hex-input" id="h2ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                    <div class="heading-color-field"><label>H3</label><input type="color" id="h3Color" value="#1f2937"><input type="text" class="hex-input" id="h3ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                    <div class="heading-color-field"><label>H4</label><input type="color" id="h4Color" value="#1f2937"><input type="text" class="hex-input" id="h4ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                    <div class="heading-color-field"><label>H5</label><input type="color" id="h5Color" value="#1f2937"><input type="text" class="hex-input" id="h5ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                    <div class="heading-color-field"><label>H6</label><input type="color" id="h6Color" value="#1f2937"><input type="text" class="hex-input" id="h6ColorHex" value="" placeholder="inherit" maxlength="7"></div>
+                                </div>
+                            </div>
+
+                            <!-- Code Blocks -->
+                            <div class="option-group">
+                                <div class="option-group-title">Code Blocks</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="codeFont">Font</label>
+                                        <select id="codeFont" class="font-select">
+                                            <optgroup label="System Fonts">
+                                                <option value="Consolas" selected>Consolas</option>
+                                                <option value="Courier New">Courier New</option>
+                                                <option value="Lucida Console">Lucida Console</option>
+                                                <option value="Monaco">Monaco</option>
+                                                <option value="Menlo">Menlo</option>
+                                            </optgroup>
+                                            <optgroup label="Google Fonts">
+                                                <option value="Fira Code">Fira Code</option>
+                                                <option value="Fira Mono">Fira Mono</option>
+                                                <option value="IBM Plex Mono">IBM Plex Mono</option>
+                                                <option value="Inconsolata">Inconsolata</option>
+                                                <option value="JetBrains Mono">JetBrains Mono</option>
+                                                <option value="Roboto Mono">Roboto Mono</option>
+                                                <option value="Source Code Pro">Source Code Pro</option>
+                                                <option value="Ubuntu Mono">Ubuntu Mono</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="codeFontSize">Size (px)</label>
+                                        <input type="number" id="codeFontSize" value="11" min="8" max="24">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="codeLineHeight">Line height</label>
+                                        <input type="number" id="codeLineHeight" value="1.45" min="1.0" max="2.4" step="0.05">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="codeTheme">Syntax theme</label>
+                                        <select id="codeTheme">
+                                            <optgroup label="Light Themes">
+                                                <option value="default" selected>Default</option>
+                                                <option value="friendly">Friendly</option>
+                                                <option value="xcode">Xcode</option>
+                                                <option value="solarized-light">Solarized Light</option>
+                                            </optgroup>
+                                            <optgroup label="Dark Themes">
+                                                <option value="monokai">Monokai</option>
+                                                <option value="dracula">Dracula</option>
+                                                <option value="native">Native</option>
+                                                <option value="vim">Vim</option>
+                                                <option value="github-dark">GitHub Dark</option>
+                                                <option value="one-dark">One Dark</option>
+                                                <option value="material">Material</option>
+                                                <option value="nord">Nord</option>
+                                                <option value="catppuccin-mocha">Catppuccin Mocha</option>
+                                                <option value="gruvbox-dark">Gruvbox Dark</option>
+                                                <option value="paraiso-dark">Paraiso Dark</option>
+                                                <option value="solarized-dark">Solarized Dark</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB 3: Layout -->
+                    <div class="tab-panel" data-tab="layout">
+                        <div class="tab-grid">
+                            <!-- Page Setup -->
+                            <div class="option-group">
+                                <div class="option-group-title">Page Setup</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="pageSize">Page size</label>
+                                        <select id="pageSize">
+                                            <option value="A4" selected>A4</option>
+                                            <option value="A3">A3</option>
+                                            <option value="A5">A5</option>
+                                            <option value="Letter">Letter</option>
+                                            <option value="Legal">Legal</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="subsection-title">Margins (mm)</div>
                                 <div class="margins-grid">
-                                    <div class="margin-field"><label for="marginTop">Top</label><input type="number" id="marginTop" value="20" min="0" max="100"></div>
-                                    <div class="margin-field"><label for="marginRight">Right</label><input type="number" id="marginRight" value="20" min="0" max="100"></div>
-                                    <div class="margin-field"><label for="marginBottom">Bottom</label><input type="number" id="marginBottom" value="20" min="0" max="100"></div>
-                                    <div class="margin-field"><label for="marginLeft">Left</label><input type="number" id="marginLeft" value="20" min="0" max="100"></div>
+                                    <div class="margin-field"><label for="marginTop">Top</label><input type="number" id="marginTop" value="25.4" min="0" max="100" step="0.1"></div>
+                                    <div class="margin-field"><label for="marginRight">Right</label><input type="number" id="marginRight" value="25.4" min="0" max="100" step="0.1"></div>
+                                    <div class="margin-field"><label for="marginBottom">Bottom</label><input type="number" id="marginBottom" value="25.4" min="0" max="100" step="0.1"></div>
+                                    <div class="margin-field"><label for="marginLeft">Left</label><input type="number" id="marginLeft" value="25.4" min="0" max="100" step="0.1"></div>
                                 </div>
                             </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="footerText">Footer text</label>
-                                <input type="text" id="footerText" value="" placeholder="e.g. Page {page}">
-                            </div>
-                            <div class="form-group">
-                                <label for="footerAlign">Footer alignment</label>
-                                <select id="footerAlign">
-                                    <option value="right" selected>Right</option>
-                                    <option value="center">Center</option>
-                                    <option value="left">Left</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="footerColor">Footer color</label>
-                                <div class="color-field">
-                                    <input type="color" id="footerColor" value="#6b7280">
-                                    <span class="hex-view" data-for="footerColor">#6b7280</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="showHorizontalRules" checked> Show horizontal rules</label>
-                            </div>
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="sanitizeHtml" checked> Sanitize HTML</label>
-                            </div>
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="compressPdf"> Compression PDF</label>
-                            </div>
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="stripMetadata"> Supprimer les metadonnees</label>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- 3. Typography -->
-                <div class="panel-section" data-section="typography">
-                    <button class="section-header" type="button">
-                        <span>Typography</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="bodyFont">Body font</label>
-                                <div class="font-select-wrapper">
-                                    <select id="bodyFont" class="font-select">
-                                        <optgroup label="System Fonts">
-                                            <option value="Arial">Arial</option>
-                                            <option value="Calibri">Calibri</option>
-                                            <option value="Cambria">Cambria</option>
-                                            <option value="Georgia">Georgia</option>
-                                            <option value="Helvetica">Helvetica</option>
-                                            <option value="Segoe UI" selected>Segoe UI</option>
-                                            <option value="Tahoma">Tahoma</option>
-                                            <option value="Times New Roman">Times New Roman</option>
-                                            <option value="Trebuchet MS">Trebuchet MS</option>
-                                            <option value="Verdana">Verdana</option>
-                                        </optgroup>
-                                        <optgroup label="Google Fonts">
-                                            <option value="Inter">Inter</option>
-                                            <option value="Lato">Lato</option>
-                                            <option value="Merriweather">Merriweather</option>
-                                            <option value="Montserrat">Montserrat</option>
-                                            <option value="Nunito">Nunito</option>
-                                            <option value="Open Sans">Open Sans</option>
-                                            <option value="Playfair Display">Playfair Display</option>
-                                            <option value="Poppins">Poppins</option>
-                                            <option value="Raleway">Raleway</option>
-                                            <option value="Roboto">Roboto</option>
-                                            <option value="Source Sans Pro">Source Sans Pro</option>
-                                        </optgroup>
-                                    </select>
-                                    <div class="font-preview" id="bodyFontPreview">The quick brown fox jumps over the lazy dog</div>
+                            <!-- Page Footer -->
+                            <div class="option-group">
+                                <div class="option-group-title">Page Footer &amp; Footnotes</div>
+                                <div class="subsection-title">Footer</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label for="footerText">Text</label>
+                                        <input type="text" id="footerText" value="" placeholder="e.g. My Document">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="footerAlign">Alignment</label>
+                                        <select id="footerAlign">
+                                            <option value="right" selected>Right</option>
+                                            <option value="center">Center</option>
+                                            <option value="left">Left</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="footerColor">Color</label>
+                                        <div class="color-field">
+                                            <input type="color" id="footerColor" value="#6b7280">
+                                            <input type="text" class="hex-input" id="footerColorHex" value="#6b7280" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="subsection-title">Footnotes</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="includeFootnotes" checked> Include footnotes</label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="footnoteFontSize">Font size</label>
+                                        <input type="number" id="footnoteFontSize" value="9" min="7" max="16" step="0.5">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="footnoteTextColor">Text color</label>
+                                        <div class="color-field">
+                                            <input type="color" id="footnoteTextColor" value="#374151">
+                                            <input type="text" class="hex-input" id="footnoteTextColorHex" value="#374151" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="footnoteMarkerColor">Marker color</label>
+                                        <div class="color-field">
+                                            <input type="color" id="footnoteMarkerColor" value="#111827">
+                                            <input type="text" class="hex-input" id="footnoteMarkerColorHex" value="#111827" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                            <div class="form-group">
-                                <label for="bodyFontSize">Body font size (px)</label>
-                                <input type="number" id="bodyFontSize" value="12" min="8" max="24">
-                            </div>
-                            <div class="form-group">
-                                <label for="lineHeight">Line height</label>
-                                <input type="number" id="lineHeight" value="1.5" min="1.0" max="2.4" step="0.05">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="headingFont">Heading font</label>
-                                <div class="font-select-wrapper">
-                                    <select id="headingFont" class="font-select">
-                                        <optgroup label="System Fonts">
-                                            <option value="Arial">Arial</option>
-                                            <option value="Calibri">Calibri</option>
-                                            <option value="Cambria">Cambria</option>
-                                            <option value="Georgia">Georgia</option>
-                                            <option value="Helvetica">Helvetica</option>
-                                            <option value="Segoe UI" selected>Segoe UI</option>
-                                            <option value="Tahoma">Tahoma</option>
-                                            <option value="Times New Roman">Times New Roman</option>
-                                            <option value="Trebuchet MS">Trebuchet MS</option>
-                                            <option value="Verdana">Verdana</option>
-                                        </optgroup>
-                                        <optgroup label="Google Fonts">
-                                            <option value="Inter">Inter</option>
-                                            <option value="Lato">Lato</option>
-                                            <option value="Merriweather">Merriweather</option>
-                                            <option value="Montserrat">Montserrat</option>
-                                            <option value="Nunito">Nunito</option>
-                                            <option value="Open Sans">Open Sans</option>
-                                            <option value="Playfair Display">Playfair Display</option>
-                                            <option value="Poppins">Poppins</option>
-                                            <option value="Raleway">Raleway</option>
-                                            <option value="Roboto">Roboto</option>
-                                            <option value="Source Sans Pro">Source Sans Pro</option>
-                                        </optgroup>
-                                    </select>
-                                    <div class="font-preview" id="headingFontPreview">The quick brown fox jumps over the lazy dog</div>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="headingColor">Heading color</label>
-                                <div class="color-field">
-                                    <input type="color" id="headingColor" value="#1f2937">
-                                    <span class="hex-view" data-for="headingColor">#1f2937</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="form-row heading-sizes-row">
-                            <div class="heading-size-field"><label for="h1Size">H1</label><input type="number" id="h1Size" value="28" min="8" max="96"></div>
-                            <div class="heading-size-field"><label for="h2Size">H2</label><input type="number" id="h2Size" value="22" min="8" max="96"></div>
-                            <div class="heading-size-field"><label for="h3Size">H3</label><input type="number" id="h3Size" value="18" min="8" max="96"></div>
-                            <div class="heading-size-field"><label for="h4Size">H4</label><input type="number" id="h4Size" value="16" min="8" max="96"></div>
-                            <div class="heading-size-field"><label for="h5Size">H5</label><input type="number" id="h5Size" value="14" min="8" max="96"></div>
-                            <div class="heading-size-field"><label for="h6Size">H6</label><input type="number" id="h6Size" value="12" min="8" max="96"></div>
-                        </div>
-                        <div class="form-row heading-colors-row">
-                            <div class="heading-color-field"><label for="h1Color">H1</label><input type="color" id="h1Color" value="#1f2937"></div>
-                            <div class="heading-color-field"><label for="h2Color">H2</label><input type="color" id="h2Color" value="#1f2937"></div>
-                            <div class="heading-color-field"><label for="h3Color">H3</label><input type="color" id="h3Color" value="#1f2937"></div>
-                            <div class="heading-color-field"><label for="h4Color">H4</label><input type="color" id="h4Color" value="#1f2937"></div>
-                            <div class="heading-color-field"><label for="h5Color">H5</label><input type="color" id="h5Color" value="#1f2937"></div>
-                            <div class="heading-color-field"><label for="h6Color">H6</label><input type="color" id="h6Color" value="#1f2937"></div>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- 4. Code Blocks -->
-                <div class="panel-section" data-section="code">
-                    <button class="section-header" type="button">
-                        <span>Code Blocks</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="codeFont">Code font</label>
-                                <div class="font-select-wrapper">
-                                    <select id="codeFont" class="font-select">
-                                        <optgroup label="System Fonts">
-                                            <option value="Consolas" selected>Consolas</option>
-                                            <option value="Courier New">Courier New</option>
-                                            <option value="Lucida Console">Lucida Console</option>
-                                            <option value="Monaco">Monaco</option>
-                                            <option value="Menlo">Menlo</option>
-                                        </optgroup>
-                                        <optgroup label="Google Fonts">
-                                            <option value="Fira Code">Fira Code</option>
-                                            <option value="Fira Mono">Fira Mono</option>
-                                            <option value="IBM Plex Mono">IBM Plex Mono</option>
-                                            <option value="Inconsolata">Inconsolata</option>
-                                            <option value="JetBrains Mono">JetBrains Mono</option>
-                                            <option value="Roboto Mono">Roboto Mono</option>
-                                            <option value="Source Code Pro">Source Code Pro</option>
-                                            <option value="Ubuntu Mono">Ubuntu Mono</option>
-                                        </optgroup>
-                                    </select>
-                                    <div class="font-preview" id="codeFontPreview">The quick brown fox jumps over the lazy dog</div>
+                            <!-- Content Blocks -->
+                            <div class="option-group">
+                                <div class="option-group-title">Content Blocks</div>
+                                <div class="subsection-title">Tables</div>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label class="checkbox-label"><input type="checkbox" id="tableRowStripes"> Row stripes</label>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="tableRowOddColor">Odd row</label>
+                                        <div class="color-field">
+                                            <input type="color" id="tableRowOddColor" value="#ffffff">
+                                            <input type="text" class="hex-input" id="tableRowOddColorHex" value="#ffffff" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="tableRowEvenColor">Even row</label>
+                                        <div class="color-field">
+                                            <input type="color" id="tableRowEvenColor" value="#f3f4f6">
+                                            <input type="text" class="hex-input" id="tableRowEvenColorHex" value="#f3f4f6" placeholder="#hex" maxlength="7">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="tableCellPaddingY">Padding Y (px)</label>
+                                        <input type="number" id="tableCellPaddingY" value="6" min="0" max="30">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="tableCellPaddingX">Padding X (px)</label>
+                                        <input type="number" id="tableCellPaddingX" value="8" min="0" max="40">
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="codeFontSize">Code font size (px)</label>
-                                <input type="number" id="codeFontSize" value="11" min="8" max="24">
-                            </div>
-                            <div class="form-group">
-                                <label for="codeLineHeight">Code line height</label>
-                                <input type="number" id="codeLineHeight" value="1.45" min="1.0" max="2.4" step="0.05">
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="codeTheme">Syntax theme</label>
-                                <select id="codeTheme">
-                                    <option value="default" selected>default</option>
-                                    <option value="friendly">friendly</option>
-                                    <option value="monokai">monokai</option>
-                                    <option value="dracula">dracula</option>
-                                    <option value="github-dark">github-dark</option>
-                                    <option value="native">native</option>
-                                    <option value="vim">vim</option>
-                                    <option value="xcode">xcode</option>
-                                    <option value="solarized-light">solarized-light</option>
-                                    <option value="solarized-dark">solarized-dark</option>
-                                    <option value="one-dark">one-dark</option>
-                                    <option value="material">material</option>
-                                    <option value="nord">nord</option>
-                                    <option value="catppuccin-mocha">catppuccin-mocha</option>
-                                    <option value="gruvbox-dark">gruvbox-dark</option>
-                                    <option value="paraiso-dark">paraiso-dark</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-                </div>
 
-                <!-- 5. Footnotes -->
-                <div class="panel-section" data-section="footnotes">
-                    <button class="section-header" type="button">
-                        <span>Footnotes</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="includeFootnotes" checked> Include footnotes</label>
-                            </div>
-                        </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="footnoteFontSize">Footnote font size</label>
-                                <input type="number" id="footnoteFontSize" value="9" min="7" max="16" step="0.5">
-                            </div>
-                            <div class="form-group">
-                                <label for="footnoteTextColor">Footnote text color</label>
-                                <div class="color-field">
-                                    <input type="color" id="footnoteTextColor" value="#374151">
-                                    <span class="hex-view" data-for="footnoteTextColor">#374151</span>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="footnoteMarkerColor">Footnote marker color</label>
-                                <div class="color-field">
-                                    <input type="color" id="footnoteMarkerColor" value="#111827">
-                                    <span class="hex-view" data-for="footnoteMarkerColor">#111827</span>
+                                <div class="subsection-title">Images</div>
+                                <div class="form-grid">
+                                    <div class="form-group full-width">
+                                        <label for="imageScale">Max scale: <span id="imageScaleVal">0.90</span></label>
+                                        <input type="range" id="imageScale" min="0.4" max="1.0" step="0.05" value="0.9">
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- 6. Tables -->
-                <div class="panel-section" data-section="tables">
-                    <button class="section-header" type="button">
-                        <span>Tables</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group checkbox-group">
-                                <label class="checkbox-label"><input type="checkbox" id="tableRowStripes"> Row stripes</label>
+                    <!-- TAB 4: Preview -->
+                    <div class="tab-panel" data-tab="preview">
+                        <div class="preview-toolbar">
+                            <span class="preview-engine-chip">True PDF preview</span>
+                            <button type="button" id="previewRefreshBtn" class="btn secondary">Refresh preview</button>
+                            <div id="previewProgress" class="preview-progress hidden" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                <div id="previewProgressBar" class="preview-progress-bar"></div>
                             </div>
+                            <span id="previewStatus" class="preview-status">No preview generated yet.</span>
                         </div>
-                        <div class="form-row" id="tableStripeColors">
-                            <div class="form-group">
-                                <label for="tableRowOddColor">Odd row color</label>
-                                <div class="color-field">
-                                    <input type="color" id="tableRowOddColor" value="#ffffff">
-                                    <span class="hex-view" data-for="tableRowOddColor">#ffffff</span>
-                                </div>
-                            </div>
-                            <div class="form-group">
-                                <label for="tableRowEvenColor">Even row color</label>
-                                <div class="color-field">
-                                    <input type="color" id="tableRowEvenColor" value="#f3f4f6">
-                                    <span class="hex-view" data-for="tableRowEvenColor">#f3f4f6</span>
-                                </div>
-                            </div>
+
+                        <div id="previewMissingNotice" class="preview-missing hidden">
+                            <div id="previewMissingTitle" class="preview-missing-title">Missing images for preview</div>
+                            <ul id="previewMissingList"></ul>
+                            <button type="button" id="previewAddMissingBtn" class="btn secondary">Add missing images</button>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="tableCellPaddingY">Cell padding Y (px)</label>
-                                <input type="number" id="tableCellPaddingY" value="6" min="0" max="30">
+
+                        <div class="preview-canvas" id="previewCanvas">
+                            <div class="preview-sheet" id="previewSheet" data-page-size="A4">
+                                <iframe id="previewFrame" title="Document preview" loading="lazy"></iframe>
                             </div>
-                            <div class="form-group">
-                                <label for="tableCellPaddingX">Cell padding X (px)</label>
-                                <input type="number" id="tableCellPaddingX" value="8" min="0" max="40">
+                            <div id="previewPlaceholder" class="preview-placeholder">
+                                Open this tab and click <strong>Refresh preview</strong>.
                             </div>
                         </div>
                     </div>
-                </div>
 
-                <!-- 7. Images -->
-                <div class="panel-section" data-section="images">
-                    <button class="section-header" type="button">
-                        <span>Images</span>
-                        <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-                    </button>
-                    <div class="section-body">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="imageScale">Image scale: <span id="imageScaleVal">0.90</span></label>
-                                <input type="range" id="imageScale" min="0.4" max="1.0" step="0.05" value="0.9">
-                            </div>
-                        </div>
-                    </div>
                 </div>
-
             </main>
         </div>
     </section>
@@ -480,7 +556,7 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<!-- PART 2: Missing Image Dialog -->
+<!-- Missing Image Dialog -->
 <dialog id="missingImagesDialog" class="missing-images-dialog">
     <h3>Images manquantes</h3>
     <ul id="missingImagesList"></ul>
@@ -490,7 +566,7 @@
     </div>
 </dialog>
 
-<!-- PART 3: Loading Overlay -->
+<!-- Loading Overlay -->
 <div id="loadingOverlay" class="loading-overlay hidden">
     <div class="loading-content">
         <div class="loading-spinner"></div>
@@ -498,6 +574,7 @@
     </div>
 </div>
 
-<script src="app.js"></script>
+<script src="preview-panel.js" defer></script>
+<script src="app.js" defer></script>
 </body>
 </html>
