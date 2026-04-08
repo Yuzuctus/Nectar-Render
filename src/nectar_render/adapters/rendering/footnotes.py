@@ -65,6 +65,7 @@ def inject_paged_footnotes(markdown_text: str, enabled: bool) -> str:
     markdown_body = extraction.markdown_without_definitions
     ordered_ids: list[str] = []
     ref_index: dict[str, int] = {}
+    ref_occurrences: dict[str, int] = {}
 
     def replace_ref(match: re.Match[str]) -> str:
         footnote_id = match.group("id").strip()
@@ -77,11 +78,19 @@ def inject_paged_footnotes(markdown_text: str, enabled: bool) -> str:
             ordered_ids.append(footnote_id)
             ref_index[footnote_id] = len(ordered_ids)
 
+        occurrence = ref_occurrences.get(footnote_id, 0) + 1
+        ref_occurrences[footnote_id] = occurrence
+
         note_number = ref_index[footnote_id]
         safe_note = escape(note)
         safe_footnote_id = escape(footnote_id, quote=True)
+        ref_anchor_id = (
+            f"fnref-{safe_footnote_id}"
+            if occurrence == 1
+            else f"fnref-{safe_footnote_id}-{occurrence}"
+        )
         return (
-            f'<sup class="footnote-ref" id="fnref-{safe_footnote_id}">'
+            f'<sup class="footnote-ref" id="{ref_anchor_id}">'
             f'<a href="#fn-{safe_footnote_id}">{note_number}</a>'
             f"</sup>"
             f'<span class="footnote" data-footnote-id="{safe_footnote_id}">{safe_note}</span>'

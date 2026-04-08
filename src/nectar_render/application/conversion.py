@@ -137,7 +137,7 @@ def execute_conversion(
                 if missing:
                     result.missing_images = missing
                     logger.error("Missing assets: %s", missing)
-                    raise ValueError(f"Missing required assets: {missing}")
+                    return result
 
             document_html = build_html_from_markdown_fn(
                 markdown_text,
@@ -317,12 +317,21 @@ class ConversionService:
         output_directory: Path,
         style: StyleOptions,
         export: ExportOptions,
+        *,
+        markdown_text: str | None = None,
+        output_bytes: bool = False,
+        image_mode: ImageMode = ImageMode.WITH_IMAGES,
+        assets: dict[str, bytes] | None = None,
     ) -> ConversionResult:
         request = ConversionRequest(
             markdown_file=markdown_file,
             output_directory=output_directory,
             style=style,
             export=export,
+            markdown_text=markdown_text,
+            output_bytes=output_bytes,
+            image_mode=image_mode,
+            assets=assets,
         )
         return execute_conversion(
             request,

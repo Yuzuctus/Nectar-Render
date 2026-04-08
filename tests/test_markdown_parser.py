@@ -54,6 +54,14 @@ def test_footnotes_injection_escapes_html() -> None:
     assert "&lt;img src=x onerror=alert(1)&gt;" in injected
 
 
+def test_footnotes_multiple_references_get_unique_ref_ids() -> None:
+    src = "First[^a] and second[^a]\n\n[^a]: note"
+    injected = inject_paged_footnotes(src, enabled=True)
+    assert 'id="fnref-a"' in injected
+    assert 'id="fnref-a-2"' in injected
+    assert 'href="#fnref-a">↩</a>' in injected
+
+
 def test_pagebreak_markers_not_replaced_in_fenced_code() -> None:
     src = """Avant
 
@@ -90,6 +98,16 @@ def test_footer_text_and_center_alignment_css_are_applied() -> None:
     )
     assert "@bottom-center" in html
     assert "Confidentiel" in html
+
+
+def test_footer_left_alignment_css_is_applied() -> None:
+    html = build_document_html(
+        "<p>Demo</p>",
+        StyleOptions(footer_text="Internal", footer_align="left"),
+        "A4",
+    )
+    assert "@bottom-left" in html
+    assert "Internal" in html
 
 
 def test_image_scale_css_is_applied() -> None:
@@ -302,8 +320,9 @@ def test_parse_markdown_keeps_raw_html_when_sanitization_disabled() -> None:
     html = parse_markdown(
         "Avant<script>alert(1)</script>",
         include_footnotes=False,
+        sanitize_html=False,
     )
-    assert "<script>alert(1)</script>" not in html
+    assert "<script>alert(1)</script>" in html
 
 
 def test_parse_markdown_neutralizes_file_links_when_sanitization_enabled() -> None:

@@ -134,9 +134,13 @@ def sanitize_text_value(value: object) -> str:
 
 def _normalize_footer_align(value: object, fallback: object) -> str:
     cleaned = sanitize_text_value(value).casefold()
+    if cleaned in {"left", "start"}:
+        return "left"
     if cleaned in {"center", "centre"}:
         return "center"
     fallback_clean = sanitize_text_value(fallback).casefold()
+    if fallback_clean in {"left", "start"}:
+        return "left"
     return "center" if fallback_clean == "center" else "right"
 
 

@@ -58,3 +58,11 @@ def test_unknown_cli_argument_raises_standard_argparse_exit(tmp_path: Path) -> N
     with pytest.raises(SystemExit) as exc:
         main(["--input", str(markdown_file), "--bogus"])
     assert exc.value.code == 2
+
+
+def test_missing_required_input_exits_with_argparse_error() -> None:
+    from nectar_render.main import main
+
+    with pytest.raises(SystemExit) as exc:
+        main([])
+    assert exc.value.code == 2

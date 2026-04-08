@@ -119,7 +119,12 @@ def _heading_sizes(style: StyleOptions) -> tuple[int, ...]:
 
 def _footer_css(style: StyleOptions) -> tuple[str, str, str]:
     footer_align = (style.footer_align or "right").strip().lower()
-    footer_slot = "@bottom-center" if footer_align == "center" else "@bottom-right"
+    if footer_align == "left":
+        footer_slot = "@bottom-left"
+    elif footer_align == "center":
+        footer_slot = "@bottom-center"
+    else:
+        footer_slot = "@bottom-right"
     footer_color = _css_color(style.footer_color, "#6b7280")
     footer_text = (style.footer_text or "").strip()
     page_counter_css = '"Page " counter(page) " / " counter(pages)'

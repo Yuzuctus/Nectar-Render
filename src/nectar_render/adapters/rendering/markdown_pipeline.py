@@ -135,6 +135,14 @@ def _pick_best_candidate(candidates: list[Path], assets_root: Path) -> Path:
     )[0]
 
 
+def _is_within_root(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
     soup = BeautifulSoup(html, "html.parser")
     normalize_image_blocks(soup)
@@ -146,6 +154,8 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
     if not assets_root.exists() or not assets_root.is_dir():
         return str(soup)
 
+    assets_root_resolved = assets_root.resolve()
+
     unresolved_images: list[tuple[Tag, str]] = []
 
     for img in soup.find_all("img"):
@@ -156,10 +166,15 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
         normalized_src = _normalize_local_src(src).replace("\\", "/")
         if not normalized_src:
             continue
-        direct_path = (assets_root / normalized_src).resolve()
+
+        direct_path = (assets_root_resolved / normalized_src).resolve()
         if direct_path.exists() and direct_path.is_file():
+            if not _is_within_root(direct_path, assets_root_resolved):
+                logger.warning("Skipping image outside assets root: %s", normalized_src)
+                img.decompose()
+                continue
             try:
-                rel_path = direct_path.relative_to(assets_root).as_posix()
+                rel_path = direct_path.relative_to(assets_root_resolved).as_posix()
                 img["src"] = rel_path
             except ValueError:
                 img["src"] = direct_path.as_uri()
@@ -171,7 +186,7 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
         return str(soup)
 
     image_index = _get_image_index(
-        assets_root,
+        assets_root_resolved,
         {Path(normalized_src).name.lower() for _, normalized_src in unresolved_images},
     )
 
@@ -183,9 +198,9 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
             img.decompose()
             continue
 
-        best_match = _pick_best_candidate(candidates, assets_root)
+        best_match = _pick_best_candidate(candidates, assets_root_resolved)
         try:
-            rel_path = best_match.relative_to(assets_root).as_posix()
+            rel_path = best_match.relative_to(assets_root_resolved).as_posix()
             img["src"] = rel_path
         except ValueError:
             img["src"] = best_match.as_uri()
@@ -197,10 +212,12 @@ def parse_markdown(
     markdown_text: str,
     include_footnotes: bool,
     assets_root: Path | None = None,
+    sanitize_html: bool = True,
 ) -> str:
     prepared = prepare_markdown(markdown_text, include_footnotes=include_footnotes)
     html = render_markdown_html(prepared)
-    html = sanitize_html_fragment(html)
+    if sanitize_html:
+        html = sanitize_html_fragment(html)
     return _resolve_image_sources(html, assets_root=assets_root)
 
 

@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input",
         "-i",
         type=Path,
+        required=True,
         help="Input Markdown file (.md)",
     )
     parser.add_argument(
