@@ -1,7 +1,7 @@
 """Tests for the code highlighting module."""
 
-import nectar_render.converter.highlight as highlight_module
-from nectar_render.converter.highlight import (
+import nectar_render.adapters.rendering.highlight as highlight_module
+from nectar_render.adapters.rendering.highlight import (
     build_pygments_css,
     list_available_styles,
     resolve_style_name,

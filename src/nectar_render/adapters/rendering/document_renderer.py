@@ -17,7 +17,6 @@ def build_markdown_body_html(
         markdown_text,
         include_footnotes=style.include_footnotes,
         assets_root=assets_root,
-        sanitize_html=style.sanitize_html,
     )
 
 

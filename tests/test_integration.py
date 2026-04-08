@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 
 from nectar_render.config import StyleOptions
-from nectar_render.converter.exporter import build_html_from_markdown
+from nectar_render.adapters.rendering.pdf_export import build_html_from_markdown
 
 
 SAMPLE_MD = Path(__file__).resolve().parent.parent / "examples" / "sample.md"

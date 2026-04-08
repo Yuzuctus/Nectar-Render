@@ -159,9 +159,13 @@ class PdfCompressionService:
                 timeout=timeout_sec,
                 check=False,
             )
-        except Exception:
+        except subprocess.TimeoutExpired as exc:
             temp_path.unlink(missing_ok=True)
-            logger.exception("Error running qpdf")
+            logger.warning("qpdf timed out after %s seconds: %s", timeout_sec, exc)
+            return None
+        except OSError as exc:
+            temp_path.unlink(missing_ok=True)
+            logger.warning("Failed to run qpdf: %s", exc)
             return None
 
         if completed.returncode != 0:

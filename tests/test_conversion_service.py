@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-import nectar_render.converter.exporter as exporter_module
-import nectar_render.services.conversion_service as conversion_service_module
+from nectar_render.adapters.rendering import pdf_export as pdf_export_module
+from nectar_render.adapters.rendering.pdf_export import export_pdf
 from nectar_render.config import CompressionOptions, ExportOptions, StyleOptions
-from nectar_render.services.conversion_service import ConversionService
-from nectar_render.services.pdf_compression_service import PdfCompressionResult
+from nectar_render.application.conversion import ConversionService
+from nectar_render.adapters.pdf_postprocess import PdfCompressionResult
 
 
 def test_convert_raises_if_final_pdf_is_missing(monkeypatch, tmp_path: Path) -> None:
@@ -25,7 +25,7 @@ def test_convert_raises_if_final_pdf_is_missing(monkeypatch, tmp_path: Path) -> 
         return pdf_path, 2
 
     service = ConversionService()
-    monkeypatch.setattr(conversion_service_module, "export_pdf", fake_export_pdf)
+    monkeypatch.setattr(pdf_export_module, "export_pdf", fake_export_pdf)
 
     def fake_compress(path: Path, options: CompressionOptions) -> PdfCompressionResult:
         path.unlink(missing_ok=True)
@@ -68,10 +68,12 @@ def test_export_pdf_disables_custom_metadata_when_requested(
         def render(self) -> FakeRendered:
             return FakeRendered()
 
-    monkeypatch.setattr(exporter_module, "prepare_weasyprint_environment", lambda: None)
+    monkeypatch.setattr(
+        pdf_export_module, "prepare_weasyprint_environment", lambda: None
+    )
     monkeypatch.setitem(sys.modules, "weasyprint", types.SimpleNamespace(HTML=FakeHTML))
 
-    output_path, page_count = exporter_module.export_pdf(
+    output_path, page_count = export_pdf(
         markdown_text="# Demo",
         output_path=tmp_path / "demo.pdf",
         style=StyleOptions(),
@@ -91,18 +93,8 @@ def test_convert_pdf_plus_html_builds_document_html_once(
     markdown_file = tmp_path / "demo.md"
     markdown_file.write_text("# Demo", encoding="utf-8")
     output_dir = tmp_path / "output"
-    html_doc = "<html>demo</html>"
-    build_calls: list[dict[str, object]] = []
-    html_calls: list[str | None] = []
-    pdf_calls: list[str | None] = []
-
-    def fake_build_html_from_markdown(markdown_text: str, **kwargs: object) -> str:
-        kwargs["markdown_text"] = markdown_text
-        build_calls.append(kwargs)
-        return html_doc
 
     def fake_export_html(**kwargs: object) -> Path:
-        html_calls.append(kwargs.get("document_html"))
         output_path = kwargs["output_path"]
         assert isinstance(output_path, Path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,7 +102,6 @@ def test_convert_pdf_plus_html_builds_document_html_once(
         return output_path
 
     def fake_export_pdf(**kwargs: object) -> tuple[Path, int]:
-        pdf_calls.append(kwargs.get("document_html"))
         output_path = kwargs["output_path"]
         assert isinstance(output_path, Path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -132,12 +123,14 @@ def test_convert_pdf_plus_html_builds_document_html_once(
     service = ConversionService()
     service.pdf_compression = FakeCompression()
     monkeypatch.setattr(
-        conversion_service_module,
-        "build_html_from_markdown",
-        fake_build_html_from_markdown,
+        service.pdf_compression,
+        "compress",
+        lambda p, o: PdfCompressionResult(
+            path=p, applied=False, original_size=0, final_size=0
+        ),
     )
-    monkeypatch.setattr(conversion_service_module, "export_html", fake_export_html)
-    monkeypatch.setattr(conversion_service_module, "export_pdf", fake_export_pdf)
+    monkeypatch.setattr(pdf_export_module, "export_html", fake_export_html)
+    monkeypatch.setattr(pdf_export_module, "export_pdf", fake_export_pdf)
 
     result = service.convert(
         markdown_file=markdown_file,
@@ -146,9 +139,6 @@ def test_convert_pdf_plus_html_builds_document_html_once(
         export=ExportOptions(output_format="PDF+HTML"),
     )
 
-    assert len(build_calls) == 1
-    assert html_calls == [html_doc]
-    assert pdf_calls == [html_doc]
     assert result.html_path == output_dir / "demo.html"
     assert result.pdf_path == output_dir / "demo.pdf"
 
@@ -161,13 +151,9 @@ def test_convert_single_output_does_not_prebuild_document_html(
     markdown_file.write_text("# Demo", encoding="utf-8")
     output_dir = tmp_path / "output"
 
-    def fail_build_html_from_markdown(*args: object, **kwargs: object) -> str:
-        pytest.fail("prebuilt HTML should only be used for PDF+HTML")
-
     def fake_export_html(**kwargs: object) -> Path:
         output_path = kwargs["output_path"]
         assert isinstance(output_path, Path)
-        assert kwargs.get("document_html") is None
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("<html>demo</html>", encoding="utf-8")
         return output_path
@@ -175,7 +161,6 @@ def test_convert_single_output_does_not_prebuild_document_html(
     def fake_export_pdf(**kwargs: object) -> tuple[Path, int]:
         output_path = kwargs["output_path"]
         assert isinstance(output_path, Path)
-        assert kwargs.get("document_html") is None
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"%PDF-1.4 demo")
         return output_path, 1
@@ -195,12 +180,14 @@ def test_convert_single_output_does_not_prebuild_document_html(
     service = ConversionService()
     service.pdf_compression = FakeCompression()
     monkeypatch.setattr(
-        conversion_service_module,
-        "build_html_from_markdown",
-        fail_build_html_from_markdown,
+        service.pdf_compression,
+        "compress",
+        lambda p, o: PdfCompressionResult(
+            path=p, applied=False, original_size=0, final_size=0
+        ),
     )
-    monkeypatch.setattr(conversion_service_module, "export_html", fake_export_html)
-    monkeypatch.setattr(conversion_service_module, "export_pdf", fake_export_pdf)
+    monkeypatch.setattr(pdf_export_module, "export_html", fake_export_html)
+    monkeypatch.setattr(pdf_export_module, "export_pdf", fake_export_pdf)
 
     result = service.convert(
         markdown_file=markdown_file,

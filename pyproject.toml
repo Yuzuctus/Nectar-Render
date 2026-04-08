@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nectar-render"
 dynamic = ["version"]
-description = "Desktop app to convert Markdown to styled PDF/HTML with browser preview, syntax highlighting, and preset themes"
+description = "CLI tool and library to convert Markdown to styled PDF/HTML with syntax highlighting and preset themes"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {file = "LICENSE"}
 authors = [{ name = "Yuzuctus" }]
-keywords = ["markdown", "pdf", "converter", "weasyprint", "tkinter"]
+keywords = ["markdown", "pdf", "converter", "weasyprint"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Other Environment",

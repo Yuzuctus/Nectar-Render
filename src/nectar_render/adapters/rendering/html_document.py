@@ -100,14 +100,20 @@ def _heading_colors(style: StyleOptions, heading_color: str) -> tuple[str, ...]:
     )
 
 
+_HEADING_DEFAULTS = {
+    "heading_h1_size_px": 28,
+    "heading_h2_size_px": 22,
+    "heading_h3_size_px": 18,
+    "heading_h4_size_px": 16,
+    "heading_h5_size_px": 14,
+    "heading_h6_size_px": 12,
+}
+
+
 def _heading_sizes(style: StyleOptions) -> tuple[int, ...]:
-    return (
-        _clamped_style_int(style.heading_h1_size_px, "heading_h1_size_px", 28),
-        _clamped_style_int(style.heading_h2_size_px, "heading_h1_size_px", 22),
-        _clamped_style_int(style.heading_h3_size_px, "heading_h1_size_px", 18),
-        _clamped_style_int(style.heading_h4_size_px, "heading_h1_size_px", 16),
-        _clamped_style_int(style.heading_h5_size_px, "heading_h1_size_px", 14),
-        _clamped_style_int(style.heading_h6_size_px, "heading_h1_size_px", 12),
+    return tuple(
+        _clamped_style_int(getattr(style, k), k, v)
+        for k, v in _HEADING_DEFAULTS.items()
     )
 
 

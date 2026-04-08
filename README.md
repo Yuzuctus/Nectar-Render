@@ -1,16 +1,13 @@
 # Nectar Render
 
-Desktop application to convert Markdown files to styled PDF and HTML with browser preview, syntax highlighting, and preset themes.
+CLI tool and library to convert Markdown files to styled PDF and HTML with syntax highlighting and preset themes.
 
-![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)
 ![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)
-
-<!-- ![Screenshot](docs/screenshot.png) -->
 
 ## Features
 
 - Convert Markdown to **PDF**, **HTML**, or both in one pass
-- Tkinter GUI with light and dark themes
 - **9 built-in presets**: Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, Elegant
 - Syntax highlighting for code blocks (7+ Pygments themes)
 - Full typography control: fonts, sizes, colors for body, headings (H1-H6), and code
@@ -19,32 +16,17 @@ Desktop application to convert Markdown files to styled PDF and HTML with browse
 - Footnotes compatible with PDF rendering (CSS `float: footnote`)
 - Obsidian image embeds: `![[image.png]]`
 - Optional PDF compression via `qpdf`
-- Save and load custom presets
-- Undo/redo for all style changes (Ctrl+Z / Ctrl+Alt+Z)
 
 ## Architecture
 
-The current codebase is organized in four layers:
+The codebase is organized in four layers:
 
 - `core/` contains the canonical style and preset models.
 - `application/` contains use cases such as conversion and preview.
 - `adapters/` contains rendering, storage, and runtime integration.
-- `adapters/rendering/` is the canonical Markdown -> HTML -> PDF pipeline.
-- `interfaces/desktop/` contains the Tkinter application, widgets, controllers, and state mapping.
-
-The legacy packages `ui/`, `converter/`, `services/`, `presets.py`, and `style_schema.py` are compatibility shims kept for now so older imports still work. New code should use the canonical layers above.
+- `adapters/rendering/` is the Markdown -> HTML -> PDF pipeline.
 
 ## Quick Start
-
-### Windows (automated)
-
-```powershell
-.\launch.bat
-```
-
-This script creates a virtual environment, installs dependencies, and launches the GUI.
-
-### Manual installation
 
 ```bash
 python -m venv .venv
@@ -65,8 +47,6 @@ python -m nectar_render.main
 
 ## CLI
 
-The CLI is the simplest way to run conversions without opening the desktop app.
-
 ```bash
 nectar-render --input examples/sample.md --format pdf
 nectar-render --input examples/sample.md --format html
@@ -81,8 +61,6 @@ Available options:
 - `--page-size`: `A4`, `Letter`, `Legal`, `A3`, `A5`
 - `--preset`, `-p`: built-in style preset
 - `--no-compression`: disable PDF compression
-
-The CLI uses the same application layer and rendering pipeline as the desktop app.
 
 ## Built-in Presets
 
@@ -126,18 +104,11 @@ examples/assets/service-overview.svg
 examples/assets/diagrams/sequence.svg
 ```
 
-1. Launch the app
-2. Open `examples/sample.md`
-3. Select **PDF+HTML** format
-4. Click **Convert**
+Convert it using the CLI:
 
-## Desktop Status
-
-The desktop application is the primary interface today. Tkinter-specific code lives under `interfaces/desktop/`.
-
-The older `ui/` package is still present as a compatibility layer during the migration. It should be treated as legacy plumbing, not as the canonical home for new code.
-
-The older `converter/` package is also legacy plumbing now. The active rendering implementation lives under `adapters/rendering/`.
+```bash
+nectar-render --input examples/sample.md --format pdf+html
+```
 
 ## Tests and Verification
 

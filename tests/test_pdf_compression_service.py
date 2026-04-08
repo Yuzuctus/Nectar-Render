@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -7,7 +8,7 @@ import pytest
 from pypdf import PdfWriter
 
 from nectar_render.config import CompressionOptions
-from nectar_render.services.pdf_compression_service import PdfCompressionService
+from nectar_render.adapters.pdf_postprocess import PdfCompressionService
 
 
 @pytest.fixture
@@ -217,7 +218,9 @@ class TestQpdfCompression:
         assert result.path == dummy_pdf
 
     @patch("shutil.which", return_value="/usr/bin/qpdf")
-    @patch("subprocess.run", side_effect=Exception("timeout"))
+    @patch(
+        "subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="test", timeout=1)
+    )
     def test_qpdf_exception_returns_original(
         self, mock_run, mock_which, service, dummy_pdf
     ):

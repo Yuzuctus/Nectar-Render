@@ -17,9 +17,11 @@ from .core.styles import (
     PAGE_SIZES,
     StyleOptions,
 )
-from .interfaces.desktop.state_mapping import style_from_state
 from .utils.logging import configure_logging
-from .utils.weasyprint_runtime import prepare_weasyprint_environment
+from .utils.weasyprint_runtime import (
+    WeasyPrintRuntimeError,
+    prepare_weasyprint_environment,
+)
 
 logger = logging.getLogger(__name__)
 _PRESET_HELP = ", ".join(BUILTIN_PRESET_NAMES)
@@ -31,11 +33,6 @@ def _style_from_preset(preset_name: str) -> StyleOptions | None:
         if name.casefold() == preset_name.casefold():
             return replace(style)
     return None
-
-
-def _state_dict_to_style(state: dict[str, object]) -> StyleOptions:
-    """Convert a preset state dict (Tk variable names) to a StyleOptions."""
-    return style_from_state(state)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -125,7 +122,8 @@ def run_cli(args: argparse.Namespace) -> int:
             style=style,
             export=export,
         )
-    except Exception as exc:
+    except (FileNotFoundError, ValueError, WeasyPrintRuntimeError, OSError) as exc:
+        logger.exception("Conversion failed")
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

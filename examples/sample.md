@@ -1,12 +1,13 @@
-# Nectar Render Feature Showcase
+# Specimen: Markdown Layout
 
-This document demonstrates every feature supported by the converter. Open it in the app, pick a preset, and export to **PDF+HTML** to see it all in action.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.
 
 ---
 
 ## Typography
 
-Regular text with **bold**, *italic*, ***bold italic***, `inline code`, and ~~strikethrough~~.
+Lorem ipsum dolor sit amet, consectetuer adipiscing elit **bold**, *italic*, ***bold italic***, `inline code`, and ~~strikethrough~~.
+Extended text formatting (if extensions are enabled): ==highlighted text==, H~2~O (subscript), X^2^ (superscript), and keyboard inputs like <kbd>Ctrl</kbd> + <kbd>C</kbd>.
 
 ### Third-Level Heading
 
@@ -22,50 +23,105 @@ Regular text with **bold**, *italic*, ***bold italic***, `inline code`, and ~~st
 
 ### Unordered
 
-- Markdown parsing with extensions
-- Syntax highlighting via Pygments
-  - Seven built-in themes
-  - Light and dark options
-- PDF compression (optional)
+- Vestibulum ante ipsum primis
+- In faucibus orci luctus
+  - Phasellus ullamcorper ipsum rutrum nunc
+  - Nunc nonummy metus
+- Morbi mollis tellus ac sapien
 
 ### Ordered
 
-1. Select a Markdown file
-2. Choose an output format
-   1. PDF only
-   2. HTML only
-   3. PDF + HTML
-3. Click **Convert**
+1. Praesent porttitor, nulla vitae posuere
+2. Egestas, aliquam ante auctor
+   1. Mauris turpis nunc
+   2. Blandit et
+   3. Volutpat molestie
+3. Porta ut, ligula
 
 ### Task List
 
-- [x] Core conversion pipeline
-- [x] Live HTML preview
-- [x] Built-in presets
-- [ ] Custom page sizes
+- [x] Suspendisse eu ligula
+- [x] Nulla facilisi
+- [ ] Sed lectus
+- [ ] Maecenas nec odio
+
+### Definition List
+
+Lorem
+: Ipsum dolor sit amet, consectetur adipiscing elit.
+
+Aenean 
+: Commodo ligula eget dolor massa.
+
+---
+
+## Links
+
+- **Inline Link:** [Vestibulum aliquet](https://example.com)
+- **Reference Link:** Check out [Phasellus][python_ref] sed enim.
+- **Auto-link:** <https://example.com>
+- **Email Link:** <contact@example.com>
+
+[python_ref]: https://example.com "Exemplum Website"
 
 ---
 
 ## Blockquotes
 
-> A well-structured document converts cleanly to PDF.
+> Mauris turpis nunc, blandit et, volutpat molestie, porta ut, ligula. Fusce pharetra convallis urna.
 
-> **Nested blockquote:**
+> **Quisque rutrum:**
 >
-> > Inner content with `inline code` and emphasis.
+> > Aenean imperdiet. Etiam ultricies nisi vel augue. Curabitur ullamcorper `inline code` ultricies nisi.
 
 ---
 
 ## Tables
 
-| Feature | Status | Description |
+| Vestibulum | Suspendisse | Pellentesque |
 |---|---|---|
-| Markdown to HTML | Stable | Core parsing with footnotes and page breaks |
-| HTML to PDF | Stable | Rendered via WeasyPrint |
-| Code highlighting | Stable | 7+ themes via Pygments |
-| Obsidian embeds | Stable | `![[image.png]]` syntax supported |
-| PDF compression | Optional | Requires qpdf for best results |
-| Built-in presets | New | Academic, Magazine, Corporate, Technical, Minimal |
+| Nulla id | Donec id | Praesent adipiscing |
+| Aliquam lorem | Vivamus in | Sed lectus |
+| Cras dapibus | Fusce a | Curabitur in |
+| Aenean ut | Etiam pretium | Ut id |
+| Maecenas | Nulla sit | In in |
+| Integer ante | Vestibulum | Nullam accumsan |
+
+### Table Formatting & Alignments
+
+| Left-Aligned | Center-Aligned | Right-Aligned |
+| :--- | :---: | ---: |
+| `aliquam lorem` | `vivamus in` | `sed lectus` |
+| **cras dapibus** | *fusce a* | ~~curabitur~~ |
+
+---
+
+## Advanced Elements
+
+### Admonitions / Callouts
+
+> [!info] Praesent egestas
+> Suspendisse nisl elit, rhoncus eget, elementum ac, condimentum eget, diam.
+
+!!! warning "Aenean commodo"
+    Donec elit libero, eleifend nec, rutrum in, mattis nec, saepius.
+
+### Math & Equations
+
+**Inline Math:** Vestibulum rutrum, mi nec $e^{i\pi} + 1 = 0$ elementum.
+
+**Block Math:**
+
+$$
+f(x) = \int_{-\infty}^\infty\hat f(\xi)\,e^{2 \pi i \xi x}\,d\xi
+$$
+
+### HTML Fallbacks
+
+<details>
+  <summary>Click to expand hidden content (Interactive Details)</summary>
+  <p>This content is hidden by default and uses native HTML <code>&lt;details&gt;</code> and <code>&lt;summary&gt;</code> tags. Useful for spoilers or extra info.</p>
+</details>
 
 ---
 
@@ -152,16 +208,17 @@ pytest -q
 
 ## Footnotes
 
-Footnotes appear inline in PDF output and as a list at the end in HTML[^rendering]. The marker color and text color are both configurable in the UI[^styling].
+Pellentesque libero tortor, tincidunt et, tincidunt eget, semper nec, quam[^1]. Maecenas ullamcorper, dui et placerat feugiat, eros pede varius nisi[^2].
 
-[^rendering]: WeasyPrint uses CSS `float: footnote` for proper placement on each page.
-[^styling]: Open the **Footnotes** panel in the app to adjust sizes and colors.
+[^1]: Sed aliquam ultrices mauris.
+
+[^2]: Fusce neque. Donec vitae vitae, eleifend ac.
 
 ---
 
 ## Page Break Markers
 
-Three equivalent syntaxes produce a page break:
+Aenean leo ligula, porttitor eu, consequat vitae, eleifend ac, enim.
 
 - `<!-- pagebreak -->` (HTML comment)
 - `\pagebreak` (LaTeX style)
@@ -173,20 +230,18 @@ Three equivalent syntaxes produce a page break:
 
 ### Keep With Next {.keep-with-next}
 
-This heading uses `.keep-with-next` to stay attached to the content below it, avoiding orphaned headings at the bottom of a page.
+Aenean leo ligula, porttitor eu, consequat vitae, eleifend ac, enim.
 
-- Item A
-- Item B
-- Item C
+- Aliquam ante
+- Dictum posuere
+- Orci luctus
 
 ### Keep Together {.keep-together}
 
-This block uses `.keep-together` to prevent page breaks inside it. Useful for short lists or small tables that should not be split across pages.
+In enim justo, rhoncus ut, imperdiet a, venenatis vitae, justo. Nullam dictum felis eu pede mollis pretium. Integer tincidunt. 
 
 [[PAGEBREAK]]
 
 ## Final Notes
 
-This document covers headings (H1-H6), text formatting, lists (unordered, ordered, tasks), blockquotes, tables, code blocks in five languages, images (relative and Obsidian embeds), footnotes, all three page break syntaxes, and pagination classes.
-
-Try converting it with each built-in preset to compare the output styles.
+Donec vitae sapien ut libero venenatis faucibus. Nullam quis ante. Etiam sit amet orci eget eros faucibus tincidunt.

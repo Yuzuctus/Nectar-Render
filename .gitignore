@@ -6,6 +6,7 @@ __pycache__/
 *.so
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
 .coverage
 .coverage.*
 htmlcov/
@@ -23,6 +24,7 @@ venv/
 
 # Local application state
 .nectar-render/
+.env
 
 # Generated outputs
 output/

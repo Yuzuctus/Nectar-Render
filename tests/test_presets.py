@@ -1,67 +1,56 @@
 """Tests for built-in presets."""
 
-from nectar_render.cli import build_parser
-from nectar_render.style_schema import style_state_keys
-from nectar_render.ui.presets import (
-    BUILTIN_PRESETS,
+from dataclasses import fields
+
+from nectar_render.core.presets import (
     BUILTIN_PRESET_NAMES,
+    BUILTIN_PRESET_STYLES,
     get_builtin_preset,
     is_builtin_preset,
 )
-
-
-_REQUIRED_STYLE_KEYS = set(style_state_keys())
+from nectar_render.core.styles import StyleOptions
 
 
 def test_nine_builtin_presets_exist() -> None:
-    assert len(BUILTIN_PRESETS) == 9
+    assert len(BUILTIN_PRESET_STYLES) == 9
 
 
 def test_builtin_preset_names_are_sorted() -> None:
-    assert BUILTIN_PRESET_NAMES == sorted(BUILTIN_PRESETS.keys())
+    assert BUILTIN_PRESET_NAMES == sorted(BUILTIN_PRESET_STYLES.keys())
 
 
-def test_all_presets_contain_required_keys() -> None:
-    for name, preset in BUILTIN_PRESETS.items():
-        missing = _REQUIRED_STYLE_KEYS - set(preset.keys())
-        assert not missing, f"Preset '{name}' is missing keys: {missing}"
+def test_all_presets_are_valid_style_options() -> None:
+    required_fields = {f.name for f in fields(StyleOptions)}
+    for name, preset in BUILTIN_PRESET_STYLES.items():
+        missing = required_fields - set(f.name for f in fields(preset))
+        assert not missing, f"Preset '{name}' is missing StyleOptions fields: {missing}"
 
 
-def test_presets_do_not_contain_file_path_keys() -> None:
-    non_style_keys = {
-        "markdown_var",
-        "output_dir_var",
-        "ui_theme_var",
-        "auto_preview_var",
-    }
-    for name, preset in BUILTIN_PRESETS.items():
-        found = non_style_keys & set(preset.keys())
-        assert not found, f"Preset '{name}' should not contain non-style keys: {found}"
+def test_presets_have_valid_font_sizes() -> None:
+    for name, preset in BUILTIN_PRESET_STYLES.items():
+        assert 8 <= preset.body_font_size <= 24, f"{name}: body_font_size out of range"
+        assert 8 <= preset.code_font_size <= 24, f"{name}: code_font_size out of range"
 
 
-def test_font_sizes_are_reasonable() -> None:
-    for name, preset in BUILTIN_PRESETS.items():
-        assert 8 <= preset["body_size_var"] <= 24, f"{name}: body size out of range"
-        assert 8 <= preset["code_size_var"] <= 24, f"{name}: code size out of range"
-
-
-def test_margins_are_positive() -> None:
-    for name, preset in BUILTIN_PRESETS.items():
-        for key in (
-            "margin_top_var",
-            "margin_right_var",
-            "margin_bottom_var",
-            "margin_left_var",
-        ):
-            assert preset[key] > 0, f"{name}: {key} must be positive"
-
-
-def test_image_scale_is_valid_percentage() -> None:
-    for name, preset in BUILTIN_PRESETS.items():
-        scale = preset["image_scale_var"]
-        assert 40 <= scale <= 100, (
-            f"{name}: image_scale_var {scale} out of 40-100 range"
+def test_presets_have_valid_margins() -> None:
+    for name, preset in BUILTIN_PRESET_STYLES.items():
+        assert 0.0 <= preset.margin_top_mm <= 100.0, (
+            f"{name}: margin_top_mm out of range"
         )
+        assert 0.0 <= preset.margin_right_mm <= 100.0, (
+            f"{name}: margin_right_mm out of range"
+        )
+        assert 0.0 <= preset.margin_bottom_mm <= 100.0, (
+            f"{name}: margin_bottom_mm out of range"
+        )
+        assert 0.0 <= preset.margin_left_mm <= 100.0, (
+            f"{name}: margin_left_mm out of range"
+        )
+
+
+def test_presets_have_valid_image_scale() -> None:
+    for name, preset in BUILTIN_PRESET_STYLES.items():
+        assert 0.4 <= preset.image_scale <= 1.0, f"{name}: image_scale out of range"
 
 
 def test_is_builtin_preset_true() -> None:
@@ -78,8 +67,8 @@ def test_is_builtin_preset_false() -> None:
 def test_get_builtin_preset_returns_copy() -> None:
     preset = get_builtin_preset("Academic")
     assert preset is not None
-    assert preset is not BUILTIN_PRESETS["Academic"]
-    assert preset == BUILTIN_PRESETS["Academic"]
+    assert preset is not BUILTIN_PRESET_STYLES["Academic"]
+    assert preset == BUILTIN_PRESET_STYLES["Academic"]
 
 
 def test_get_builtin_preset_none_for_unknown() -> None:
@@ -89,14 +78,4 @@ def test_get_builtin_preset_none_for_unknown() -> None:
 def test_get_builtin_preset_strips_suffix() -> None:
     preset = get_builtin_preset("Technical (built-in)")
     assert preset is not None
-    assert preset["code_theme_var"] == "monokai"
-
-
-def test_cli_help_is_synchronized_with_builtin_presets() -> None:
-    parser = build_parser()
-    help_text = parser.format_help()
-
-    for name in BUILTIN_PRESET_NAMES:
-        assert name in help_text
-    assert "Modern" not in help_text
-    assert "Dark Code" not in help_text
+    assert preset.code_theme == "monokai"

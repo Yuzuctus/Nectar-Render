@@ -5,23 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import nectar_render.cli as cli_module
-from nectar_render.services.conversion_service import ConversionResult
-
-
-def test_state_dict_to_style_maps_tk_state_keys() -> None:
-    style = cli_module._state_dict_to_style(
-        {
-            "footer_align_var": "Center",
-            "image_scale_var": 80.0,
-            "heading_h2_color_var": "#00ff00",
-            "heading_h2_size_var": 20,
-        }
-    )
-
-    assert style.footer_align == "center"
-    assert style.image_scale == 0.8
-    assert style.heading_h2_color == "#00ff00"
-    assert style.heading_h2_size_px == 20
+from nectar_render.application.conversion import ConversionResult
 
 
 def test_run_cli_html_success_with_builtin_preset(

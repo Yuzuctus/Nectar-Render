@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections import OrderedDict
+import logging
 import re
+import threading
+from collections import OrderedDict
 from pathlib import Path
-from urllib.parse import unquote
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
@@ -17,8 +18,12 @@ from .markdown_rendering import (
     sanitize_html_fragment,
 )
 
+
+logger = logging.getLogger(__name__)
+
 _IMAGE_INDEX_CACHE: OrderedDict[str, dict[str, list[Path]]] = OrderedDict()
 _IMAGE_CACHE_MAX_ROOTS = 8
+_IMAGE_CACHE_LOCK = threading.Lock()
 _IMAGE_EXTENSIONS = {
     ".apng",
     ".avif",
@@ -27,7 +32,6 @@ _IMAGE_EXTENSIONS = {
     ".jpeg",
     ".jpg",
     ".png",
-    ".svg",
     ".tif",
     ".tiff",
     ".webp",
@@ -69,7 +73,8 @@ def _build_image_index(
 ) -> dict[str, list[Path]]:
     target_names = {name.lower() for name in (file_names or set())}
     index: dict[str, list[Path]] = {}
-    resolved_at_root: set[str] = set()
+    found_names: set[str] = set()
+
     for path in root.rglob("*"):
         if not path.is_file():
             continue
@@ -79,9 +84,9 @@ def _build_image_index(
         if target_names and key not in target_names:
             continue
         index.setdefault(key, []).append(path)
-        if target_names and len(path.relative_to(root).parts) == 1:
-            resolved_at_root.add(key)
-            if resolved_at_root == target_names:
+        if target_names:
+            found_names.add(key)
+            if found_names == target_names:
                 break
     return index
 
@@ -95,29 +100,32 @@ def _get_image_index(root: Path, file_names: set[str]) -> dict[str, list[Path]]:
         return {}
 
     cache_key = _image_index_cache_key(root)
-    cached = _IMAGE_INDEX_CACHE.get(cache_key)
-    if cached is None:
-        cached = {}
-        _IMAGE_INDEX_CACHE[cache_key] = cached
-    else:
-        _IMAGE_INDEX_CACHE.move_to_end(cache_key)
+    with _IMAGE_CACHE_LOCK:
+        cached = _IMAGE_INDEX_CACHE.get(cache_key)
+        if cached is None:
+            cached = {}
+            _IMAGE_INDEX_CACHE[cache_key] = cached
+        else:
+            _IMAGE_INDEX_CACHE.move_to_end(cache_key)
 
     missing_names = {name for name in file_names if name not in cached}
     if missing_names:
         discovered = _build_image_index(root, missing_names)
-        for name in missing_names:
-            cached[name] = discovered.get(name, [])
-        _IMAGE_INDEX_CACHE.move_to_end(cache_key)
-        _trim_image_index_cache()
+        with _IMAGE_CACHE_LOCK:
+            for name in missing_names:
+                cached[name] = discovered.get(name, [])
+            _IMAGE_INDEX_CACHE.move_to_end(cache_key)
+            _trim_image_index_cache()
 
     return {name: cached[name] for name in file_names if cached.get(name)}
 
 
 def invalidate_image_index_cache(assets_root: Path | None = None) -> None:
-    if assets_root is None:
-        _IMAGE_INDEX_CACHE.clear()
-        return
-    _IMAGE_INDEX_CACHE.pop(_image_index_cache_key(assets_root), None)
+    with _IMAGE_CACHE_LOCK:
+        if assets_root is None:
+            _IMAGE_INDEX_CACHE.clear()
+            return
+        _IMAGE_INDEX_CACHE.pop(_image_index_cache_key(assets_root), None)
 
 
 def _pick_best_candidate(candidates: list[Path], assets_root: Path) -> Path:
@@ -150,7 +158,11 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
             continue
         direct_path = (assets_root / normalized_src).resolve()
         if direct_path.exists() and direct_path.is_file():
-            img["src"] = direct_path.as_uri()
+            try:
+                rel_path = direct_path.relative_to(assets_root).as_posix()
+                img["src"] = rel_path
+            except ValueError:
+                img["src"] = direct_path.as_uri()
             continue
 
         unresolved_images.append((img, normalized_src))
@@ -167,10 +179,16 @@ def _resolve_image_sources(html: str, assets_root: Path | None) -> str:
         file_name = Path(normalized_src).name.lower()
         candidates = image_index.get(file_name, [])
         if not candidates:
+            logger.warning("Image not found: %s", normalized_src)
+            img.decompose()
             continue
 
         best_match = _pick_best_candidate(candidates, assets_root)
-        img["src"] = best_match.resolve().as_uri()
+        try:
+            rel_path = best_match.relative_to(assets_root).as_posix()
+            img["src"] = rel_path
+        except ValueError:
+            img["src"] = best_match.as_uri()
 
     return str(soup)
 
@@ -179,10 +197,34 @@ def parse_markdown(
     markdown_text: str,
     include_footnotes: bool,
     assets_root: Path | None = None,
-    sanitize_html: bool = True,
 ) -> str:
     prepared = prepare_markdown(markdown_text, include_footnotes=include_footnotes)
     html = render_markdown_html(prepared)
-    if sanitize_html:
-        html = sanitize_html_fragment(html)
+    html = sanitize_html_fragment(html)
     return _resolve_image_sources(html, assets_root=assets_root)
+
+
+_IMG_TAG_RE = re.compile(r'<img\s[^>]*src=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
+_MARKDOWN_IMAGE_RE = re.compile(r'!\[[^\]]*\]\(([^"\']+)\)', re.IGNORECASE)
+
+
+def extract_referenced_images(markdown_text: str) -> list[str]:
+    found: set[str] = set()
+
+    for match in _IMG_TAG_RE.finditer(markdown_text):
+        src = match.group(1).strip()
+        if src.lower().startswith(("http://", "https://")):
+            continue
+        src_clean = src.replace("\\", "/").split("/")[-1]
+        if src_clean:
+            found.add(src_clean)
+
+    for match in _MARKDOWN_IMAGE_RE.finditer(markdown_text):
+        src = match.group(1).strip()
+        if src.lower().startswith(("http://", "https://")):
+            continue
+        src_clean = src.replace("\\", "/").split("/")[-1]
+        if src_clean:
+            found.add(src_clean)
+
+    return sorted(found)
