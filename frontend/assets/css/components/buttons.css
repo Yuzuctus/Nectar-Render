@@ -1,0 +1,130 @@
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: 0.7em 1.5em;
+  min-height: 2.75rem;
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: var(--weight-bold);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+  border: 2px solid transparent;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition:
+    transform var(--dur-fast) var(--ease-bloom),
+    box-shadow var(--dur-fast) var(--ease-swish),
+    background var(--dur-fast) var(--ease-swish),
+    color var(--dur-fast) var(--ease-swish),
+    border-color var(--dur-fast) var(--ease-swish);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--fg);
+  outline-offset: 2px;
+}
+
+.btn--cactus {
+  background: var(--accent-strong);
+  color: var(--ink);
+  border-color: var(--fg);
+  box-shadow: var(--shadow-stamp);
+}
+
+.btn--cactus:hover {
+  background: var(--accent);
+  color: var(--ink);
+  border-color: var(--ink);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-stamp-hover);
+}
+
+.btn--cactus:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.btn--pebble {
+  background: var(--surface);
+  color: var(--fg);
+  border-color: var(--border);
+  box-shadow: var(--shadow-soft);
+}
+
+.btn--pebble:hover {
+  background: var(--surface-tinted);
+  border-color: var(--accent-strong);
+  color: var(--accent-strong);
+  transform: translateY(-1px);
+}
+
+.btn--pebble:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
+
+.btn--breeze {
+  background: transparent;
+  color: var(--link);
+  border-color: transparent;
+  padding: 0.7em 0.5em;
+}
+
+.btn--breeze::after {
+  content: '';
+  display: block;
+  width: 0;
+  height: 2px;
+  background: var(--accent-strong);
+  transition: width var(--dur-normal) var(--ease-swish);
+}
+
+.btn--breeze:hover::after {
+  width: 100%;
+}
+
+.btn--breeze:hover {
+  color: var(--accent-strong);
+}
+
+.btn--sm {
+  font-size: var(--text-sm);
+  padding: 0.5em 1em;
+  min-height: 2.75rem;
+}
+
+.btn--lg {
+  font-size: var(--text-lg);
+  padding: 0.8em 2em;
+}
+
+.btn--icon {
+  width: 2.75rem;
+  height: 2.75rem;
+  padding: 0;
+  border-radius: var(--radius-full);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.btn-with-spinner {
+  gap: var(--space-sm);
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: var(--white);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}

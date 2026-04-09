@@ -46,7 +46,7 @@ def test_run_cli_html_success_with_builtin_preset(
     assert cli_module.run_cli(args) == 0
     assert captured["markdown_file"] == markdown_file
     assert captured["output_directory"] == markdown_file.parent / "output"
-    assert captured["style"].body_font == "Times New Roman"
+    assert captured["style"].body_font == "Noto Serif"
     assert captured["style"].footer_align == "center"
     assert captured["export"].output_format == "HTML"
     assert captured["export"].page_size == "Letter"

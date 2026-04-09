@@ -1,0 +1,25 @@
+.toast {
+  position: fixed;
+  right: 1.2rem;
+  bottom: 1.2rem;
+  z-index: 230;
+  min-width: 16rem;
+  max-width: min(90vw, 30rem);
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-md);
+  animation: slide-in var(--dur-normal) var(--ease-out);
+}
+
+.toast.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}

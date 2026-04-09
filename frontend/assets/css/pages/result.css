@@ -1,0 +1,37 @@
+.result-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-lg);
+}
+
+.result-card {
+  width: min(40rem, 100%);
+  text-align: center;
+  padding: var(--space-xl) var(--space-lg);
+}
+
+.success-icon {
+  width: 4.5rem;
+  height: 4.5rem;
+  margin: 0 auto var(--space-md);
+  border-radius: 50%;
+  border: 2px solid rgba(76, 175, 121, 0.45);
+  background: rgba(76, 175, 121, 0.12);
+  display: grid;
+  place-items: center;
+}
+
+.success-icon svg {
+  width: 2.2rem;
+  height: 2.2rem;
+  color: var(--success);
+}
+
+.result-actions {
+  margin-top: var(--space-lg);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-sm);
+}

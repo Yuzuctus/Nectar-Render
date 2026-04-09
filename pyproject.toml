@@ -52,6 +52,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"nectar_render" = ["core/preset_data/*.json"]
+
 [tool.setuptools.dynamic]
 version = {attr = "nectar_render.__version__"}
 

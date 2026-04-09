@@ -8,7 +8,9 @@ CLI tool, Python library, and web stack to convert Markdown into styled PDF and 
 ## Highlights
 
 - Convert Markdown to `PDF`, `HTML`, or both (`PDF+HTML`) in one run
-- 9 built-in presets: Academic, Corporate, Creative, Developer, Elegant, Magazine, Minimal, Notebook, Technical
+- 10 built-in presets loaded from JSON files: Academic, Ambre, Corporate, Creative, Developer, Elegant, Magazine, Minimal, Notebook, Technical
+- User presets saved locally in the browser (localStorage)
+- Export/import themes as JSON for sharing between users
 - Full style controls (typography, heading levels, margins, tables, code theme, footnotes, image scale)
 - Image modes: `WITH_IMAGES`, `ALT_ONLY`, `STRIP`
 - Obsidian image embeds (`![[image.png]]`) and page break markers (`<!-- pagebreak -->`, `\pagebreak`, `[[PAGEBREAK]]`)
@@ -118,8 +120,11 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload
 Available endpoints:
 
 - `GET /analyze/health`
+- `GET /presets/builtin` (returns all built-in presets with style data)
+- `GET /fonts/google` (cached, paginated Google Fonts search)
 - `POST /analyze/` (upload one `.md` file, returns missing image names)
 - `POST /convert` (multipart form conversion endpoint)
+- `POST /preview` (HTML JSON preview or inline PDF preview)
 
 Minimal conversion request:
 
@@ -136,6 +141,7 @@ Important API behavior:
 - `PDF+HTML` returns a `.zip` (`output.pdf` + `output.html`)
 - In `WITH_IMAGES`, unresolved references return `422` with `{"missing_images": [...]}`
 - In `WITH_IMAGES`, external URLs and absolute image paths are rejected
+- Validation and conversion errors return JSON with `{"detail": "..."}`
 
 API payload limits:
 
@@ -143,7 +149,7 @@ API payload limits:
 - Max asset count: `128`
 - Max per-asset size: `10 MB`
 - Max total assets size: `50 MB`
-- Allowed uploaded asset extensions: `.apng`, `.avif`, `.bmp`, `.gif`, `.jpeg`, `.jpg`, `.png`, `.tif`, `.tiff`, `.webp`
+- Allowed uploaded asset extensions: `.apng`, `.avif`, `.bmp`, `.gif`, `.jpeg`, `.jpg`, `.png`, `.svg`, `.tif`, `.tiff`, `.webp`
 
 ### CORS
 

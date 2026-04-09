@@ -1,7 +1,9 @@
 from .presets import (
     BUILTIN_PRESET_NAMES,
     BUILTIN_PRESET_STYLES,
+    BUILTIN_PRESET_AS_DICTS,
     get_builtin_preset,
+    get_builtin_preset_raw,
     is_builtin_preset,
 )
 from .styles import (
@@ -26,6 +28,7 @@ from .styles import (
 __all__ = [
     "BUILTIN_PRESET_NAMES",
     "BUILTIN_PRESET_STYLES",
+    "BUILTIN_PRESET_AS_DICTS",
     "CompressionOptions",
     "DEFAULT_BODY_FONT",
     "DEFAULT_CODE_FONT",
@@ -39,6 +42,7 @@ __all__ = [
     "StyleOptions",
     "UI_THEMES",
     "get_builtin_preset",
+    "get_builtin_preset_raw",
     "is_builtin_preset",
     "normalize_style_option_value",
     "sanitize_text_value",

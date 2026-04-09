@@ -5,12 +5,15 @@ import logging
 import re
 import shutil
 import tempfile
+import time
 import zipfile
+from collections import deque
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any
-from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -21,6 +24,14 @@ from nectar_render.application.conversion import (
     ImageMode,
     analyze_markdown,
 )
+from nectar_render.adapters.rendering.image_references import (
+    extract_image_references,
+    normalize_reference_filename,
+)
+from nectar_render.core.image_assets import (
+    IMAGE_EXTENSIONS,
+    is_windows_reserved_filename,
+)
 from nectar_render.core.presets import get_builtin_preset
 from nectar_render.core.styles import (
     CompressionOptions,
@@ -28,7 +39,6 @@ from nectar_render.core.styles import (
     StyleOptions,
     style_from_option_mapping,
 )
-from nectar_render.utils.paths import is_external_or_absolute_path
 
 router = APIRouter(prefix="/analyze", tags=["conversion"])
 convert_router = APIRouter(tags=["conversion"])
@@ -37,7 +47,12 @@ _MAX_MARKDOWN_BYTES = 2 * 1024 * 1024
 _MAX_ASSET_COUNT = 128
 _MAX_ASSET_BYTES = 10 * 1024 * 1024
 _MAX_ASSETS_TOTAL_BYTES = 50 * 1024 * 1024
+_MAX_DATA_URI_CHARS = 350_000
 _CONVERSION_TIMEOUT_SECONDS = 120.0
+_ASSET_CHUNK_SIZE = 512 * 1024
+_MAX_CONCURRENT_CONVERSIONS = 4
+_RATE_LIMIT_WINDOW_SECONDS = 60.0
+_RATE_LIMIT_MAX_REQUESTS_PER_WINDOW = 30
 _OUTPUT_FORMATS = {"PDF", "HTML", "PDF+HTML"}
 _PAGE_SIZE_MAP = {
     "A4": "A4",
@@ -51,22 +66,10 @@ _IMAGE_MODE_MAP = {
     "ALT_ONLY": ImageMode.ALT_ONLY,
     "STRIP": ImageMode.STRIP,
 }
-_ALLOWED_IMAGE_EXTENSIONS = {
-    ".apng",
-    ".avif",
-    ".bmp",
-    ".gif",
-    ".jpeg",
-    ".jpg",
-    ".png",
-    ".svg",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
 _STYLE_FORM_FIELD_NAMES = (
     "body_font",
     "body_font_size",
+    "body_text_color",
     "line_height",
     "heading_font",
     "heading_color",
@@ -93,6 +96,7 @@ _STYLE_FORM_FIELD_NAMES = (
     "footer_text",
     "footer_align",
     "footer_color",
+    "footer_font_size",
     "include_footnotes",
     "footnote_font_size",
     "footnote_text_color",
@@ -102,27 +106,28 @@ _STYLE_FORM_FIELD_NAMES = (
     "table_row_even_color",
     "table_cell_padding_y_px",
     "table_cell_padding_x_px",
+    "border_color",
     "image_scale",
     "sanitize_html",
     "show_horizontal_rules",
 )
-_STANDARD_IMAGE_RE = re.compile(
-    r"!\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]+\)))?\)",
-    re.IGNORECASE,
-)
-_OBSIDIAN_IMAGE_RE = re.compile(r"!\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
-_HTML_IMAGE_RE = re.compile(
-    r"<img\b[^>]*\bsrc\s*=\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s>]+))",
+
+_EXECUTOR = ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_CONVERSIONS)
+_CONVERSION_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_CONVERSIONS)
+_RATE_LIMIT_LOCK = asyncio.Lock()
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
+_DATA_URI_RE = re.compile(
+    r"data:image/[a-zA-Z0-9.+-]+;base64,([A-Za-z0-9+/=\s]+)",
     re.IGNORECASE,
 )
 
 
 def _cleanup_task(tmp_dir: str) -> BackgroundTask:
-    return BackgroundTask(shutil.rmtree, tmp_dir, ignore_errors=True)
+    return BackgroundTask(_cleanup_tmp_dir, tmp_dir, logging.getLogger(__name__))
 
 
-def _parse_bool(value: str, default: bool) -> bool:
-    cleaned = (value or "").strip().lower()
+def _parse_bool(value: object, default: bool) -> bool:
+    cleaned = str(value or "").strip().lower()
     if cleaned == "":
         return default
     return cleaned not in {"0", "false", "no", "off"}
@@ -133,6 +138,11 @@ def _safe_asset_filename(raw_name: str) -> str:
     candidate = Path(sanitized).name
     if not candidate or candidate in {".", ".."}:
         raise HTTPException(status_code=400, detail="Invalid asset filename")
+    if is_windows_reserved_filename(candidate):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Asset filename '{candidate}' is reserved on Windows",
+        )
     return candidate
 
 
@@ -144,15 +154,22 @@ def _style_from_form_values(
     base_style: StyleOptions | None = None
     if preset_name:
         base_style = get_builtin_preset(preset_name)
-        if base_style is None:
-            raise HTTPException(
-                status_code=400, detail=f"Unknown preset '{preset_name}'"
-            )
+
+    allow_explicit_empty = {
+        "footer_text",
+        "heading_h1_color",
+        "heading_h2_color",
+        "heading_h3_color",
+        "heading_h4_color",
+        "heading_h5_color",
+        "heading_h6_color",
+    }
 
     style_mapping = {
         key: value
         for key, value in values.items()
-        if key in _STYLE_FORM_FIELD_NAMES and value != ""
+        if key in _STYLE_FORM_FIELD_NAMES
+        and (value != "" or key in allow_explicit_empty)
     }
     return style_from_option_mapping(style_mapping, base_style=base_style)
 
@@ -216,77 +233,31 @@ def _image_mode_from_value(image_mode: str) -> ImageMode:
 
 
 def _collect_referenced_images(markdown_text: str) -> list[str]:
-    all_refs: list[str] = []
-
-    for match in _STANDARD_IMAGE_RE.finditer(markdown_text):
-        ref = match.group(1).strip()
-        if not ref:
-            continue
-        if _is_inside_code_block(markdown_text, match.start()):
-            continue
-        if _is_inside_inline_code(markdown_text, match.start(), match.end()):
-            continue
-        if ref.startswith("<") and ref.endswith(">") and len(ref) > 2:
-            ref = ref[1:-1].strip()
-        if not ref:
-            continue
-        all_refs.append(ref)
-
-    for match in _OBSIDIAN_IMAGE_RE.finditer(markdown_text):
-        ref = match.group(1).strip()
-        if not ref:
-            continue
-        if _is_inside_code_block(markdown_text, match.start()):
-            continue
-        if _is_inside_inline_code(markdown_text, match.start(), match.end()):
-            continue
-        all_refs.append(ref)
-
-    for match in _HTML_IMAGE_RE.finditer(markdown_text):
-        ref = (
-            (match.group(1) or "").strip()
-            or (match.group(2) or "").strip()
-            or (match.group(3) or "").strip()
-        )
-        if not ref:
-            continue
-        if _is_inside_code_block(markdown_text, match.start()):
-            continue
-        if _is_inside_inline_code(markdown_text, match.start(), match.end()):
-            continue
-        all_refs.append(ref)
-
-    return all_refs
+    extraction = extract_image_references(markdown_text)
+    return extraction.all_references
 
 
 def _validate_uploaded_assets_against_markdown(
     markdown_text: str,
     uploads: list[UploadFile] | None,
 ) -> list[str]:
-    all_refs = _collect_referenced_images(markdown_text)
+    extraction = extract_image_references(markdown_text)
 
     uploaded_names: set[str] = set()
     for asset in uploads or []:
         if asset.filename:
-            uploaded_names.add(_normalize_image_ref(asset.filename))
+            uploaded_names.add(normalize_reference_filename(asset.filename))
 
     missing: list[str] = []
     seen_missing: set[str] = set()
-    rejected_refs: list[str] = []
-
-    for ref in all_refs:
-        if ref.lower().startswith("data:"):
-            continue
-        if is_external_or_absolute_path(ref):
-            rejected_refs.append(ref)
-            continue
-
-        normalized_ref = _normalize_image_ref(ref)
+    for ref in extraction.local_references:
+        normalized_ref = normalize_reference_filename(ref)
         if normalized_ref in uploaded_names or normalized_ref in seen_missing:
             continue
         seen_missing.add(normalized_ref)
         missing.append(ref)
 
+    rejected_refs = extraction.rejected_external_references
     if rejected_refs:
         raise HTTPException(
             status_code=400,
@@ -296,102 +267,89 @@ def _validate_uploaded_assets_against_markdown(
     return missing
 
 
-def _normalize_image_ref(ref: str) -> str:
-    """Normalize an image reference for comparison.
-
-    - Decode URL-encoded characters (%20 -> space)
-    - Remove query strings (?v=1.0)
-    - Remove fragment identifiers (#section)
-    - Normalize path separators
-    - Extract filename only
-    """
-    # Decode URL encoding
-    decoded = unquote(ref).strip()
-    # Parse and remove query/fragment
-    parsed = urlparse(decoded)
-    path_only = parsed.path or decoded
-    # Normalize separators and get filename
-    normalized = path_only.replace("\\", "/")
-    filename = normalized.split("/")[-1]
-    return filename
-
-
-def _is_inside_code_block(markdown_text: str, match_start: int) -> bool:
-    """Check if a match position is inside a fenced code block."""
-    # Find all fenced code blocks (``` or ~~~)
-    fence_pattern = re.compile(r"^(`{3,}|~{3,}).*$", re.MULTILINE)
-    in_fence = False
-    fence_char = ""
-
-    for fence_match in fence_pattern.finditer(markdown_text):
-        fence_start = fence_match.start()
-        if fence_start > match_start:
-            break
-        fence = fence_match.group(1)
-        if not in_fence:
-            in_fence = True
-            fence_char = fence[0]
-        elif fence[0] == fence_char and len(fence) >= 3:
-            in_fence = False
-            fence_char = ""
-
-    return in_fence
+def _cleanup_tmp_dir(tmp_dir: str, logger: logging.Logger | None = None) -> None:
+    active_logger = logger or logging.getLogger(__name__)
+    attempts = 4
+    for attempt in range(1, attempts + 1):
+        try:
+            shutil.rmtree(tmp_dir)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if attempt == attempts:
+                active_logger.warning(
+                    "Failed to cleanup temp directory %s after %s attempts: %s",
+                    tmp_dir,
+                    attempts,
+                    exc,
+                )
+                return
+            delay = 0.15 * attempt
+            time.sleep(delay)
 
 
-def _is_inside_inline_code(
-    markdown_text: str, match_start: int, match_end: int
-) -> bool:
-    """Check if a match is inside inline code (backticks).
+def _safe_error_message(prefix: str, exc: Exception) -> str:
+    raw = str(exc).strip()
+    if not raw:
+        return prefix
+    compact = " ".join(raw.split())
+    return f"{prefix}: {compact[:220]}"
 
-    Handles single, double, and triple backtick inline code spans correctly.
-    Per CommonMark spec: a code span begins with a backtick string and ends
-    with a backtick string of equal length.
-    """
-    # Get the line containing the match
-    line_start = markdown_text.rfind("\n", 0, match_start) + 1
-    line_end = markdown_text.find("\n", match_end)
-    if line_end == -1:
-        line_end = len(markdown_text)
-    line = markdown_text[line_start:line_end]
-    match_in_line_start = match_start - line_start
 
-    # Parse inline code spans and check if position falls inside one
-    i = 0
-    while i < len(line):
-        if line[i] == "`":
-            # Count opening backticks
-            open_start = i
-            open_ticks = 0
-            while i < len(line) and line[i] == "`":
-                open_ticks += 1
-                i += 1
-            # Find matching closing backticks (same length)
-            close_pos = -1
-            j = i
-            while j < len(line):
-                if line[j] == "`":
-                    close_start = j
-                    close_ticks = 0
-                    while j < len(line) and line[j] == "`":
-                        close_ticks += 1
-                        j += 1
-                    if close_ticks == open_ticks:
-                        close_pos = close_start
-                        break
-                else:
-                    j += 1
-            if close_pos != -1:
-                # Check if match position is inside this code span
-                code_start = open_start + open_ticks
-                code_end = close_pos
-                if code_start <= match_in_line_start < code_end:
-                    return True
-                i = close_pos + open_ticks
-            # If no closing found, remaining line is not code (unclosed span)
-        else:
-            i += 1
+async def _enforce_rate_limit(request: Request) -> None:
+    client_key = request.client.host if request.client else "unknown"
+    now = asyncio.get_running_loop().time()
+    async with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS.setdefault(client_key, deque())
+        while bucket and (now - bucket[0]) > _RATE_LIMIT_WINDOW_SECONDS:
+            bucket.popleft()
+        if len(bucket) >= _RATE_LIMIT_MAX_REQUESTS_PER_WINDOW:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    "Rate limit exceeded for conversion endpoints. "
+                    "Please retry in a minute."
+                ),
+            )
+        bucket.append(now)
 
-    return False
+
+def _schedule_cleanup_when_done(
+    future: asyncio.Future[Any],
+    tmp_dir: str,
+    logger: logging.Logger,
+) -> None:
+    def _cleanup_callback(_done: object) -> None:
+        _cleanup_tmp_dir(tmp_dir, logger)
+
+    future.add_done_callback(_cleanup_callback)
+
+
+async def _close_uploads(uploads: list[UploadFile] | None) -> None:
+    for upload in uploads or []:
+        with suppress(Exception):
+            await upload.close()
+
+
+async def _run_conversion_call(
+    *,
+    convert_call: partial[Any],
+    tmp_dir: str,
+    logger: logging.Logger,
+    timeout_message: str,
+) -> Any:
+    loop = asyncio.get_running_loop()
+    async with _CONVERSION_SEMAPHORE:
+        future: asyncio.Future[Any] = loop.run_in_executor(_EXECUTOR, convert_call)
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(future),
+                timeout=_CONVERSION_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError as exc:
+            _schedule_cleanup_when_done(future, tmp_dir, logger)
+            raise HTTPException(status_code=504, detail=timeout_message) from exc
 
 
 def _validate_markdown_text(markdown_text: str) -> None:
@@ -402,6 +360,16 @@ def _validate_markdown_text(markdown_text: str) -> None:
             status_code=413,
             detail=f"markdown_text is too large (max {_MAX_MARKDOWN_BYTES} bytes)",
         )
+    for match in _DATA_URI_RE.finditer(markdown_text):
+        payload = "".join((match.group(1) or "").split())
+        if len(payload) > _MAX_DATA_URI_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Embedded data URI is too large. "
+                    f"Maximum base64 payload is {_MAX_DATA_URI_CHARS} characters."
+                ),
+            )
 
 
 async def _read_markdown_upload(upload: UploadFile) -> str:
@@ -443,7 +411,7 @@ async def _load_assets(
 
         filename = _safe_asset_filename(asset.filename)
         extension = Path(filename).suffix.lower()
-        if extension not in _ALLOWED_IMAGE_EXTENSIONS:
+        if extension not in IMAGE_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported asset type for '{filename}'",
@@ -455,25 +423,35 @@ async def _load_assets(
                 detail=f"Duplicate asset filename '{filename}'",
             )
 
-        data = await asset.read(_MAX_ASSET_BYTES + 1)
-        if len(data) > _MAX_ASSET_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Asset '{filename}' exceeds {_MAX_ASSET_BYTES} bytes",
-            )
-
-        total_bytes += len(data)
-        if total_bytes > _MAX_ASSETS_TOTAL_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=(f"Total asset payload exceeds {_MAX_ASSETS_TOTAL_BYTES} bytes"),
-            )
-
         target = (tmp_path / filename).resolve()
         if target.parent != tmp_root:
             raise HTTPException(status_code=400, detail="Invalid asset path")
+        file_size = 0
+        with target.open("wb") as handle:
+            while True:
+                chunk = await asset.read(_ASSET_CHUNK_SIZE)
+                if not chunk:
+                    break
+                file_size += len(chunk)
+                if file_size > _MAX_ASSET_BYTES:
+                    handle.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"Asset '{filename}' exceeds {_MAX_ASSET_BYTES} bytes",
+                    )
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_ASSETS_TOTAL_BYTES:
+                    handle.close()
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"Total asset payload exceeds {_MAX_ASSETS_TOTAL_BYTES} bytes"
+                        ),
+                    )
+                handle.write(chunk)
 
-        target.write_bytes(data)
         asset_names.add(filename)
 
     return asset_names
@@ -485,6 +463,11 @@ def _extract_uploads(values: list[object]) -> list[UploadFile]:
         if hasattr(value, "filename") and hasattr(value, "read"):
             uploads.append(value)  # type: ignore[arg-type]
     return uploads
+
+
+def _response_with_cleanup(response: Response, tmp_dir: str) -> Response:
+    response.background = _cleanup_task(tmp_dir)
+    return response
 
 
 @router.get("/health")
@@ -500,6 +483,15 @@ async def analyze(
         raise HTTPException(status_code=400, detail="Only .md files are accepted")
 
     markdown_text = await _read_markdown_upload(file)
+    extraction = extract_image_references(markdown_text)
+    if extraction.rejected_external_references:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "External URLs and absolute paths are not allowed: "
+                f"{extraction.rejected_external_references[:5]}"
+            ),
+        )
     missing = analyze_markdown(markdown_text)
     return {"missing_images": missing}
 
@@ -513,6 +505,7 @@ async def analyze(
     },
 )
 async def convert(
+    request: Request,
     markdown_text: Annotated[str, Form(description="Raw markdown content")],
     image_mode: Annotated[
         str, Form(description="WITH_IMAGES | ALT_ONLY | STRIP")
@@ -526,6 +519,7 @@ async def convert(
     ] = None,
     body_font: Annotated[str, Form(description="")] = "",
     body_font_size: Annotated[str, Form(description="")] = "",
+    body_text_color: Annotated[str, Form(description="")] = "",
     line_height: Annotated[str, Form(description="")] = "",
     heading_font: Annotated[str, Form(description="")] = "",
     heading_color: Annotated[str, Form(description="")] = "",
@@ -552,6 +546,7 @@ async def convert(
     footer_text: Annotated[str, Form(description="")] = "",
     footer_align: Annotated[str, Form(description="")] = "",
     footer_color: Annotated[str, Form(description="")] = "",
+    footer_font_size: Annotated[str, Form(description="")] = "",
     include_footnotes: Annotated[str, Form(description="")] = "",
     footnote_font_size: Annotated[str, Form(description="")] = "",
     footnote_text_color: Annotated[str, Form(description="")] = "",
@@ -561,8 +556,9 @@ async def convert(
     table_row_even_color: Annotated[str, Form(description="")] = "",
     table_cell_padding_y_px: Annotated[str, Form(description="")] = "",
     table_cell_padding_x_px: Annotated[str, Form(description="")] = "",
+    border_color: Annotated[str, Form(description="")] = "",
     image_scale: Annotated[str, Form(description="")] = "",
-    sanitize_html: Annotated[str, Form(description="")] = "true",
+    sanitize_html: Annotated[str, Form(description="")] = "",
     show_horizontal_rules: Annotated[str, Form(description="")] = "",
     compress_pdf: Annotated[str, Form(description="")] = "",
     compression_profile: Annotated[str, Form(description="balanced | max")] = "",
@@ -570,6 +566,7 @@ async def convert(
     compression_timeout: Annotated[str, Form(description="")] = "",
     keep_original_on_fail: Annotated[str, Form(description="")] = "",
 ) -> Response:
+    await _enforce_rate_limit(request)
     _validate_markdown_text(markdown_text)
     image_mode_value = _image_mode_from_value(image_mode)
     output_format_upper = output_format.upper()
@@ -578,6 +575,7 @@ async def convert(
     style_input_values: dict[str, object] = {
         "body_font": body_font,
         "body_font_size": body_font_size,
+        "body_text_color": body_text_color,
         "line_height": line_height,
         "heading_font": heading_font,
         "heading_color": heading_color,
@@ -604,6 +602,7 @@ async def convert(
         "footer_text": footer_text,
         "footer_align": footer_align,
         "footer_color": footer_color,
+        "footer_font_size": footer_font_size,
         "include_footnotes": include_footnotes,
         "footnote_font_size": footnote_font_size,
         "footnote_text_color": footnote_text_color,
@@ -613,6 +612,7 @@ async def convert(
         "table_row_even_color": table_row_even_color,
         "table_cell_padding_y_px": table_cell_padding_y_px,
         "table_cell_padding_x_px": table_cell_padding_x_px,
+        "border_color": border_color,
         "image_scale": image_scale,
         "sanitize_html": sanitize_html,
         "show_horizontal_rules": show_horizontal_rules,
@@ -638,7 +638,7 @@ async def convert(
     try:
         tmp_path = Path(tmp_dir)
         md_file = tmp_path / "input.md"
-        md_file.write_text(markdown_text, encoding="utf-8")
+        await asyncio.to_thread(md_file.write_text, markdown_text, encoding="utf-8")
 
         assets_root: Path | None = None
         if image_mode_value == ImageMode.WITH_IMAGES:
@@ -660,35 +660,37 @@ async def convert(
             image_mode=image_mode_value,
             assets_root=assets_root,
         )
-        loop = asyncio.get_running_loop()
-        try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, convert_call),
-                timeout=_CONVERSION_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:
-            raise HTTPException(status_code=504, detail="Conversion timed out") from exc
+        result = await _run_conversion_call(
+            convert_call=convert_call,
+            tmp_dir=tmp_dir,
+            logger=logger,
+            timeout_message="Conversion timed out",
+        )
 
         if result.missing_images:
-            return JSONResponse(
-                status_code=422,
-                content={"missing_images": result.missing_images},
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                JSONResponse(
+                    status_code=422,
+                    content={"missing_images": result.missing_images},
+                ),
+                tmp_dir,
             )
 
         if output_format_upper == "HTML" and result.html_path:
-            return FileResponse(
-                path=result.html_path,
-                media_type="text/html",
-                filename="output.html",
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                FileResponse(
+                    path=result.html_path,
+                    media_type="text/html",
+                    filename="output.html",
+                ),
+                tmp_dir,
             )
 
         if output_format_upper == "PDF+HTML":
             if not result.pdf_path or not result.html_path:
                 raise HTTPException(
                     status_code=500,
-                    detail={"detail": "Missing output files for PDF+HTML"},
+                    detail="Missing output files for PDF+HTML",
                 )
 
             with tempfile.NamedTemporaryFile(
@@ -712,19 +714,23 @@ async def convert(
                     compress_type=zipfile.ZIP_DEFLATED,
                 )
 
-            return FileResponse(
-                path=zip_path,
-                media_type="application/zip",
-                filename="output.zip",
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                FileResponse(
+                    path=zip_path,
+                    media_type="application/zip",
+                    filename="output.zip",
+                ),
+                tmp_dir,
             )
 
         if result.pdf_path:
-            return FileResponse(
-                path=result.pdf_path,
-                media_type="application/pdf",
-                filename="output.pdf",
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                FileResponse(
+                    path=result.pdf_path,
+                    media_type="application/pdf",
+                    filename="output.pdf",
+                ),
+                tmp_dir,
             )
 
         if result.output_bytes:
@@ -732,21 +738,32 @@ async def convert(
                 "text/html" if output_format_upper == "HTML" else "application/pdf"
             )
             filename = "output.html" if output_format_upper == "HTML" else "output.pdf"
-            return Response(
-                content=result.output_bytes,
-                media_type=media_type,
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                Response(
+                    content=result.output_bytes,
+                    media_type=media_type,
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{filename}"'
+                    },
+                ),
+                tmp_dir,
             )
 
-        raise HTTPException(status_code=500, detail={"detail": "No output generated"})
+        raise HTTPException(status_code=500, detail="No output generated")
     except HTTPException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup_tmp_dir(tmp_dir, logger)
+        await _close_uploads(assets)
         raise
     except Exception as exc:
         logger.exception("Conversion failed: %s", exc)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail={"detail": "Conversion failed"})
+        _cleanup_tmp_dir(tmp_dir, logger)
+        await _close_uploads(assets)
+        raise HTTPException(
+            status_code=500,
+            detail=_safe_error_message("Conversion failed", exc),
+        )
+    finally:
+        await _close_uploads(assets)
 
 
 @convert_router.post(
@@ -758,6 +775,7 @@ async def convert(
     },
 )
 async def preview(request: Request) -> Response:
+    await _enforce_rate_limit(request)
     form = await request.form()
     markdown_text = str(form.get("markdown_text", ""))
     _validate_markdown_text(markdown_text)
@@ -777,6 +795,8 @@ async def preview(request: Request) -> Response:
     values.setdefault("output_format", "HTML" if preview_engine == "html" else "PDF")
 
     style = _style_from_form_values(values, preset_name=preset)
+    if preview_engine == "html":
+        style.sanitize_html = True
     export = _export_from_form_values(values)
     export.output_format = "HTML" if preview_engine == "html" else "PDF"
 
@@ -793,7 +813,7 @@ async def preview(request: Request) -> Response:
     try:
         tmp_path = Path(tmp_dir)
         md_file = tmp_path / "preview.md"
-        md_file.write_text(markdown_text, encoding="utf-8")
+        await asyncio.to_thread(md_file.write_text, markdown_text, encoding="utf-8")
 
         assets_root: Path | None = None
         if image_mode_value == ImageMode.WITH_IMAGES:
@@ -813,20 +833,20 @@ async def preview(request: Request) -> Response:
             assets_root=assets_root,
             output_bytes=True,
         )
-        loop = asyncio.get_running_loop()
-        try:
-            result = await asyncio.wait_for(
-                loop.run_in_executor(None, convert_call),
-                timeout=_CONVERSION_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError as exc:
-            raise HTTPException(status_code=504, detail="Preview timed out") from exc
+        result = await _run_conversion_call(
+            convert_call=convert_call,
+            tmp_dir=tmp_dir,
+            logger=logger,
+            timeout_message="Preview timed out",
+        )
 
         if result.missing_images:
-            return JSONResponse(
-                status_code=422,
-                content={"missing_images": result.missing_images},
-                background=_cleanup_task(tmp_dir),
+            return _response_with_cleanup(
+                JSONResponse(
+                    status_code=422,
+                    content={"missing_images": result.missing_images},
+                ),
+                tmp_dir,
             )
 
         if preview_engine == "html":
@@ -834,33 +854,40 @@ async def preview(request: Request) -> Response:
             if not html_content and result.output_bytes:
                 html_content = result.output_bytes.decode("utf-8", errors="replace")
             if not html_content:
-                raise HTTPException(
-                    status_code=500, detail={"detail": "No preview generated"}
-                )
-            return JSONResponse(
-                content={
-                    "engine": "html",
-                    "page_size": export.page_size,
-                    "html": html_content,
-                },
-                background=_cleanup_task(tmp_dir),
+                raise HTTPException(status_code=500, detail="No preview generated")
+            return _response_with_cleanup(
+                JSONResponse(
+                    content={
+                        "engine": "html",
+                        "page_size": export.page_size,
+                        "html": html_content,
+                    },
+                ),
+                tmp_dir,
             )
 
         if not result.output_bytes:
-            raise HTTPException(
-                status_code=500, detail={"detail": "No PDF preview generated"}
-            )
+            raise HTTPException(status_code=500, detail="No PDF preview generated")
 
-        return Response(
-            content=result.output_bytes,
-            media_type="application/pdf",
-            headers={"Content-Disposition": 'inline; filename="preview.pdf"'},
-            background=_cleanup_task(tmp_dir),
+        return _response_with_cleanup(
+            Response(
+                content=result.output_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": 'inline; filename="preview.pdf"'},
+            ),
+            tmp_dir,
         )
     except HTTPException:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        _cleanup_tmp_dir(tmp_dir, logger)
+        await _close_uploads(uploads)
         raise
     except Exception as exc:
         logger.exception("Preview failed: %s", exc)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise HTTPException(status_code=500, detail={"detail": "Preview failed"})
+        _cleanup_tmp_dir(tmp_dir, logger)
+        await _close_uploads(uploads)
+        raise HTTPException(
+            status_code=500,
+            detail=_safe_error_message("Preview failed", exc),
+        )
+    finally:
+        await _close_uploads(uploads)

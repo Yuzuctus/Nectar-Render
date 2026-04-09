@@ -1,0 +1,100 @@
+.desert-nav {
+  position: fixed;
+  top: var(--space-md);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-xs) var(--space-lg) var(--space-xs) var(--space-md);
+  background: var(--surface);
+  border: 2px solid var(--border-soft);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-soft);
+  transition:
+    background var(--dur-normal) var(--ease-swish),
+    border-color var(--dur-normal) var(--ease-swish),
+    box-shadow var(--dur-normal) var(--ease-swish);
+}
+
+.desert-nav-brand {
+  text-decoration: none;
+  margin-right: var(--space-xs);
+  white-space: nowrap;
+  font-size: var(--text-md);
+}
+
+.desert-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.desert-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35em 0.8em;
+  min-height: 2.75rem;
+  border-radius: var(--radius-full);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    color var(--dur-fast) var(--ease-swish),
+    background var(--dur-fast) var(--ease-swish);
+}
+
+.desert-nav-link:hover {
+  color: var(--fg);
+  background: rgba(166, 233, 209, 0.15);
+}
+
+.desert-nav-link[aria-current="page"] {
+  color: var(--accent-strong);
+  background: rgba(166, 233, 209, 0.2);
+  font-weight: var(--weight-semibold);
+}
+
+.desert-nav.scrolled {
+  background: var(--surface-tinted);
+  box-shadow: var(--shadow-soft);
+  border-color: var(--border);
+}
+
+@media (max-width: 720px) {
+  .desert-nav {
+    top: auto;
+    bottom: var(--space-sm);
+    left: var(--space-sm);
+    right: var(--space-sm);
+    transform: none;
+    justify-content: space-around;
+    width: auto;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-xl);
+  }
+
+  .desert-nav-brand {
+    display: none;
+  }
+
+  .desert-nav-links {
+    width: 100%;
+    justify-content: space-around;
+  }
+
+  .desert-nav-link {
+    font-size: var(--text-xs);
+    padding: var(--space-xs);
+  }
+
+  .desert-nav .theme-toggle {
+    position: fixed;
+    top: var(--space-sm);
+    right: var(--space-sm);
+  }
+}

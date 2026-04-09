@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from pathlib import Path
 _DLL_DIRECTORY_HANDLES: list[object] = []
 _REGISTERED_DLL_DIRECTORIES: set[str] = set()
 _RUNTIME_STATUS_CACHE: dict[tuple[str, str, str], "WeasyPrintRuntimeStatus"] = {}
+_RUNTIME_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,16 +102,17 @@ def _register_dll_directory(path: Path) -> None:
         return
 
     key = _path_key(path)
-    if key in _REGISTERED_DLL_DIRECTORIES:
-        return
+    with _RUNTIME_LOCK:
+        if key in _REGISTERED_DLL_DIRECTORIES:
+            return
 
-    try:
-        handle = add_dll_directory(str(path))
-    except (FileNotFoundError, OSError):
-        return
+        try:
+            handle = add_dll_directory(str(path))
+        except (FileNotFoundError, OSError):
+            return
 
-    _DLL_DIRECTORY_HANDLES.append(handle)
-    _REGISTERED_DLL_DIRECTORIES.add(key)
+        _DLL_DIRECTORY_HANDLES.append(handle)
+        _REGISTERED_DLL_DIRECTORIES.add(key)
 
 
 def prepare_weasyprint_environment(
@@ -117,9 +120,10 @@ def prepare_weasyprint_environment(
 ) -> WeasyPrintRuntimeStatus:
     cache_key = _runtime_cache_key()
     if not force_refresh:
-        cached = _RUNTIME_STATUS_CACHE.get(cache_key)
-        if cached is not None:
-            return cached
+        with _RUNTIME_LOCK:
+            cached = _RUNTIME_STATUS_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
 
     searched_directories = tuple(_candidate_runtime_directories())
 
@@ -127,7 +131,8 @@ def prepare_weasyprint_environment(
         status = WeasyPrintRuntimeStatus(
             configured_directories=(), searched_directories=searched_directories
         )
-        _RUNTIME_STATUS_CACHE[cache_key] = status
+        with _RUNTIME_LOCK:
+            _RUNTIME_STATUS_CACHE[cache_key] = status
         return status
 
     configured_directories: list[Path] = []
@@ -147,7 +152,8 @@ def prepare_weasyprint_environment(
         configured_directories=tuple(configured_directories),
         searched_directories=searched_directories,
     )
-    _RUNTIME_STATUS_CACHE[cache_key] = status
+    with _RUNTIME_LOCK:
+        _RUNTIME_STATUS_CACHE[cache_key] = status
     return status
 
 

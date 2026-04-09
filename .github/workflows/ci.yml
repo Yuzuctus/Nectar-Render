@@ -23,6 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements-dev.lock
+          pip install -r backend/requirements.txt
           pip install -e . --no-deps
 
       - name: Run tests
@@ -41,6 +42,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements-dev.lock
+          pip install -r backend/requirements.txt
           pip install -e . --no-deps
 
       - name: Lint
@@ -62,6 +64,7 @@ jobs:
       - name: Install locked dependencies
         run: |
           pip install -r requirements-dev.lock
+          pip install -r backend/requirements.txt
           pip install -e . --no-deps
 
       - name: Install MSYS2 and Pango

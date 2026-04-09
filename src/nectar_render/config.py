@@ -5,7 +5,10 @@ from pathlib import Path
 
 from .core.styles import (
     DEFAULT_BODY_FONT,
+    DEFAULT_BODY_TEXT_COLOR,
+    DEFAULT_BORDER_COLOR,
     DEFAULT_CODE_FONT,
+    DEFAULT_FOOTER_FONT_SIZE,
     DEFAULT_HEADING_COLOR,
     FALLBACK_FONTS,
     OUTPUT_FORMATS,
@@ -33,7 +36,10 @@ __all__ = [
     "AppConfig",
     "CompressionOptions",
     "DEFAULT_BODY_FONT",
+    "DEFAULT_BODY_TEXT_COLOR",
+    "DEFAULT_BORDER_COLOR",
     "DEFAULT_CODE_FONT",
+    "DEFAULT_FOOTER_FONT_SIZE",
     "DEFAULT_HEADING_COLOR",
     "ExportOptions",
     "FALLBACK_FONTS",

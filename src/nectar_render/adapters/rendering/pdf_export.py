@@ -8,6 +8,7 @@ from .document_renderer import (
     build_pdf_write_options,
     write_html_document,
 )
+from .url_fetcher import build_safe_url_fetcher
 from ...utils.weasyprint_runtime import (
     WeasyPrintRuntimeError,
     build_runtime_help,
@@ -69,9 +70,16 @@ def export_pdf(
 ) -> tuple[Path, int]:
     prepare_weasyprint_environment()
     try:
-        from weasyprint import HTML
+        import weasyprint
     except (ImportError, OSError) as exc:
         raise WeasyPrintRuntimeError(build_runtime_help(exc)) from exc
+
+    HTML = weasyprint.HTML
+    default_url_fetcher = getattr(weasyprint, "default_url_fetcher", None)
+    if not callable(default_url_fetcher):
+
+        def default_url_fetcher(url: str) -> dict[str, object]:
+            raise ValueError(f"URL fetching unavailable for resource: {url}")
 
     html = document_html
     if html is None:
@@ -84,7 +92,15 @@ def export_pdf(
             api_mode=api_mode,
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    rendered = HTML(string=html, base_url=str(base_url) if base_url else None).render()
+    safe_url_fetcher = build_safe_url_fetcher(
+        base_url=base_url,
+        default_fetcher=default_url_fetcher,
+    )
+    rendered = HTML(
+        string=html,
+        base_url=str(base_url) if base_url else None,
+        url_fetcher=safe_url_fetcher,
+    ).render()
     page_count = len(rendered.pages)
 
     pdf_options = build_pdf_write_options(compression)

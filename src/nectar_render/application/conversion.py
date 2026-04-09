@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import unquote, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -16,12 +17,22 @@ from ..adapters.rendering.pdf_export import (
     export_html,
     export_pdf,
 )
+from ..adapters.rendering.url_fetcher import build_safe_url_fetcher
+from ..adapters.rendering.image_references import normalize_reference_filename
 from ..adapters.pdf_postprocess import PdfCompressionService
+from ..adapters.rendering.markdown_pipeline import _is_within_root
+from ..core.image_assets import (
+    IMAGE_EXTENSIONS,
+    IMAGE_MIME_TYPES,
+    is_safe_svg_bytes,
+    is_windows_reserved_filename,
+)
 from ..core.styles import (
     ExportOptions,
     OUTPUT_FORMATS,
     StyleOptions,
 )
+from ..utils.paths import is_external_or_absolute_path
 
 
 class ImageMode(Enum):
@@ -68,26 +79,21 @@ class CompressionResultProtocol(Protocol):
     tool: str | None
 
 
-# MIME type mapping for image extensions
-_IMAGE_MIME_TYPES: dict[str, str] = {
-    ".apng": "image/apng",
-    ".avif": "image/avif",
-    ".bmp": "image/bmp",
-    ".gif": "image/gif",
-    ".jpeg": "image/jpeg",
-    ".jpg": "image/jpeg",
-    ".png": "image/png",
-    ".svg": "image/svg+xml",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-    ".webp": "image/webp",
-}
-
-
 def _get_mime_type(filename: str) -> str:
     """Get MIME type for an image file."""
     ext = Path(filename).suffix.lower()
-    return _IMAGE_MIME_TYPES.get(ext, "application/octet-stream")
+    return IMAGE_MIME_TYPES.get(ext, "application/octet-stream")
+
+
+def _sanitize_asset_filename(raw_name: str) -> str:
+    candidate = Path(str(raw_name or "").replace("\x00", "").strip()).name
+    if not candidate or candidate in {".", ".."}:
+        raise ValueError(f"Invalid asset filename: {raw_name!r}")
+    if is_windows_reserved_filename(candidate):
+        raise ValueError(f"Reserved Windows asset filename: {candidate!r}")
+    if Path(candidate).suffix.lower() not in IMAGE_EXTENSIONS:
+        raise ValueError(f"Unsupported asset extension: {candidate!r}")
+    return candidate
 
 
 def _embed_images_as_base64(
@@ -113,9 +119,18 @@ def _embed_images_as_base64(
     soup = BeautifulSoup(html, "html.parser")
 
     # Build lookup dict with normalized filenames (lowercase)
-    assets_lookup: dict[str, bytes] = {
-        Path(name).name.lower(): data for name, data in assets.items()
-    }
+    assets_lookup: dict[str, bytes] = {}
+    for name, data in assets.items():
+        try:
+            safe_name = _sanitize_asset_filename(name)
+        except ValueError as exc:
+            if logger:
+                logger.warning("Skipping unsafe asset key %s (%s)", name, exc)
+            continue
+        assets_lookup[safe_name.lower()] = data
+
+    root_resolved = assets_root.resolve() if assets_root is not None else None
+    resolved_data_uri_cache: dict[str, str] = {}
 
     for img in soup.find_all("img"):
         src = (img.get("src") or "").strip()
@@ -126,18 +141,34 @@ def _embed_images_as_base64(
         if src.startswith("data:"):
             continue
 
-        # Skip external URLs
-        if src.lower().startswith(("http://", "https://")):
+        # Remove external/absolute URLs
+        if is_external_or_absolute_path(src):
+            img.decompose()
             continue
 
         # Try to find the image in assets
         # First, try direct lookup with normalized filename
-        src_filename = Path(src.replace("\\", "/")).name.lower()
+        decoded_src = unquote(src).strip()
+        parsed = urlparse(decoded_src)
+        src_path = parsed.path or decoded_src
+        src_filename = Path(src_path.replace("\\", "/")).name.lower()
         image_data = assets_lookup.get(src_filename)
 
         # Also try resolving from assets_root if provided
-        if image_data is None and assets_root is not None:
-            resolved_path = (assets_root / src).resolve()
+        resolved_key: str | None = None
+        if image_data is None and root_resolved is not None:
+            resolved_path = (root_resolved / src_path).resolve()
+            resolved_key = str(resolved_path)
+            cached_data_uri = resolved_data_uri_cache.get(resolved_key)
+            if cached_data_uri is not None:
+                img["src"] = cached_data_uri
+                continue
+
+            if not _is_within_root(resolved_path, root_resolved):
+                if logger:
+                    logger.warning("Skipping path outside assets root: %s", src)
+                img.decompose()
+                continue
             if resolved_path.exists() and resolved_path.is_file():
                 try:
                     image_data = resolved_path.read_bytes()
@@ -151,6 +182,12 @@ def _embed_images_as_base64(
                 logger.warning("Image not found for base64 embedding: %s", src)
             continue
 
+        if src_filename.endswith(".svg") and not is_safe_svg_bytes(image_data):
+            if logger:
+                logger.warning("Unsafe SVG dropped during embedding: %s", src)
+            img.decompose()
+            continue
+
         # Determine MIME type
         mime_type = _get_mime_type(src_filename)
 
@@ -158,27 +195,37 @@ def _embed_images_as_base64(
         b64_data = base64.b64encode(image_data).decode("ascii")
         data_uri = f"data:{mime_type};base64,{b64_data}"
         img["src"] = data_uri
+        if resolved_key is not None:
+            resolved_data_uri_cache[resolved_key] = data_uri
 
     return str(soup)
 
 
-def _find_missing_assets(markdown_text: str, assets_root: Path) -> list[str]:
+def _find_missing_assets(
+    markdown_text: str,
+    assets_root: Path,
+    uploaded_names: set[str] | None = None,
+) -> list[str]:
     from ..adapters.rendering.markdown_pipeline import extract_referenced_images
 
     referenced = extract_referenced_images(markdown_text)
     if not referenced:
         return []
 
-    available_names: set[str] = {
-        path.name.lower()
-        for path in assets_root.rglob("*")
-        if path.is_file() and path.suffix.lower() in _IMAGE_MIME_TYPES
-    }
+    available_names: set[str]
+    if uploaded_names is not None:
+        available_names = {name.lower() for name in uploaded_names}
+    else:
+        available_names = {
+            path.name.lower()
+            for path in assets_root.rglob("*")
+            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+        }
 
     missing: list[str] = []
     seen_missing: set[str] = set()
     for image_name in referenced:
-        key = Path(image_name).name.lower()
+        key = normalize_reference_filename(image_name)
         if key in available_names or key in seen_missing:
             continue
         seen_missing.add(key)
@@ -187,26 +234,26 @@ def _find_missing_assets(markdown_text: str, assets_root: Path) -> list[str]:
     return missing
 
 
-def _copy_assets_to_output(
-    assets: dict[str, bytes],
-    output_directory: Path,
-    logger: logging.Logger | None = None,
-) -> None:
-    """Copy asset files to the output directory.
+def _sanitize_asset_dict(assets: dict[str, bytes]) -> dict[str, bytes]:
+    sanitized: dict[str, bytes] = {}
+    for raw_name, data in assets.items():
+        safe_name = _sanitize_asset_filename(raw_name)
+        sanitized[safe_name] = data
+    return sanitized
 
-    Args:
-        assets: Dictionary mapping filename to image bytes
-        output_directory: Directory to copy assets to
-        logger: Optional logger for info messages
-    """
-    assets_dir = output_directory / "assets"
-    assets_dir.mkdir(parents=True, exist_ok=True)
 
-    for filename, data in assets.items():
-        target_path = assets_dir / Path(filename).name
-        target_path.write_bytes(data)
-        if logger:
-            logger.debug("Copied asset: %s", target_path)
+def _sanitize_html_for_bytes_output(document_html: str, *, api_mode: bool) -> str:
+    if api_mode:
+        return document_html
+
+    soup = BeautifulSoup(document_html, "html.parser")
+    for img in soup.find_all("img"):
+        src = str(img.get("src") or "").strip()
+        if not src:
+            continue
+        if is_external_or_absolute_path(src):
+            img.decompose()
+    return str(soup)
 
 
 def _render_pdf_bytes(document_html: str, base_url: Path | str | None) -> bytes:
@@ -230,12 +277,27 @@ def _render_pdf_bytes(document_html: str, base_url: Path | str | None) -> bytes:
 
     prepare_weasyprint_environment()
     try:
-        from weasyprint import HTML
+        import weasyprint
     except (ImportError, OSError) as exc:
         raise WeasyPrintRuntimeError(build_runtime_help(exc)) from exc
 
+    HTML = weasyprint.HTML
+    default_url_fetcher = getattr(weasyprint, "default_url_fetcher", None)
+    if not callable(default_url_fetcher):
+
+        def default_url_fetcher(url: str) -> dict[str, object]:
+            raise ValueError(f"URL fetching unavailable for resource: {url}")
+
     base_url_str = str(base_url) if base_url else None
-    rendered = HTML(string=document_html, base_url=base_url_str).render()
+    safe_url_fetcher = build_safe_url_fetcher(
+        base_url=base_url,
+        default_fetcher=default_url_fetcher,
+    )
+    rendered = HTML(
+        string=document_html,
+        base_url=base_url_str,
+        url_fetcher=safe_url_fetcher,
+    ).render()
     pdf_bytes = rendered.write_pdf()
     del rendered
     return pdf_bytes
@@ -389,6 +451,9 @@ def execute_conversion(
 
     result = ConversionResult()
 
+    if request.assets is not None:
+        request.assets = _sanitize_asset_dict(request.assets)
+
     # Determine the initial assets_root for HTML rendering
     # Note: For WITH_IMAGES + assets dict mode, we defer HTML rendering until
     # after the temp directory is set up (to avoid double rendering)
@@ -413,17 +478,13 @@ def execute_conversion(
             api_mode=request.api_mode,
         )
 
-    # Handle STRIP mode: remove all images
-    if request.image_mode == ImageMode.STRIP:
+    # Handle STRIP and ALT_ONLY in one soup pass.
+    if request.image_mode in {ImageMode.STRIP, ImageMode.ALT_ONLY}:
         soup = BeautifulSoup(document_html, "html.parser")
         for img in soup.find_all("img"):
-            img.decompose()
-        document_html = str(soup)
-
-    # Handle ALT_ONLY mode: replace images with alt text
-    elif request.image_mode == ImageMode.ALT_ONLY:
-        soup = BeautifulSoup(document_html, "html.parser")
-        for img in soup.find_all("img"):
+            if request.image_mode == ImageMode.STRIP:
+                img.decompose()
+                continue
             alt = (img.get("alt") or "").strip()
             src = (img.get("src") or "").strip()
             replacement_text = f"[{alt if alt else src}]"
@@ -434,12 +495,11 @@ def execute_conversion(
     elif (
         request.image_mode == ImageMode.WITH_IMAGES and request.assets_root is not None
     ):
-        if request.markdown_text is not None:
-            missing = _find_missing_assets(markdown_text, request.assets_root)
-            if missing:
-                result.missing_images = missing
-                logger.error("Missing assets: %s", missing)
-                return result
+        missing = _find_missing_assets(markdown_text, request.assets_root)
+        if missing:
+            result.missing_images = missing
+            logger.error("Missing assets: %s", missing)
+            return result
 
         html_with_embedded_images = _embed_images_as_base64(
             document_html,
@@ -455,7 +515,7 @@ def execute_conversion(
                 result.output_bytes = html_with_embedded_images.encode("utf-8")
             elif fmt in {"PDF", "PDF+HTML"}:
                 result.output_bytes = _render_pdf_bytes(
-                    document_html, request.assets_root
+                    html_with_embedded_images, request.assets_root
                 )
             logger.info("Conversion complete | source=%s", markdown_file)
             return result
@@ -494,7 +554,12 @@ def execute_conversion(
                 )
 
                 referenced = extract_referenced_images(markdown_text)
-                missing = [fn for fn in referenced if fn not in request.assets]
+                asset_keys = {name.lower() for name in request.assets}
+                missing = [
+                    fn
+                    for fn in referenced
+                    if normalize_reference_filename(fn) not in asset_keys
+                ]
                 if missing:
                     result.missing_images = missing
                     logger.error("Missing assets: %s", missing)
@@ -524,7 +589,9 @@ def execute_conversion(
                 if fmt == "HTML":
                     result.output_bytes = html_with_embedded_images.encode("utf-8")
                 elif fmt in {"PDF", "PDF+HTML"}:
-                    result.output_bytes = _render_pdf_bytes(document_html, tmp_path)
+                    result.output_bytes = _render_pdf_bytes(
+                        html_with_embedded_images, tmp_path
+                    )
                 logger.info("Conversion complete | source=%s", markdown_file)
                 return result
 
@@ -557,8 +624,13 @@ def execute_conversion(
         if fmt == "HTML":
             result.output_bytes = document_html.encode("utf-8")
         elif fmt in {"PDF", "PDF+HTML"}:
+            safe_document_html = _sanitize_html_for_bytes_output(
+                document_html,
+                api_mode=request.api_mode,
+            )
             result.output_bytes = _render_pdf_bytes(
-                document_html, assets_root_for_render
+                safe_document_html,
+                assets_root_for_render,
             )
         logger.info("Conversion complete | source=%s", markdown_file)
         return result

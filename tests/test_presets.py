@@ -1,18 +1,29 @@
-"""Tests for built-in presets."""
+"""Tests for built-in presets loaded from JSON files."""
 
 from dataclasses import fields
+from pathlib import Path
 
 from nectar_render.core.presets import (
     BUILTIN_PRESET_NAMES,
     BUILTIN_PRESET_STYLES,
+    BUILTIN_PRESET_AS_DICTS,
     get_builtin_preset,
+    get_builtin_preset_raw,
     is_builtin_preset,
 )
 from nectar_render.core.styles import StyleOptions
 
+_PRESET_DATA_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "src"
+    / "nectar_render"
+    / "core"
+    / "preset_data"
+)
+
 
 def test_nine_builtin_presets_exist() -> None:
-    assert len(BUILTIN_PRESET_STYLES) == 9
+    assert len(BUILTIN_PRESET_STYLES) == 10
 
 
 def test_builtin_preset_names_are_sorted() -> None:
@@ -79,3 +90,43 @@ def test_get_builtin_preset_strips_suffix() -> None:
     preset = get_builtin_preset("Technical (built-in)")
     assert preset is not None
     assert preset.code_theme == "monokai"
+
+
+def test_preset_json_files_exist() -> None:
+    json_files = sorted(_PRESET_DATA_DIR.glob("*.json"))
+    assert len(json_files) == 10, f"Expected 10 JSON files, found {len(json_files)}"
+    expected_names = {
+        "academic",
+        "corporate",
+        "creative",
+        "developer",
+        "elegant",
+        "magazine",
+        "minimal",
+        "ambre",
+        "notebook",
+        "technical",
+    }
+    found_names = {f.stem for f in json_files}
+    assert found_names == expected_names, (
+        f"Missing files: {expected_names - found_names}"
+    )
+
+
+def test_builtin_preset_as_dicts_match_loaded() -> None:
+    for name in BUILTIN_PRESET_NAMES:
+        assert name in BUILTIN_PRESET_AS_DICTS, f"Missing dict for {name}"
+        style_dict = BUILTIN_PRESET_AS_DICTS[name]
+        assert isinstance(style_dict, dict), f"Dict for {name} is not a dict"
+        assert len(style_dict) > 0, f"Dict for {name} is empty"
+
+
+def test_get_builtin_preset_raw() -> None:
+    raw = get_builtin_preset_raw("Academic")
+    assert raw is not None
+    assert "body_font" in raw
+    assert raw["body_font"] == "Noto Serif"
+
+
+def test_get_builtin_preset_raw_none_for_unknown() -> None:
+    assert get_builtin_preset_raw("Nonexistent") is None

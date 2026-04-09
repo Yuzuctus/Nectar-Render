@@ -33,6 +33,7 @@ examples/output/
 
 # Logs
 *.log
+.playwright-mcp
 
 # Temporary preview files
 _style_preview*.html
@@ -44,3 +45,4 @@ desktop.ini
 *.lnk
 .kilo
 *.kilo
+stats.md

@@ -214,3 +214,30 @@ class TestCssSnapshot:
         html = self._generate_css(body_font='"; body{display:none}/*')
         assert 'font-family: "Segoe UI", sans-serif;' in html
         assert 'font-family: ""; body{display:none}/*", sans-serif;' not in html
+
+    def test_google_font_imports_are_included_for_non_system_fonts(self) -> None:
+        html = self._generate_css(
+            body_font="Nunito",
+            heading_font="Montserrat",
+            code_font="JetBrains Mono",
+        )
+        assert (
+            '@import url("https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;700&display=swap");'
+            in html
+        )
+        assert (
+            '@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;700&display=swap");'
+            in html
+        )
+        assert (
+            '@import url("https://fonts.googleapis.com/css2?family=JetBrains%20Mono:wght@400;500;700&display=swap");'
+            in html
+        )
+
+    def test_system_fonts_do_not_emit_google_imports(self) -> None:
+        html = self._generate_css(
+            body_font="Segoe UI",
+            heading_font="Arial",
+            code_font="Consolas",
+        )
+        assert "fonts.googleapis.com/css2" not in html

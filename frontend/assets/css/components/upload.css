@@ -1,0 +1,74 @@
+.drop-zone {
+  width: 100%;
+  max-width: none;
+  border: 2px dashed var(--border);
+  border-radius: 1.1rem;
+  background: var(--surface);
+  padding: clamp(1.35rem, 3vw, 2.2rem) clamp(1rem, 3vw, 1.8rem);
+  text-align: center;
+  transition:
+    border-color var(--dur-normal) var(--ease-swish),
+    background var(--dur-normal) var(--ease-swish),
+    box-shadow var(--dur-normal) var(--ease-swish);
+}
+
+.drop-zone:hover,
+.drop-zone.dragover,
+.drop-zone.has-file {
+  border-color: var(--accent-strong);
+  background: rgba(166, 233, 209, 0.15);
+  box-shadow: var(--shadow-soft);
+}
+
+.drop-zone-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.72rem;
+}
+
+.upload-icon {
+  width: 2.7rem;
+  height: 2.7rem;
+  color: var(--accent-strong);
+}
+
+.drop-hint {
+  font-size: 1.02rem;
+  font-weight: var(--weight-semibold);
+}
+
+.file-info {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.file-pill {
+  min-height: 2.35rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.35em 0.68em;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-tinted);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.file-pill strong {
+  color: var(--fg);
+}
+
+@media (max-width: 760px) {
+  .file-info {
+    grid-template-columns: 1fr;
+  }
+
+  .file-pill {
+    justify-content: flex-start;
+  }
+}

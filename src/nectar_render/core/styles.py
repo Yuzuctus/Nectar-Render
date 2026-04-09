@@ -10,7 +10,10 @@ UI_THEMES = ("Light", "Dark")
 PDF_COMPRESSION_PROFILES = ("balanced", "max")
 
 DEFAULT_BODY_FONT = "Segoe UI"
+DEFAULT_BODY_TEXT_COLOR = "#1f2937"
+DEFAULT_BORDER_COLOR = "#d1d5db"
 DEFAULT_CODE_FONT = "Consolas"
+DEFAULT_FOOTER_FONT_SIZE = 9.0
 DEFAULT_HEADING_COLOR = "#1f2937"
 FALLBACK_FONTS = (
     "Segoe UI",
@@ -26,6 +29,7 @@ FALLBACK_FONTS = (
 class StyleOptions:
     body_font: str = DEFAULT_BODY_FONT
     body_font_size: int = 12
+    body_text_color: str = DEFAULT_BODY_TEXT_COLOR
     line_height: float = 1.5
     heading_font: str = DEFAULT_BODY_FONT
     heading_color: str = DEFAULT_HEADING_COLOR
@@ -52,6 +56,7 @@ class StyleOptions:
     footer_text: str = ""
     footer_align: str = "right"
     footer_color: str = "#6b7280"
+    footer_font_size: float = DEFAULT_FOOTER_FONT_SIZE
     include_footnotes: bool = True
     footnote_font_size: float = 9.0
     footnote_text_color: str = "#374151"
@@ -61,6 +66,7 @@ class StyleOptions:
     table_row_even_color: str = "#f3f4f6"
     table_cell_padding_y_px: int = 6
     table_cell_padding_x_px: int = 8
+    border_color: str = DEFAULT_BORDER_COLOR
     image_scale: float = 0.9
     sanitize_html: bool = True
     show_horizontal_rules: bool = True
@@ -101,6 +107,7 @@ STYLE_OPTION_FLOAT_BOUNDS = {
     "margin_right_mm": (0.0, 100.0),
     "margin_bottom_mm": (0.0, 100.0),
     "margin_left_mm": (0.0, 100.0),
+    "footer_font_size": (7.0, 16.0),
     "footnote_font_size": (7.0, 16.0),
     "image_scale": (0.4, 1.0),
 }

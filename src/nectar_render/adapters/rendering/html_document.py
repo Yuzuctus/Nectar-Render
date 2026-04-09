@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import re
 from html import escape
+from urllib.parse import quote_plus
 
 from ...core.styles import STYLE_OPTION_FLOAT_BOUNDS, STYLE_OPTION_INT_BOUNDS
 from ...config import (
     DEFAULT_BODY_FONT,
+    DEFAULT_BODY_TEXT_COLOR,
+    DEFAULT_BORDER_COLOR,
     DEFAULT_CODE_FONT,
+    DEFAULT_FOOTER_FONT_SIZE,
     DEFAULT_HEADING_COLOR,
     PAGE_SIZES,
     StyleOptions,
@@ -17,6 +21,23 @@ from .highlight import build_pygments_css
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 ._+'-]{1,80}$")
+_SYSTEM_FONT_FAMILIES = {
+    "Arial",
+    "Calibri",
+    "Cambria",
+    "Consolas",
+    "Courier New",
+    "Georgia",
+    "Helvetica",
+    "Lucida Console",
+    "Menlo",
+    "Monaco",
+    "Segoe UI",
+    "Tahoma",
+    "Times New Roman",
+    "Trebuchet MS",
+    "Verdana",
+}
 
 
 def _css_color(value: object, fallback: str) -> str:
@@ -73,6 +94,38 @@ def _css_font_family(value: object, fallback: str) -> str:
     return _css_string_literal(cleaned)
 
 
+def _normalized_font_name(value: object, fallback: str) -> str:
+    cleaned = _normalize_css_text(value).strip("\"'")
+    if not cleaned or not _FONT_FAMILY_RE.fullmatch(cleaned):
+        return fallback
+    return cleaned
+
+
+def _google_font_imports(style: StyleOptions) -> str:
+    font_candidates = (
+        _normalized_font_name(style.body_font, DEFAULT_BODY_FONT),
+        _normalized_font_name(style.heading_font, DEFAULT_BODY_FONT),
+        _normalized_font_name(style.code_font, DEFAULT_CODE_FONT),
+    )
+
+    imports: list[str] = []
+    seen: set[str] = set()
+    for family in font_candidates:
+        if family in _SYSTEM_FONT_FAMILIES:
+            continue
+        if family in seen:
+            continue
+        seen.add(family)
+        encoded_family = quote_plus(family).replace("+", "%20")
+        imports.append(
+            f'@import url("https://fonts.googleapis.com/css2?family={encoded_family}:wght@400;500;700&display=swap");'
+        )
+
+    if not imports:
+        return ""
+    return "\n".join(imports) + "\n\n"
+
+
 def _normalized_page_size(page_size: object) -> str:
     page_size_map = {size.lower(): size for size in PAGE_SIZES}
     cleaned = _normalize_css_text(page_size).lower()
@@ -117,7 +170,7 @@ def _heading_sizes(style: StyleOptions) -> tuple[int, ...]:
     )
 
 
-def _footer_css(style: StyleOptions) -> tuple[str, str, str]:
+def _footer_css(style: StyleOptions) -> tuple[str, str, str, float]:
     footer_align = (style.footer_align or "right").strip().lower()
     if footer_align == "left":
         footer_slot = "@bottom-left"
@@ -126,6 +179,9 @@ def _footer_css(style: StyleOptions) -> tuple[str, str, str]:
     else:
         footer_slot = "@bottom-right"
     footer_color = _css_color(style.footer_color, "#6b7280")
+    footer_font_size = _clamped_style_float(
+        style.footer_font_size, "footer_font_size", DEFAULT_FOOTER_FONT_SIZE
+    )
     footer_text = (style.footer_text or "").strip()
     page_counter_css = '"Page " counter(page) " / " counter(pages)'
     footer_content = page_counter_css
@@ -133,7 +189,7 @@ def _footer_css(style: StyleOptions) -> tuple[str, str, str]:
         footer_content = (
             f"{_css_string_literal(footer_text + ' - ')} {page_counter_css}"
         )
-    return footer_slot, footer_color, footer_content
+    return footer_slot, footer_color, footer_content, footer_font_size
 
 
 def _table_stripes_css(style: StyleOptions) -> str:
@@ -160,6 +216,7 @@ def _horizontal_rules_css(show_horizontal_rules: bool) -> str:
 
 
 def _base_css(style: StyleOptions, page_size: str) -> str:
+    font_imports = _google_font_imports(style)
     normalized_page_size = _normalized_page_size(page_size)
     body_font = _css_font_family(style.body_font, DEFAULT_BODY_FONT)
     heading_font = _css_font_family(style.heading_font, DEFAULT_BODY_FONT)
@@ -198,20 +255,22 @@ def _base_css(style: StyleOptions, page_size: str) -> str:
         style.table_cell_padding_x_px, "table_cell_padding_x_px", 8
     )
     image_scale = _clamped_style_float(style.image_scale, "image_scale", 0.9)
-    footer_slot, footer_color, footer_content = _footer_css(style)
+    footer_slot, footer_color, footer_content, footer_font_size = _footer_css(style)
     footnote_text_color = _css_color(style.footnote_text_color, "#374151")
     footnote_marker_color = _css_color(style.footnote_marker_color, "#111827")
+    body_text_color = _css_color(style.body_text_color, DEFAULT_BODY_TEXT_COLOR)
+    border_color = _css_color(style.border_color, DEFAULT_BORDER_COLOR)
     table_stripes_css = _table_stripes_css(style)
     hr_css = _horizontal_rules_css(style.show_horizontal_rules)
 
     return f"""
-@page {{
+{font_imports}@page {{
   size: {normalized_page_size};
   margin: {margin_top}mm {margin_right}mm {margin_bottom}mm {margin_left}mm;
   {footer_slot} {{
     content: {footer_content};
     color: {footer_color};
-    font-size: 9px;
+    font-size: {footer_font_size}px;
   }}
 }}
 
@@ -219,7 +278,7 @@ html, body {{
   font-family: {body_font}, sans-serif;
   font-size: {body_font_size}px;
   line-height: {body_line_height};
-  color: #1f2937;
+  color: {body_text_color};
 }}
 
 h1, h2, h3, h4, h5, h6 {{
@@ -332,7 +391,7 @@ pre {{
 .codehilite {{
   margin: 1em 0;
   padding: 10px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid {border_color};
   border-radius: 8px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -341,7 +400,7 @@ pre {{
 
 p code, li code, td code, th code, blockquote code {{
   padding: 0.12em 0.35em;
-  border: 1px solid #d1d5db;
+  border: 1px solid {border_color};
   border-radius: 4px;
 }}
 
@@ -366,7 +425,7 @@ table tr {{
 }}
 
 table th, table td {{
-  border: 1px solid #d1d5db;
+  border: 1px solid {border_color};
   padding: {table_pad_y}px {table_pad_x}px;
   vertical-align: top;
 }}
