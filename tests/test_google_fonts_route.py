@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from backend.routes.google_fonts import (
     _normalize_font_entry,
+    _parse_google_fonts_payload,
     _paginate_families,
     _rank_and_filter_families,
 )
@@ -73,3 +74,30 @@ def test_paginate_families_returns_has_more_flag() -> None:
     assert page["offset"] == 1
     assert page["limit"] == 2
     assert page["has_more"] is True
+
+
+def test_parse_google_fonts_payload_strips_xssi_prefix() -> None:
+    payload = ')]}\'\n{"familyMetadataList": []}'
+
+    parsed = _parse_google_fonts_payload(payload)
+
+    assert parsed == {"familyMetadataList": []}
+
+
+def test_parse_google_fonts_payload_accepts_bom_prefixed_json() -> None:
+    payload = '\ufeff{"familyMetadataList": []}'
+
+    parsed = _parse_google_fonts_payload(payload)
+
+    assert parsed == {"familyMetadataList": []}
+
+
+def test_parse_google_fonts_payload_rejects_non_mapping_json() -> None:
+    payload = "[]"
+
+    try:
+        _parse_google_fonts_payload(payload)
+    except RuntimeError as exc:
+        assert "invalid format" in str(exc).lower()
+    else:
+        raise AssertionError("Expected RuntimeError for non-mapping payload")

@@ -14,6 +14,7 @@ router = APIRouter(prefix="/fonts", tags=["fonts"])
 
 _GOOGLE_FONTS_METADATA_URL = "https://fonts.google.com/metadata/fonts"
 _GOOGLE_FONTS_TIMEOUT_SECONDS = 8.0
+_GOOGLE_FONTS_JSON_PREFIX = ")]}'"
 _CACHE_TTL_SECONDS = 6 * 60 * 60
 _DEFAULT_LIMIT = 50
 _MAX_LIMIT = 100
@@ -57,22 +58,44 @@ def _normalize_font_entry(raw: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _parse_google_fonts_payload(payload: str) -> dict[str, Any]:
+    cleaned_payload = payload.lstrip("\ufeff")
+    if cleaned_payload.startswith(_GOOGLE_FONTS_JSON_PREFIX):
+        cleaned_payload = cleaned_payload[len(_GOOGLE_FONTS_JSON_PREFIX) :].lstrip(
+            "\r\n"
+        )
+
+    try:
+        data = json.loads(cleaned_payload)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Invalid Google Fonts metadata response") from exc
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Google Fonts metadata has invalid format")
+
+    return data
+
+
 def _fetch_google_fonts_families() -> list[dict[str, Any]]:
     try:
         with urlopen(
             _GOOGLE_FONTS_METADATA_URL, timeout=_GOOGLE_FONTS_TIMEOUT_SECONDS
         ) as response:
-            payload = response.read().decode("utf-8")
+            payload_bytes = response.read()
     except (URLError, TimeoutError, OSError) as exc:
         raise RuntimeError("Could not fetch Google Fonts metadata") from exc
 
     try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
+        payload = payload_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
         raise RuntimeError("Invalid Google Fonts metadata response") from exc
 
+    data = _parse_google_fonts_payload(payload)
+
     raw_list = data.get("familyMetadataList", [])
-    if not isinstance(raw_list, Sequence):
+    if not isinstance(raw_list, Sequence) or isinstance(
+        raw_list, (str, bytes, bytearray)
+    ):
         raise RuntimeError("Google Fonts metadata has invalid format")
 
     families: list[dict[str, Any]] = []

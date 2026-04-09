@@ -6,6 +6,20 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 
+_ALLOWED_EXTERNAL_HTTPS_HOSTS = {
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+}
+
+
+def _is_allowed_external_https_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    return host in _ALLOWED_EXTERNAL_HTTPS_HOSTS
+
+
 def _is_within_root(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -47,7 +61,12 @@ def build_safe_url_fetcher(
         parsed = urlparse(url)
         scheme = parsed.scheme.lower()
 
-        if scheme in {"http", "https", "ftp"}:
+        if scheme == "ftp":
+            raise ValueError(f"External fetch blocked for URL: {url}")
+
+        if scheme in {"http", "https"}:
+            if _is_allowed_external_https_url(url):
+                return default_fetcher(url)
             raise ValueError(f"External fetch blocked for URL: {url}")
 
         if scheme == "data":
