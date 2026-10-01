@@ -177,6 +177,12 @@ impl Compiled {
         self.document.pages().len()
     }
 
+    /// Empreinte du contenu d'une page : deux pages identiques ont la même,
+    /// ce qui évite de redessiner les pages qu'une retouche n'a pas touchées.
+    pub fn page_hash(&self, page: usize) -> Option<u128> {
+        self.document.pages().get(page).map(typst::utils::hash128)
+    }
+
     /// Taille d'une page en points.
     pub fn page_size(&self, page: usize) -> Option<(f64, f64)> {
         let size = self.document.pages().get(page)?.frame.size();

@@ -13,7 +13,7 @@ expression: g.source
   page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
 )
 
-#nb("callout-e8d1580a")
+#nb("callout-951e226f")
 #callout("tip", title: [Astuce])[
 Corps.
 ]

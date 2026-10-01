@@ -1,0 +1,21 @@
+[package]
+name = "nectar-app"
+description = "L'atelier de mise en page : aperçu des pages, retouches à la souris, styles et presets."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "nectar-render"
+path = "src/main.rs"
+
+[dependencies]
+nectar-core.workspace = true
+nectar-typst.workspace = true
+serde_json.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "x11", "wayland"] }
+rfd = "0.17"
+notify = "8"

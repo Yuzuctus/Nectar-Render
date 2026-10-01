@@ -1,0 +1,123 @@
+//! Petits champs réutilisés par les panneaux.
+
+use eframe::egui::{self, RichText};
+
+use crate::theme;
+
+/// Champ de couleur `#rrggbb` : pastille + valeur hexadécimale.
+pub fn color(ui: &mut egui::Ui, value: &mut String) -> bool {
+    let mut rgb = parse_hex(value).unwrap_or([0, 0, 0]);
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        if ui.color_edit_button_srgb(&mut rgb).changed() {
+            *value = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+            changed = true;
+        }
+        let mut text = value.clone();
+        let edit = egui::TextEdit::singleline(&mut text).desired_width(78.0).font(egui::TextStyle::Monospace);
+        if ui.add(edit).changed() && parse_hex(&text).is_some() {
+            *value = text;
+            changed = true;
+        }
+    });
+    changed
+}
+
+/// Couleur facultative : « par défaut » ou une couleur propre.
+pub fn optional_color(ui: &mut egui::Ui, value: &mut Option<String>, fallback: &str) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        let mut own = value.is_some();
+        if ui.checkbox(&mut own, "").on_hover_text("Couleur propre à ce niveau").changed() {
+            *value = own.then(|| fallback.to_string());
+            changed = true;
+        }
+        match value {
+            Some(v) => changed |= color(ui, v),
+            None => {
+                ui.label(RichText::new("comme les titres").color(theme::tokens(ui.ctx()).faint));
+            }
+        }
+    });
+    changed
+}
+
+fn parse_hex(value: &str) -> Option<[u8; 3]> {
+    let hex = value.trim().strip_prefix('#')?;
+    if hex.len() != 6 && hex.len() != 8 {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok();
+    Some([byte(0)?, byte(2)?, byte(4)?])
+}
+
+/// Choix d'une police parmi celles de la machine et de Nectar.
+pub fn font(ui: &mut egui::Ui, id: &str, value: &mut String, families: &[String]) -> bool {
+    let mut changed = false;
+    let mut filter = ui.data_mut(|d| d.get_temp::<String>(egui::Id::new((id, "filtre"))).unwrap_or_default());
+    egui::ComboBox::from_id_salt(id).selected_text(value.as_str()).width(190.0).height(320.0).show_ui(ui, |ui| {
+        ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Chercher…").desired_width(170.0));
+        let needle = filter.to_lowercase();
+        let suggested =
+            ["IBM Plex Sans", "IBM Plex Sans Condensed", "IBM Plex Mono", "JetBrains Mono", "Libertinus Serif"];
+        let mut seen = std::collections::HashSet::new();
+        for name in suggested.iter().map(|s| s.to_string()).chain(families.iter().cloned()) {
+            if !seen.insert(name.to_lowercase()) || (!needle.is_empty() && !name.to_lowercase().contains(&needle)) {
+                continue;
+            }
+            if ui.selectable_label(*value == name, &name).clicked() {
+                *value = name;
+                changed = true;
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(egui::Id::new((id, "filtre")), filter));
+    changed
+}
+
+/// Liste déroulante sur une énumération sérialisée (`"tab"`, `"window"`…).
+pub fn choice<T: PartialEq + Clone>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool {
+    let mut changed = false;
+    let current = options.iter().find(|(v, _)| v == value).map(|(_, l)| *l).unwrap_or("—");
+    egui::ComboBox::from_id_salt(id).selected_text(current).width(190.0).show_ui(ui, |ui| {
+        for (option, label) in options {
+            if ui.selectable_label(option == value, *label).clicked() && option != value {
+                *value = option.clone();
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+pub fn number(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    speed: f64,
+    suffix: &str,
+) -> bool {
+    ui.add(egui::DragValue::new(value).range(range).speed(speed).suffix(suffix).max_decimals(2)).changed()
+}
+
+/// Un intertitre de section dans un panneau.
+pub fn section(ui: &mut egui::Ui, title: &str, open: bool, body: impl FnOnce(&mut egui::Ui)) {
+    let t = theme::tokens(ui.ctx());
+    egui::CollapsingHeader::new(RichText::new(title).font(egui::FontId::new(14.0, theme::strong())).color(t.ink))
+        .default_open(open)
+        .show(ui, |ui| {
+            ui.add_space(2.0);
+            body(ui);
+            ui.add_space(4.0);
+        });
+    theme::rule(ui, 1.0, false);
+}
+
+/// Grille libellé / champ.
+pub fn grid(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Grid::new(id).num_columns(2).spacing([12.0, 7.0]).min_col_width(110.0).show(ui, body);
+}
+
+pub fn label(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).color(theme::tokens(ui.ctx()).muted));
+}

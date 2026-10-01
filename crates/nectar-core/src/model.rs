@@ -320,9 +320,7 @@ fn push_node_text(node: &Node, out: &mut String) {
             }
         }
         Node::Callout(c) => {
-            out.push_str(&c.kind);
             if let Some(title) = &c.title {
-                out.push(' ');
                 push_plain(title, out);
             }
             for child in &c.body {

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, v2]
   pull_request:
 
 jobs:
@@ -20,9 +20,14 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: Build release
+        run: cargo build --release -p nectar-app -p nectar-cli
       - name: Export de la démo
-        run: cargo run --release -p nectar-cli -- export "examples/coffre-demo/Démo Nectar.md" -o demo.pdf
+        run: target/release/nectar.exe export "examples/coffre-demo/Démo Nectar.md" -o demo.pdf --system-fonts
       - uses: actions/upload-artifact@v4
         with:
-          name: demo-pdf
-          path: demo.pdf
+          name: nectar-render-windows
+          path: |
+            target/release/nectar-render.exe
+            target/release/nectar.exe
+            demo.pdf
