@@ -1,0 +1,77 @@
+{
+  "label": "Développeur",
+  "page": {
+    "margin_top_mm": 20,
+    "margin_right_mm": 20,
+    "margin_bottom_mm": 20,
+    "margin_left_mm": 20
+  },
+  "text": {
+    "font": "Segoe UI",
+    "size_pt": 10.5,
+    "line_height": 1.5,
+    "justify": false
+  },
+  "headings": {
+    "font": "Segoe UI",
+    "color": "#0f172a",
+    "weight": 700,
+    "levels": [
+      {
+        "size_pt": 21,
+        "color": "#0369a1",
+        "rule_below_pt": 1
+      },
+      {
+        "size_pt": 15.5,
+        "color": "#0284c7"
+      },
+      {
+        "size_pt": 12.5,
+        "color": "#334155"
+      },
+      {
+        "size_pt": 10.5,
+        "color": "#475569"
+      },
+      {
+        "size_pt": 10
+      },
+      {
+        "size_pt": 9.5
+      }
+    ]
+  },
+  "code": {
+    "theme": "vscode-dark",
+    "header": "tab",
+    "line_numbers": true,
+    "radius_pt": 6
+  },
+  "links": {
+    "color": "#0284c7"
+  },
+  "quote": {
+    "variant": "bar",
+    "italic": false,
+    "color": "#475569"
+  },
+  "callout": {
+    "variant": "soft",
+    "radius_pt": 6
+  },
+  "table": {
+    "variant": "rules",
+    "stripes": true,
+    "stripe_color": "#f0f9ff",
+    "header_background": "#f8fafc"
+  },
+  "images": {
+    "scale": 0.8,
+    "radius_pt": 4
+  },
+  "footer": {
+    "color": "#475569"
+  },
+  "rules": false
+}

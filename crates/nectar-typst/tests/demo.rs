@@ -18,7 +18,7 @@ fn demo_vault_compiles_with_its_retouches() {
     assert!(generated.warnings.is_empty(), "{:?}", generated.warnings);
 
     let engine = Engine::new(FontSources::Bundled);
-    let compiled = engine.compile(&generated, "agrume").expect("compilation");
+    let compiled = engine.compile(&generated).expect("compilation");
     assert!(compiled.warnings.is_empty(), "{:?}", compiled.warnings);
 
     let positions = compiled.block_positions();
@@ -43,4 +43,20 @@ fn demo_vault_compiles_with_its_retouches() {
     let pdf = compiled.pdf(&PdfOptions::default()).expect("export PDF");
     assert!(pdf.starts_with(b"%PDF"));
     assert!(!compiled.png(0, 30.0).unwrap().is_empty());
+}
+
+#[test]
+fn every_preset_and_code_theme_compiles() {
+    let project = demo();
+    let engine = Engine::new(FontSources::Bundled);
+    for preset in nectar_core::style::builtin_presets() {
+        let (mut style, _) =
+            project.presets.resolve(&nectar_core::StyleRef { preset: preset.id.clone(), ..Default::default() });
+        for theme in nectar_core::code_themes::THEMES {
+            style.code.theme = theme.id.to_string();
+            let generated = nectar_core::generate(&project.document, &project.layout, &style);
+            let compiled = engine.compile(&generated).unwrap_or_else(|e| panic!("{} / {}: {e}", preset.id, theme.id));
+            assert!(compiled.warnings.is_empty(), "{} / {}: {:?}", preset.id, theme.id, compiled.warnings);
+        }
+    }
 }

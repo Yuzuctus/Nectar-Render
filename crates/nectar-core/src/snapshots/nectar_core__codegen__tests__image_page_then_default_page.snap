@@ -2,8 +2,7 @@
 source: crates/nectar-core/src/codegen.rs
 expression: g.source
 ---
-#import "/nectar/lib.typ": *
-#import "/nectar/theme.typ": *
+#import "/nectar/nectar.typ": *
 #show: template.with(
   title: none,
   subtitle: none,
@@ -12,19 +11,18 @@ expression: g.source
   lang: "fr",
   tags: (),
   page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
-  params: (:),
 )
 
 #nb("p-f183c9bd")
 Texte.
 
-#set page(paper: "a3", flipped: true, margin: page-margin)
+#set page(paper: "a3", flipped: true, margin: (top: 22mm, right: 22mm, bottom: 24mm, left: 22mm))
 #nb("fig-ef0f774f")
 #missing-image("schema.png")
 
 #nb("p-ac7229bd")
 Explication.
 
-#set page(paper: "a4", flipped: false, margin: page-margin)
+#set page(paper: "a4", flipped: false, margin: (top: 22mm, right: 22mm, bottom: 24mm, left: 22mm))
 #nb("p-c97ffb39")
 Suite normale.

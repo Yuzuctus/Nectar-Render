@@ -1,0 +1,76 @@
+{
+  "label": "Créatif",
+  "page": {
+    "margin_top_mm": 22,
+    "margin_right_mm": 20,
+    "margin_bottom_mm": 22,
+    "margin_left_mm": 35
+  },
+  "text": {
+    "font": "Segoe UI",
+    "size_pt": 10.5,
+    "line_height": 1.55,
+    "justify": false
+  },
+  "headings": {
+    "font": "Georgia",
+    "color": "#581c87",
+    "weight": 700,
+    "levels": [
+      {
+        "size_pt": 28,
+        "color": "#7c3aed"
+      },
+      {
+        "size_pt": 17,
+        "color": "#6d28d9"
+      },
+      {
+        "size_pt": 13
+      },
+      {
+        "size_pt": 11,
+        "color": "#6b7280",
+        "uppercase": true,
+        "tracking_em": 0.06
+      },
+      {
+        "size_pt": 10
+      },
+      {
+        "size_pt": 9.5
+      }
+    ]
+  },
+  "code": {
+    "theme": "dracula",
+    "header": "window",
+    "radius_pt": 8
+  },
+  "links": {
+    "color": "#7c3aed"
+  },
+  "quote": {
+    "variant": "quotes",
+    "italic": true,
+    "color": "#6d28d9"
+  },
+  "callout": {
+    "variant": "soft",
+    "radius_pt": 8
+  },
+  "table": {
+    "variant": "plain",
+    "stripes": true,
+    "stripe_color": "#f5f3ff",
+    "header_color": "#6d28d9",
+    "cell_padding_x_pt": 8
+  },
+  "images": {
+    "radius_pt": 6
+  },
+  "footer": {
+    "color": "#7c3aed"
+  },
+  "highlight": "#ede9fe"
+}

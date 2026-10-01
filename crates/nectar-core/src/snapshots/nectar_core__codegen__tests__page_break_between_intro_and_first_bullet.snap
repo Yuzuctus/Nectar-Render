@@ -2,8 +2,7 @@
 source: crates/nectar-core/src/codegen.rs
 expression: g.source
 ---
-#import "/nectar/lib.typ": *
-#import "/nectar/theme.typ": *
+#import "/nectar/nectar.typ": *
 #show: template.with(
   title: none,
   subtitle: none,
@@ -12,7 +11,6 @@ expression: g.source
   lang: "fr",
   tags: (),
   page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
-  params: (:),
 )
 
 #nb("p-dcbb4511")

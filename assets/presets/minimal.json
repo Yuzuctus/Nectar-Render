@@ -1,0 +1,81 @@
+{
+  "label": "Minimal",
+  "page": {
+    "margin_top_mm": 15,
+    "margin_right_mm": 15,
+    "margin_bottom_mm": 15,
+    "margin_left_mm": 15
+  },
+  "text": {
+    "font": "Arial",
+    "size_pt": 10,
+    "color": "#000000",
+    "line_height": 1.35,
+    "justify": false
+  },
+  "headings": {
+    "font": "Arial",
+    "color": "#000000",
+    "weight": 700,
+    "levels": [
+      {
+        "size_pt": 16
+      },
+      {
+        "size_pt": 13
+      },
+      {
+        "size_pt": 11,
+        "color": "#333333"
+      },
+      {
+        "size_pt": 10,
+        "color": "#333333"
+      },
+      {
+        "size_pt": 10
+      },
+      {
+        "size_pt": 10
+      }
+    ]
+  },
+  "code": {
+    "font": "Consolas",
+    "size_pt": 8.5,
+    "theme": "github-light",
+    "header": "none",
+    "line_numbers": false,
+    "radius_pt": 0
+  },
+  "links": {
+    "color": "#000000",
+    "underline": true
+  },
+  "quote": {
+    "variant": "indent",
+    "italic": true,
+    "color": "#444444"
+  },
+  "callout": {
+    "variant": "plain",
+    "colored": false
+  },
+  "table": {
+    "variant": "rules",
+    "border_color": "#999999",
+    "cell_padding_x_pt": 3,
+    "cell_padding_y_pt": 2
+  },
+  "images": {
+    "scale": 0.65
+  },
+  "footer": {
+    "text": "",
+    "color": "#999999"
+  },
+  "cover": {
+    "mode": "header"
+  },
+  "rules": false
+}

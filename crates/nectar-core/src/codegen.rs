@@ -1,10 +1,9 @@
 //! Génération de la source Typst à partir du document et des retouches.
 //!
-//! La source produite importe deux modules virtuels fournis par le moteur :
-//! `/nectar/lib.typ` (aides communes) puis `/nectar/theme.typ` (le thème
-//! choisi, qui peut redéfinir n'importe quelle aide). Chaque bloc adressable
-//! est précédé d'un marqueur `#nb("id")` qui permet ensuite de savoir où il a
-//! atterri dans les pages.
+//! La source produite importe `/nectar/nectar.typ` (le template, fourni par
+//! le moteur), qui lit lui-même `/nectar/style.typ`, généré ici à partir du
+//! [`Style`]. Chaque bloc adressable est précédé d'un marqueur `#nb("id")`
+//! qui permet ensuite de savoir où il a atterri dans les pages.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -12,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::layout::{BlockOps, HAlign, Layout, PageChange, PageSpec, Placement};
 use crate::model::*;
+use crate::style::Style;
 
 /// Fichier référencé par la source, servi sous un chemin virtuel.
 #[derive(Debug, Clone, PartialEq)]
@@ -28,6 +28,10 @@ pub struct Generated {
     /// Ligne (1 = première) où commence chaque bloc dans la source.
     pub block_lines: Vec<(BlockId, usize)>,
     pub warnings: Vec<String>,
+    /// Fichiers texte virtuels à servir en plus (`/nectar/style.typ`…).
+    pub files: Vec<(String, String)>,
+    /// Polices demandées par le style, à vérifier sur la machine.
+    pub fonts: Vec<String>,
 }
 
 impl Generated {
@@ -38,12 +42,13 @@ impl Generated {
 }
 
 /// Produit la source Typst d'un document retouché.
-pub fn generate(doc: &Document, layout: &Layout) -> Generated {
+pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
     let mut resolution = layout.resolve(doc);
     hoist_over_headings(doc, &mut resolution.ops);
     let mut g = Gen {
         ops: &resolution.ops,
         layout,
+        style,
         out: String::new(),
         assets: Vec::new(),
         asset_ids: HashMap::new(),
@@ -61,7 +66,14 @@ pub fn generate(doc: &Document, layout: &Layout) -> Generated {
     for block in &doc.blocks {
         g.block(block);
     }
-    Generated { source: g.out, assets: g.assets, block_lines: g.block_lines, warnings: g.warnings }
+    let (style_source, fonts) = crate::typst_style::style_module(style);
+    let theme = crate::code_themes::get(&style.code.theme).unwrap_or(&crate::code_themes::THEMES[0]);
+    if crate::code_themes::get(&style.code.theme).is_none() {
+        g.warnings.push(format!("thème de code « {} » inconnu", style.code.theme));
+    }
+    let files =
+        vec![("/nectar/style.typ".to_string(), style_source), ("/nectar/code.tmTheme".to_string(), theme.tm_theme())];
+    Generated { source: g.out, assets: g.assets, block_lines: g.block_lines, warnings: g.warnings, files, fonts }
 }
 
 /// Un titre ne reste jamais seul en bas de page : un saut de page ou un
@@ -98,6 +110,7 @@ fn hoist_over_headings(doc: &Document, ops: &mut HashMap<BlockId, BlockOps>) {
 struct Gen<'a> {
     ops: &'a HashMap<BlockId, BlockOps>,
     layout: &'a Layout,
+    style: &'a Style,
     out: String,
     assets: Vec<Asset>,
     asset_ids: HashMap<PathBuf, String>,
@@ -113,15 +126,13 @@ impl Gen<'_> {
     fn preamble(&mut self, meta: &Meta) {
         let opt = |v: &Option<String>| v.as_deref().map(string).unwrap_or_else(|| "none".into());
         let tags = meta.tags.iter().map(|t| string(t)).collect::<Vec<_>>();
-        let params = json_dict(&self.layout.theme.params);
         let page = page_dict(&self.layout.page);
         let _ = write!(
             self.out,
-            "#import \"/nectar/lib.typ\": *\n\
-             #import \"/nectar/theme.typ\": *\n\
+            "#import \"/nectar/nectar.typ\": *\n\
              #show: template.with(\n  \
                title: {title},\n  subtitle: {subtitle},\n  author: {author},\n  date: {date},\n  \
-               lang: {lang},\n  tags: {tags},\n  page: {page},\n  params: {params},\n)\n\n",
+               lang: {lang},\n  tags: {tags},\n  page: {page},\n)\n\n",
             title = opt(&meta.title),
             subtitle = opt(&meta.subtitle),
             author = opt(&meta.author),
@@ -175,10 +186,10 @@ impl Gen<'_> {
     fn before(&mut self, ops: &BlockOps) {
         match &ops.page {
             Some(PageChange::Set(spec)) => {
-                let _ = writeln!(self.out, "#set page({})", page_args(spec));
+                let _ = writeln!(self.out, "#set page({})", page_args(spec, self.style));
             }
             Some(PageChange::Default(_)) => {
-                let _ = writeln!(self.out, "#set page({})", page_args(&self.layout.page));
+                let _ = writeln!(self.out, "#set page({})", page_args(&self.layout.page, self.style));
             }
             None => {}
         }
@@ -515,7 +526,7 @@ pub fn string(text: &str) -> String {
     out
 }
 
-fn array(items: &[String]) -> String {
+pub(crate) fn array(items: &[String]) -> String {
     match items.len() {
         0 => "()".into(),
         1 => format!("({},)", items[0]),
@@ -523,14 +534,14 @@ fn array(items: &[String]) -> String {
     }
 }
 
-fn num(value: f32) -> String {
+pub(crate) fn num(value: f32) -> String {
     let text = format!("{value:.3}");
     let text = text.trim_end_matches('0').trim_end_matches('.');
     if text.is_empty() || text == "-" { "0".into() } else { text.to_string() }
 }
 
 /// Arguments de `set page(…)` pour un format.
-fn page_args(spec: &PageSpec) -> String {
+fn page_args(spec: &PageSpec, style: &Style) -> String {
     let mut args = match (spec.width_mm, spec.height_mm) {
         (Some(w), Some(h)) => {
             let (w, h) = if spec.landscape { (w.max(h), w.min(h)) } else { (w, h) };
@@ -540,7 +551,16 @@ fn page_args(spec: &PageSpec) -> String {
     };
     args.push(match spec.margin_mm {
         Some(mm) => format!("margin: {}mm", num(mm)),
-        None => "margin: page-margin".into(),
+        None => {
+            let p = &style.page;
+            format!(
+                "margin: (top: {}mm, right: {}mm, bottom: {}mm, left: {}mm)",
+                num(p.margin_top_mm),
+                num(p.margin_right_mm),
+                num(p.margin_bottom_mm),
+                num(p.margin_left_mm)
+            )
+        }
     });
     args.join(", ")
 }
@@ -558,26 +578,6 @@ fn page_dict(spec: &PageSpec) -> String {
     )
 }
 
-fn json_dict(map: &serde_json::Map<String, serde_json::Value>) -> String {
-    if map.is_empty() {
-        return "(:)".into();
-    }
-    let entries: Vec<String> = map.iter().map(|(k, v)| format!("{}: {}", string(k), json_value(v))).collect();
-    format!("({})", entries.join(", "))
-}
-
-fn json_value(value: &serde_json::Value) -> String {
-    use serde_json::Value;
-    match value {
-        Value::Null => "none".into(),
-        Value::Bool(b) => b.to_string(),
-        Value::Number(n) => n.to_string(),
-        Value::String(s) => string(s),
-        Value::Array(items) => array(&items.iter().map(json_value).collect::<Vec<_>>()),
-        Value::Object(map) => json_dict(map),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,7 +588,7 @@ mod tests {
         let doc = parse(md, &ParseOptions::default());
         let mut layout = Layout::default();
         edit(&doc, &mut layout);
-        generate(&doc, &layout)
+        generate(&doc, &layout, &Style::default())
     }
 
     #[test]

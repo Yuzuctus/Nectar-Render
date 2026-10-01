@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::normalize;
 use crate::model::{AnchorInfo, BlockId, BlockKind, Document};
+use crate::style::StyleRef;
 
 pub const LAYOUT_VERSION: u32 = 1;
 
@@ -23,7 +24,7 @@ pub struct Layout {
     #[serde(default = "layout_version")]
     pub version: u32,
     #[serde(default)]
-    pub theme: ThemeSettings,
+    pub style: StyleRef,
     /// Format de page par défaut du document.
     #[serde(default)]
     pub page: PageSpec,
@@ -37,7 +38,7 @@ fn layout_version() -> u32 {
 
 impl Default for Layout {
     fn default() -> Self {
-        Self { version: LAYOUT_VERSION, theme: ThemeSettings::default(), page: PageSpec::default(), blocks: Vec::new() }
+        Self { version: LAYOUT_VERSION, style: StyleRef::default(), page: PageSpec::default(), blocks: Vec::new() }
     }
 }
 
@@ -149,21 +150,6 @@ pub struct Resolution {
     pub relinked: Vec<(BlockId, BlockId)>,
     /// Retouches dont le bloc a disparu.
     pub orphans: Vec<Anchor>,
-}
-
-/// Thème choisi et ses réglages.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ThemeSettings {
-    pub name: String,
-    /// Paramètres passés tels quels au template (`paper-tone`, `cover`…).
-    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
-    pub params: serde_json::Map<String, serde_json::Value>,
-}
-
-impl Default for ThemeSettings {
-    fn default() -> Self {
-        Self { name: "agrume".into(), params: serde_json::Map::new() }
-    }
 }
 
 /// Une retouche attachée à un bloc.

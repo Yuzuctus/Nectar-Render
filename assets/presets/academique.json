@@ -1,0 +1,85 @@
+{
+  "label": "Académique",
+  "page": {
+    "margin_top_mm": 30,
+    "margin_right_mm": 30,
+    "margin_bottom_mm": 30,
+    "margin_left_mm": 30
+  },
+  "text": {
+    "font": "Times New Roman",
+    "size_pt": 11.5,
+    "color": "#1a1a1a",
+    "line_height": 1.6,
+    "first_line_indent_em": 1.2,
+    "paragraph_spacing_em": 0.4
+  },
+  "headings": {
+    "font": "Georgia",
+    "color": "#1a1a2e",
+    "weight": 700,
+    "numbering": true,
+    "levels": [
+      {
+        "size_pt": 18
+      },
+      {
+        "size_pt": 15,
+        "color": "#2d3748"
+      },
+      {
+        "size_pt": 12.5,
+        "color": "#4a5568"
+      },
+      {
+        "size_pt": 11
+      },
+      {
+        "size_pt": 10.5
+      },
+      {
+        "size_pt": 10
+      }
+    ]
+  },
+  "code": {
+    "font": "Consolas",
+    "size_pt": 9,
+    "theme": "github-light",
+    "line_numbers": false,
+    "header": "none",
+    "radius_pt": 0,
+    "border": true
+  },
+  "links": {
+    "color": "#1a1a2e",
+    "underline": true
+  },
+  "quote": {
+    "variant": "indent",
+    "italic": true,
+    "color": "#333333"
+  },
+  "callout": {
+    "variant": "plain",
+    "colored": false
+  },
+  "table": {
+    "variant": "rules",
+    "border_color": "#1a1a1a"
+  },
+  "images": {
+    "scale": 0.8,
+    "caption_italic": true,
+    "numbering": true,
+    "caption_size_pt": 9.5,
+    "caption_color": "#333333"
+  },
+  "footer": {
+    "text": "",
+    "align": "center"
+  },
+  "cover": {
+    "mode": "header"
+  }
+}

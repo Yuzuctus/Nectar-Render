@@ -1,0 +1,80 @@
+{
+  "label": "Magazine",
+  "page": {
+    "margin_top_mm": 20,
+    "margin_right_mm": 22,
+    "margin_bottom_mm": 20,
+    "margin_left_mm": 22
+  },
+  "text": {
+    "font": "Georgia",
+    "size_pt": 10.5,
+    "line_height": 1.6
+  },
+  "headings": {
+    "font": "Arial",
+    "color": "#b91c1c",
+    "weight": 700,
+    "levels": [
+      {
+        "size_pt": 30,
+        "rule_below_pt": 3
+      },
+      {
+        "size_pt": 18,
+        "color": "#991b1b"
+      },
+      {
+        "size_pt": 13,
+        "color": "#4a5568"
+      },
+      {
+        "size_pt": 11,
+        "color": "#6b7280",
+        "uppercase": true,
+        "tracking_em": 0.05
+      },
+      {
+        "size_pt": 10
+      },
+      {
+        "size_pt": 9.5
+      }
+    ]
+  },
+  "code": {
+    "theme": "github-light",
+    "header": "none",
+    "line_numbers": false
+  },
+  "links": {
+    "color": "#b91c1c"
+  },
+  "quote": {
+    "variant": "quotes",
+    "italic": true,
+    "color": "#7f1d1d"
+  },
+  "callout": {
+    "variant": "soft"
+  },
+  "table": {
+    "variant": "plain",
+    "stripes": true,
+    "stripe_color": "#fef2f2",
+    "header_color": "#b91c1c",
+    "cell_padding_x_pt": 9,
+    "cell_padding_y_pt": 6
+  },
+  "images": {
+    "scale": 0.95
+  },
+  "footer": {
+    "align": "center",
+    "color": "#b91c1c"
+  },
+  "footnotes": {
+    "size_pt": 8,
+    "color": "#6b7280"
+  }
+}

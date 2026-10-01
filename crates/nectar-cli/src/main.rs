@@ -33,7 +33,14 @@ enum Command {
         /// Utilise aussi les polices installées sur la machine.
         #[arg(long)]
         system_fonts: bool,
+        /// Essaie un preset sans l'enregistrer.
+        #[arg(long)]
+        preset: Option<String>,
     },
+    /// Liste les presets de style (intégrés et personnels).
+    Presets,
+    /// Choisit le preset de style d'une note (et efface ses réglages à la main).
+    UsePreset { note: PathBuf, preset: String },
     /// Liste les blocs de la note, leur id et leur page.
     Blocks { note: PathBuf },
     /// Ajoute une retouche à un bloc : `nectar set note.md li-1a2b3c4d break-before`.
@@ -52,7 +59,26 @@ enum Command {
 
 fn main() -> Result<()> {
     match Cli::parse().command {
-        Command::Export { note, output, png, ppi, system_fonts } => export(&note, output, png, ppi, system_fonts),
+        Command::Export { note, output, png, ppi, system_fonts, preset } => {
+            export(&note, output, png, ppi, system_fonts, preset)
+        }
+        Command::Presets => {
+            let store = nectar_core::PresetStore::load(nectar_core::style::default_user_dir());
+            for preset in store.presets() {
+                let kind = if preset.builtin { "intégré" } else { "personnel" };
+                println!("{:<14} {:<14} {kind}", preset.id, preset.label);
+            }
+            Ok(())
+        }
+        Command::UsePreset { note, preset } => {
+            let mut project = open(&note)?;
+            if project.presets.get(&preset).is_none() {
+                bail!("preset « {preset} » inconnu (voir `nectar presets`)");
+            }
+            project.layout.style = nectar_core::StyleRef { preset, overrides: Default::default() };
+            project.save_layout()?;
+            Ok(())
+        }
         Command::Blocks { note } => blocks(&note),
         Command::Set { note, block, ops } => set(&note, &block, &ops.join(",")),
         Command::Unset { note, block } => unset(&note, &block),
@@ -72,15 +98,28 @@ fn open(note: &Path) -> Result<Project> {
     Ok(project)
 }
 
-fn export(note: &Path, output: Option<PathBuf>, png: Option<PathBuf>, ppi: f32, system_fonts: bool) -> Result<()> {
+fn export(
+    note: &Path,
+    output: Option<PathBuf>,
+    png: Option<PathBuf>,
+    ppi: f32,
+    system_fonts: bool,
+    preset: Option<String>,
+) -> Result<()> {
     let started = Instant::now();
-    let project = open(note)?;
+    let mut project = open(note)?;
+    if let Some(preset) = preset {
+        project.layout.style.preset = preset;
+    }
     let generated = project.generate();
     for warning in &generated.warnings {
         eprintln!("retouches : {warning}");
     }
     let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled });
-    let compiled = engine.compile(&generated, &project.layout.theme.name)?;
+    for font in engine.missing_fonts(&generated.fonts) {
+        eprintln!("police absente : {font} (remplacée par une police de secours)");
+    }
+    let compiled = engine.compile(&generated)?;
     for warning in &compiled.warnings {
         eprintln!("typst : {warning}");
     }
@@ -110,7 +149,7 @@ fn blocks(note: &Path) -> Result<()> {
     let project = open(note)?;
     let generated = project.generate();
     let engine = Engine::new(FontSources::Bundled);
-    let positions = match engine.compile(&generated, &project.layout.theme.name) {
+    let positions = match engine.compile(&generated) {
         Ok(compiled) => compiled.block_positions(),
         Err(error) => {
             eprintln!("{error}");

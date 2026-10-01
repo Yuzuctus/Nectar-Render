@@ -1,0 +1,96 @@
+{
+  "label": "Agrume",
+  "page": {
+    "background": "#ffffff",
+    "margin_top_mm": 20,
+    "margin_right_mm": 20,
+    "margin_bottom_mm": 22,
+    "margin_left_mm": 20
+  },
+  "text": {
+    "font": "IBM Plex Sans",
+    "size_pt": 10.5,
+    "color": "#141c17",
+    "line_height": 1.55
+  },
+  "headings": {
+    "font": "IBM Plex Sans",
+    "color": "#141c17",
+    "weight": 600,
+    "levels": [
+      {
+        "size_pt": 24,
+        "font": "IBM Plex Sans Condensed",
+        "rule_above_pt": 2,
+        "space_above_em": 2.0
+      },
+      {
+        "size_pt": 17,
+        "font": "IBM Plex Sans Condensed"
+      },
+      {
+        "size_pt": 12.5
+      },
+      {
+        "size_pt": 8,
+        "font": "IBM Plex Mono",
+        "uppercase": true,
+        "tracking_em": 0.08
+      },
+      {
+        "size_pt": 8,
+        "font": "IBM Plex Mono",
+        "uppercase": true,
+        "tracking_em": 0.08,
+        "color": "#4b554f"
+      },
+      {
+        "size_pt": 8,
+        "font": "IBM Plex Mono",
+        "uppercase": true,
+        "tracking_em": 0.08,
+        "color": "#5f6761"
+      }
+    ]
+  },
+  "code": {
+    "font": "IBM Plex Mono",
+    "theme": "one-dark",
+    "header": "tab",
+    "radius_pt": 4,
+    "inline_background": "#eaeedd",
+    "inline_color": "#141c17"
+  },
+  "links": {
+    "color": "#0e6b4c",
+    "underline": false,
+    "wikilink_color": "#0e6b4c"
+  },
+  "quote": {
+    "variant": "bar",
+    "color": "#4b554f",
+    "italic": false
+  },
+  "callout": {
+    "variant": "bordered",
+    "radius_pt": 0,
+    "colored": true
+  },
+  "table": {
+    "variant": "rules",
+    "header_color": "#4b554f",
+    "border_color": "#d2d8c6"
+  },
+  "images": {
+    "radius_pt": 2,
+    "caption_color": "#5f6761"
+  },
+  "footnotes": {
+    "color": "#4b554f"
+  },
+  "footer": {
+    "color": "#5f6761",
+    "size_pt": 7.5
+  },
+  "highlight": "#ffe696"
+}

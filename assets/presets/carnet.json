@@ -1,0 +1,82 @@
+{
+  "label": "Carnet",
+  "page": {
+    "background": "#fffdf7",
+    "margin_top_mm": 28,
+    "margin_right_mm": 28,
+    "margin_bottom_mm": 28,
+    "margin_left_mm": 28
+  },
+  "text": {
+    "font": "Georgia",
+    "size_pt": 11,
+    "color": "#3b2f22",
+    "line_height": 1.7
+  },
+  "headings": {
+    "font": "Georgia",
+    "color": "#78350f",
+    "weight": 700,
+    "levels": [
+      {
+        "size_pt": 22
+      },
+      {
+        "size_pt": 16.5,
+        "color": "#92400e"
+      },
+      {
+        "size_pt": 13,
+        "color": "#a16207"
+      },
+      {
+        "size_pt": 11.5,
+        "color": "#b45309"
+      },
+      {
+        "size_pt": 10.5
+      },
+      {
+        "size_pt": 10
+      }
+    ]
+  },
+  "code": {
+    "font": "Consolas",
+    "theme": "solarized-light",
+    "header": "none",
+    "line_height": 1.5
+  },
+  "links": {
+    "color": "#92400e"
+  },
+  "quote": {
+    "variant": "quotes",
+    "italic": true,
+    "color": "#78350f"
+  },
+  "callout": {
+    "variant": "soft",
+    "radius_pt": 6
+  },
+  "table": {
+    "variant": "plain",
+    "stripes": true,
+    "stripe_color": "#fef3c7",
+    "header_color": "#78350f",
+    "cell_padding_x_pt": 8,
+    "cell_padding_y_pt": 5
+  },
+  "images": {
+    "scale": 0.85,
+    "radius_pt": 4
+  },
+  "footer": {
+    "align": "center",
+    "color": "#a16207"
+  },
+  "footnotes": {
+    "color": "#78350f"
+  },
+  "highlight": "#fde68a"
+}

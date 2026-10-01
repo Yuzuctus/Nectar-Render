@@ -33,33 +33,17 @@ const BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/IBMPlexMono-Italic.ttf"),
     include_bytes!("../../../assets/fonts/IBMPlexMono-Medium.ttf"),
     include_bytes!("../../../assets/fonts/IBMPlexMono-SemiBold.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf"),
+    include_bytes!("../../../assets/fonts/JetBrainsMono-Italic.ttf"),
 ];
 
-const LIB_TYP: &str = include_str!("../../../assets/typst/lib.typ");
+const TEMPLATE: &str = include_str!("../../../assets/typst/nectar.typ");
 const MITEX: &[(&str, &str)] = &[
     ("/nectar/mitex/mod.typ", include_str!("../../../assets/typst/mitex/mod.typ")),
     ("/nectar/mitex/prelude.typ", include_str!("../../../assets/typst/mitex/prelude.typ")),
     ("/nectar/mitex/latex/standard.typ", include_str!("../../../assets/typst/mitex/latex/standard.typ")),
 ];
-
-/// Un thème intégré : son template et ses fichiers d'accompagnement.
-pub struct Theme {
-    pub name: &'static str,
-    pub label: &'static str,
-    source: &'static str,
-    files: &'static [(&'static str, &'static [u8])],
-}
-
-pub const THEMES: &[Theme] = &[Theme {
-    name: "agrume",
-    label: "Agrume",
-    source: include_str!("../../../assets/themes/agrume.typ"),
-    files: &[("/nectar/agrume.tmTheme", include_bytes!("../../../assets/themes/agrume.tmTheme"))],
-}];
-
-pub fn theme(name: &str) -> Option<&'static Theme> {
-    THEMES.iter().find(|t| t.name.eq_ignore_ascii_case(name))
-}
 
 /// Où chercher les polices en plus de celles embarquées.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,8 +56,6 @@ pub enum FontSources {
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("thème inconnu : {0}")]
-    UnknownTheme(String),
     #[error("la compilation a échoué :\n{}", .0.join("\n"))]
     Compile(Vec<String>),
     #[error("l'export PDF a échoué :\n{}", .0.join("\n"))]
@@ -111,29 +93,58 @@ impl Engine {
         }
     }
 
-    /// Compile une source générée avec le thème nommé.
-    pub fn compile(&self, generated: &Generated, theme_name: &str) -> Result<Compiled, EngineError> {
-        let theme = theme(theme_name).ok_or_else(|| EngineError::UnknownTheme(theme_name.to_string()))?;
-        let mut texts: Vec<(&str, &str)> = vec![("/nectar/lib.typ", LIB_TYP), ("/nectar/theme.typ", theme.source)];
+    /// Compile une source générée.
+    pub fn compile(&self, generated: &Generated) -> Result<Compiled, EngineError> {
+        let mut texts: Vec<(&str, &str)> = vec![("/nectar/nectar.typ", TEMPLATE)];
         texts.extend_from_slice(MITEX);
+        texts.extend(generated.files.iter().map(|(path, text)| (path.as_str(), text.as_str())));
         let world = NectarWorld::new(
             self.library.clone(),
             self.fonts.clone(),
             self.images.clone(),
             generated.source.clone(),
             &texts,
-            theme.files,
+            &[],
             &generated.assets,
         );
 
         let Warned { output, warnings } = typst::compile::<PagedDocument>(&world);
-        let warnings = warnings.iter().map(|d| describe(&world, generated, d)).collect();
+        // Les polices absentes sont signalées une fois par `missing_fonts` :
+        // Typst passe alors à la police de secours sans rien casser.
+        let warnings = warnings
+            .iter()
+            .filter(|d| !d.message.starts_with("unknown font family"))
+            .map(|d| describe(&world, generated, d))
+            .collect();
         let document = output
             .map_err(|errors| EngineError::Compile(errors.iter().map(|d| describe(&world, generated, d)).collect()))?;
 
         // Libère de temps en temps le cache incrémental des vieilles versions.
         typst::comemo::evict(30);
         Ok(Compiled { document, warnings })
+    }
+}
+
+impl Engine {
+    /// Les polices demandées qui n'existent ni dans Nectar ni sur la machine.
+    pub fn missing_fonts<'a>(&self, names: impl IntoIterator<Item = &'a String>) -> Vec<String> {
+        let book = self.fonts.book();
+        names
+            .into_iter()
+            .filter(|name| {
+                let lower = name.to_lowercase();
+                let family = lower.strip_suffix(" condensed").unwrap_or(&lower);
+                !book.contains_family(family)
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Les familles de polices disponibles, triées.
+    pub fn font_families(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.fonts.book().families().map(|(name, _)| name.to_string()).collect();
+        names.dedup();
+        names
     }
 }
 

@@ -1,0 +1,78 @@
+{
+  "label": "Technique",
+  "page": {
+    "margin_top_mm": 18,
+    "margin_right_mm": 18,
+    "margin_bottom_mm": 18,
+    "margin_left_mm": 18
+  },
+  "text": {
+    "font": "Segoe UI",
+    "size_pt": 10,
+    "line_height": 1.4,
+    "justify": false
+  },
+  "headings": {
+    "font": "Consolas",
+    "color": "#0f172a",
+    "weight": 700,
+    "numbering": true,
+    "levels": [
+      {
+        "size_pt": 17,
+        "color": "#059669"
+      },
+      {
+        "size_pt": 13.5,
+        "color": "#047857"
+      },
+      {
+        "size_pt": 11,
+        "color": "#334155"
+      },
+      {
+        "size_pt": 10,
+        "color": "#475569"
+      },
+      {
+        "size_pt": 9.5
+      },
+      {
+        "size_pt": 9
+      }
+    ]
+  },
+  "code": {
+    "font": "Consolas",
+    "size_pt": 8.5,
+    "line_height": 1.3,
+    "theme": "monokai",
+    "header": "tab"
+  },
+  "links": {
+    "color": "#059669"
+  },
+  "quote": {
+    "variant": "bar",
+    "italic": false
+  },
+  "callout": {
+    "variant": "bordered",
+    "radius_pt": 2
+  },
+  "table": {
+    "variant": "grid",
+    "stripes": true,
+    "stripe_color": "#ecfdf5",
+    "cell_padding_x_pt": 4,
+    "cell_padding_y_pt": 2.5,
+    "size_pt": 9
+  },
+  "images": {
+    "scale": 0.75
+  },
+  "footnotes": {
+    "size_pt": 8
+  },
+  "rules": false
+}
