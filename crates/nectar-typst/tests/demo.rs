@@ -60,3 +60,13 @@ fn every_preset_and_code_theme_compiles() {
         }
     }
 }
+
+#[test]
+fn demo_exports_as_pdf_a() {
+    let project = demo();
+    let engine = Engine::new(FontSources::Bundled);
+    let compiled = engine.compile(&project.generate()).expect("compilation");
+    let pdf = compiled.pdf(&PdfOptions { ident: None, pdf_a: true }).expect("PDF/A-2b valide");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(text.contains("pdfaid:part"), "métadonnées PDF/A présentes");
+}

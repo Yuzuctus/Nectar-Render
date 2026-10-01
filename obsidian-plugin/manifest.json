@@ -1,0 +1,10 @@
+{
+  "id": "nectar-render",
+  "name": "Nectar Render",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Exporte la note en PDF soigné avec Nectar Render, ou l'ouvre dans l'atelier de mise en page pour la retoucher avant l'export.",
+  "author": "Yuzuctus",
+  "authorUrl": "https://github.com/Yuzuctus/Nectar-Render",
+  "isDesktopOnly": true
+}

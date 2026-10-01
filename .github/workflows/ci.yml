@@ -31,3 +31,16 @@ jobs:
             target/release/nectar-render.exe
             target/release/nectar.exe
             demo.pdf
+
+  plugin-obsidian:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: obsidian-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm run build

@@ -20,6 +20,8 @@ pub struct Asset {
     pub path: PathBuf,
     /// Contenu produit en mémoire (SVG d'un diagramme), sinon lu sur `path`.
     pub data: Option<std::sync::Arc<String>>,
+    /// Réduire la photo si son plus grand côté dépasse ce nombre de pixels.
+    pub max_px: Option<u32>,
 }
 
 /// Résultat de la génération.
@@ -511,7 +513,9 @@ impl Gen<'_> {
                 })
                 .collect();
         let vpath = format!("/assets/{:04}-{safe}", self.assets.len() + 1);
-        self.assets.push(Asset { vpath: vpath.clone(), path: path.to_path_buf(), data: None });
+        let e = &self.style.export;
+        let max_px = e.downscale_images.then_some(e.max_image_px.max(600));
+        self.assets.push(Asset { vpath: vpath.clone(), path: path.to_path_buf(), data: None, max_px });
         self.asset_ids.insert(path.to_path_buf(), vpath.clone());
         vpath
     }
@@ -519,7 +523,7 @@ impl Gen<'_> {
     /// Fichier produit en mémoire (SVG d'un dessin ou d'un diagramme).
     fn memory_asset(&mut self, svg: &std::sync::Arc<String>) -> String {
         let vpath = format!("/assets/{:04}-dessin.svg", self.assets.len() + 1);
-        self.assets.push(Asset { vpath: vpath.clone(), path: PathBuf::new(), data: Some(svg.clone()) });
+        self.assets.push(Asset { vpath: vpath.clone(), path: PathBuf::new(), data: Some(svg.clone()), max_px: None });
         vpath
     }
 

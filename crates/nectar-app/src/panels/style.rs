@@ -393,6 +393,17 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
         });
     });
 
+    section(ui, "Fichier PDF", false, |ui| {
+        ui.checkbox(&mut s.export.pdf_a, "PDF/A (archivage, dépôt officiel)");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut s.export.downscale_images, "Alléger les photos au-delà de");
+            ui.add_enabled(
+                s.export.downscale_images,
+                egui::DragValue::new(&mut s.export.max_image_px).range(800..=8000).speed(20).suffix(" px"),
+            );
+        });
+    });
+
     section(ui, "Page", false, |ui| {
         grid(ui, "page", |ui| {
             label(ui, "Marges");

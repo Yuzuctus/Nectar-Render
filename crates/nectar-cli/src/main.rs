@@ -128,7 +128,8 @@ fn export(
     }
 
     let output = output.unwrap_or_else(|| note.with_extension("pdf"));
-    let pdf = compiled.pdf(&PdfOptions { ident: Some(project.note.display().to_string()) })?;
+    let pdf_a = project.style().0.export.pdf_a;
+    let pdf = compiled.pdf(&PdfOptions { ident: Some(project.note.display().to_string()), pdf_a })?;
     std::fs::write(&output, pdf).with_context(|| format!("écriture de {}", output.display()))?;
 
     if let Some(dir) = png {

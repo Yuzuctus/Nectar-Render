@@ -294,7 +294,11 @@ impl NectarApp {
             dialog = dialog.set_file_name(file.to_string_lossy());
         }
         if let Some(path) = dialog.save_file() {
-            self.worker.send(Request::Export { path, ident: project.note.display().to_string() });
+            self.worker.send(Request::Export {
+                path,
+                ident: project.note.display().to_string(),
+                pdf_a: self.style.export.pdf_a,
+            });
         }
     }
 

@@ -1,0 +1,50 @@
+name: Publication
+
+# Un tag `v0.2.0` produit l'installateur Windows, la version portable et le
+# plugin Obsidian, et les attache à une release GitHub.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Plugin Obsidian
+        working-directory: obsidian-plugin
+        run: |
+          npm ci
+          npm run build
+      - name: Applications
+        run: cargo build --release -p nectar-app -p nectar-cli
+      - name: Installateur
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if ! command -v iscc >/dev/null; then choco install innosetup -y --no-progress; fi
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          "$ISCC" "//DAppVersion=$version" packaging/windows/nectar-render.iss
+      - name: Archives
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          New-Item -ItemType Directory -Force portable/plugin-obsidian/nectar-render | Out-Null
+          Copy-Item target/release/nectar-render.exe, target/release/nectar.exe, LICENSE portable/
+          Copy-Item obsidian-plugin/main.js, obsidian-plugin/manifest.json portable/plugin-obsidian/nectar-render/
+          Compress-Archive -Path portable/* -DestinationPath "dist/NectarRender-$version-portable.zip"
+          New-Item -ItemType Directory -Force plugin/nectar-render | Out-Null
+          Copy-Item obsidian-plugin/main.js, obsidian-plugin/manifest.json plugin/nectar-render/
+          Compress-Archive -Path plugin/nectar-render -DestinationPath "dist/nectar-render-obsidian-$version.zip"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

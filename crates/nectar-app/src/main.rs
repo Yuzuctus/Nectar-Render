@@ -36,7 +36,11 @@ fn main() -> eframe::Result {
             .with_title("Nectar Render")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([960.0, 600.0])
-            .with_drag_and_drop(true),
+            .with_drag_and_drop(true)
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/nectar-render-256.png"))
+                    .unwrap_or_default(),
+            ),
         persist_window: true,
         ..Default::default()
     };

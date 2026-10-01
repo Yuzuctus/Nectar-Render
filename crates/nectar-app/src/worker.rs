@@ -33,6 +33,7 @@ pub enum Request {
     Export {
         path: PathBuf,
         ident: String,
+        pdf_a: bool,
     },
 }
 
@@ -123,7 +124,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
             match request {
                 Request::Layout { generation, generated, check } => layout = Some((generation, generated, check)),
                 Request::Pages { pages: p, ppi } => pages = Some((p, ppi)),
-                Request::Export { path, ident } => exports.push((path, ident)),
+                Request::Export { path, ident, pdf_a } => exports.push((path, ident, pdf_a)),
             }
         }
 
@@ -209,10 +210,10 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
             }
         }
 
-        for (path, ident) in exports {
+        for (path, ident, pdf_a) in exports {
             let result = match &current {
                 Some(compiled) => compiled
-                    .pdf(&PdfOptions { ident: Some(ident) })
+                    .pdf(&PdfOptions { ident: Some(ident), pdf_a })
                     .map_err(|e| e.to_string())
                     .and_then(|pdf| std::fs::write(&path, pdf).map_err(|e| e.to_string()))
                     .map(|()| path),

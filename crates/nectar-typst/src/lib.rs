@@ -4,6 +4,7 @@
 //! compilations : seule la source change, et Typst ne refait que ce qui a
 //! bougé (compilation incrémentale), ce qui permet l'aperçu en direct.
 
+mod images;
 mod world;
 
 use std::collections::HashMap;
@@ -181,6 +182,8 @@ pub struct BlockBox {
 pub struct PdfOptions {
     /// Identifiant stable du document (le chemin de la note, par exemple).
     pub ident: Option<String>,
+    /// Produire un PDF/A-2b (archivage).
+    pub pdf_a: bool,
 }
 
 impl Compiled {
@@ -201,9 +204,17 @@ impl Compiled {
     }
 
     pub fn pdf(&self, options: &PdfOptions) -> Result<Vec<u8>, EngineError> {
+        let standards = if options.pdf_a {
+            typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_2b])
+                .map_err(|e| EngineError::Pdf(vec![e.message().to_string()]))?
+        } else {
+            typst_pdf::PdfStandards::default()
+        };
         let typst_options = typst_pdf::PdfOptions {
             ident: options.ident.clone().map(Smart::Custom).unwrap_or(Smart::Auto),
             creator: Smart::Custom(Some(format!("Nectar Render {}", env!("CARGO_PKG_VERSION")))),
+            standards,
+            timestamp: world::now_utc().map(typst_pdf::Timestamp::new_utc),
             ..typst_pdf::PdfOptions::default()
         };
         typst_pdf::pdf(&self.document, &typst_options)

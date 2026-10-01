@@ -76,7 +76,11 @@ impl NectarWorld {
         {
             return Ok(bytes.clone());
         }
-        let bytes = Bytes::new(std::fs::read(path).map_err(|e| FileError::from_io(e, path))?);
+        let raw = std::fs::read(path).map_err(|e| FileError::from_io(e, path))?;
+        let bytes = Bytes::new(match asset.max_px {
+            Some(max) => crate::images::downscale(raw, max),
+            None => raw,
+        });
         cache.insert(path.clone(), (modified, bytes.clone()));
         Ok(bytes)
     }
@@ -123,6 +127,14 @@ impl World for NectarWorld {
         let (y, m, d) = civil_from_days((secs + offset).div_euclid(86_400));
         Datetime::from_ymd(y, m, d)
     }
+}
+
+/// Date et heure UTC actuelles.
+pub(crate) fn now_utc() -> Option<Datetime> {
+    let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+    let (y, m, d) = civil_from_days(secs.div_euclid(86_400));
+    let rest = secs.rem_euclid(86_400);
+    Datetime::from_ymd_hms(y, m, d, (rest / 3600) as u8, (rest % 3600 / 60) as u8, (rest % 60) as u8)
 }
 
 /// Jours depuis 1970-01-01 → date civile (algorithme de H. Hinnant).

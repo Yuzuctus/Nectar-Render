@@ -30,6 +30,7 @@ pub struct Style {
     pub cover: CoverStyle,
     pub diagrams: DiagramStyle,
     pub pagination: PaginationStyle,
+    pub export: ExportStyle,
     /// Fond du `==surlignage==`.
     pub highlight: Color,
     /// Afficher les séparateurs `---`.
@@ -53,9 +54,27 @@ impl Default for Style {
             cover: CoverStyle::default(),
             diagrams: DiagramStyle::default(),
             pagination: PaginationStyle::default(),
+            export: ExportStyle::default(),
             highlight: "#fff3a3".into(),
             rules: true,
         }
+    }
+}
+
+/// Réglages du fichier PDF produit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExportStyle {
+    /// PDF/A-2b : format d'archivage (polices et couleurs incluses).
+    pub pdf_a: bool,
+    /// Réduire les photos plus grandes que `max_image_px` (côté le plus long).
+    pub downscale_images: bool,
+    pub max_image_px: u32,
+}
+
+impl Default for ExportStyle {
+    fn default() -> Self {
+        Self { pdf_a: false, downscale_images: true, max_image_px: 2400 }
     }
 }
 

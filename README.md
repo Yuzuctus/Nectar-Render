@@ -1,107 +1,123 @@
 # Nectar Render
 
-**Atelier de mise en page pour Obsidian.** Tu écris dans Obsidian ; Nectar transforme la note en PDF soigné, et tu décides à la main où tombent les pages, quel format prend chaque page et comment se placent les images. Tout reste local.
+**L'atelier de mise en page des notes Obsidian.** Tu écris dans Obsidian ; Nectar transforme n'importe quelle note Markdown en PDF soigné, place tout intelligemment dès le départ, puis te laisse tout retoucher à la main sur un aperçu fidèle avant l'export. Tout reste local.
 
-> Version 2, réécrite de zéro en Rust. L'ancienne version Python/Tkinter reste dans l'historique de `main` (tag `python-final` à poser).
+> Version 2, réécrite de zéro en Rust pour Windows. L'ancienne version Python/Tkinter reste dans l'historique de `main`.
+
+## Installer
+
+- **Installateur Windows** (`NectarRender-x.y.z-installation.exe`, sans droits administrateur) ou **version portable** (`.zip`), dans les [releases](https://github.com/Yuzuctus/Nectar-Render/releases).
+- **Plugin Obsidian** : copier le dossier `nectar-render` (fourni dans l'installation, sous `plugin-obsidian`) dans `<coffre>/.obsidian/plugins/`, puis l'activer. Il ajoute « Ouvrir dans Nectar Render », « Exporter en PDF » et « Vérifier la mise en page » (palette de commandes, clic droit sur une note, icône du ruban).
 
 ## L'atelier
 
-```powershell
-cargo run --release -p nectar-app -- "chemin\vers\note.md"
-```
+- Les **pages du PDF** au centre, mises en page en direct ; la note est surveillée, chaque enregistrement dans Obsidian met l'aperçu à jour. Seules les pages visibles sont dessinées : 50 pages restent fluides.
+- **Clic sur un bloc** (ou flèches haut/bas) : il est surligné tel qu'il est sur la page, et l'onglet **Bloc** propose ses retouches.
+  - Pages : nouvelle page avant, reste de la page vide après, garder avec le suivant, garder d'un seul tenant ou autoriser la coupure, pousser en bas, espace avant.
+  - Format de page à partir de ce bloc (A3 paysage au milieu d'un A4, format libre, retour au format du document).
+  - Image : largeur (aussi avec la **poignée** à la souris), alignement, en haut ou en bas de page, pleine page, légende.
+  - Apparence : alignement, taille, couleur, gras, italique, fond, cadre, retrait, texte sur 2 ou 3 colonnes.
+  - Tableau : largeur et alignement de chaque colonne.
+  - Titre : appliquer les mêmes retouches à tous les titres de ce niveau.
+- **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
+- Onglet **Style** : un preset, puis tout réglable à la main ; « Enregistrer comme preset… ».
+- Onglet **Vérifier** : l'assistant de mise en page (voir plus bas).
+- Annuler et rétablir (un glisser = une seule étape), export PDF, zoom, notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.
 
-- Au centre, les **pages du PDF**, mises en page en direct. La note est surveillée : dès que tu enregistres dans Obsidian, l'aperçu se met à jour.
-- **Clic sur un bloc** (dans les pages ou dans la liste de gauche) : à droite, ses retouches (nouvelle page avant, page vide après, garder avec le suivant, pousser en bas, espace avant, format de page à partir d'ici, largeur, alignement, placement et légende d'une image, masquer).
-- Onglet **Style** : choisir un preset, puis tout régler à la main (texte, titres H1–H6, code, encadrés, citations, tableaux, liens, images, notes, page, pied de page, page de garde). « Enregistrer comme preset… » le rend réutilisable pour toutes les notes.
-- Annuler / rétablir (Ctrl+Z / Ctrl+Y), export PDF (Ctrl+E), zoom, thème clair ou sombre. L'interface porte le design Agrume.
+## Placé intelligemment dès le départ
 
-## Styles et presets
+- Les titres restent avec leur contenu ; une phrase qui finit par « : » reste avec ce qu'elle annonce.
+- Liste courte, code court, petit tableau, encadré : jamais coupés entre deux pages.
+- Lignes isolées (veuves, orphelines) évitées ; images limitées à 85 % de la page pour garder leur annonce et leur légende.
+- Une retouche l'emporte toujours sur ces règles.
 
-10 presets intégrés, repris de la v1 : **Agrume, Académique, Magazine, Entreprise, Technique, Minimal, Carnet, Créatif, Développeur, Élégant**. Les presets personnels vivent dans `%APPDATA%\Nectar Render\presets\*.json`.
+**Assistant** (`Vérifier` dans l'atelier, `nectar check` en ligne de commande) : il relit les pages réelles et signale :
 
-Un style se compose en couches : défaut ← preset ← réglages de la note (rangés dans `.nectar/`, seulement ce qui diffère du preset). Si une police manque sur la machine, Typst prend une police de secours de la même famille (serif, sans, mono) et l'atelier le signale.
+- une page à moitié vide, avec le bloc responsable ;
+- un titre isolé, un contenu qui dépasse la marge, une image réduite pour tenir ;
+- une dernière page presque vide ;
+- une image ou une note introuvable, une formule non convertie, une police absente.
 
-Blocs de code façon éditeur, avec 11 thèmes : VS Code Dark+ et Light+, GitHub clair et sombre, One Dark, Monokai, Dracula, Solarized clair, Nord, Xcode clair, Agrume. Bandeau au choix (onglet du langage, barre de fenêtre, aucun), numéros de ligne, arrondi, bordure.
+Corrections en un clic : réduire ou faire flotter l'image, lui donner une page, autoriser la coupure, passer le titre à la page suivante.
 
-## Ce que ça sait faire aujourd'hui
+## Tout le Markdown, rendu proprement
 
-- Lire une note Obsidian : `![[image.png|400]]` cherchée dans tout le coffre, `[[liens]]`, callouts `> [!tip] Titre`, `==surlignage==`, `%%commentaires%%`, ids de bloc `^abc`, notes `[^1]` et `^[en ligne]`, tâches, tableaux, code, maths LaTeX `$…$` / `$$…$$`, frontmatter (titre, auteur, date, tags, langue).
-- Mettre en page avec [Typst](https://typst.app), en local, en ~100 ms : page de garde, numéros de page, PDF balisé (accessible).
-- Appliquer des **retouches** par bloc :
+- **Obsidian** :
+  - images du coffre `![[image.png|400]]` et `![[doc.pdf#page=3]]` ;
+  - inclusion de notes `![[note]]` et de sections `![[note#Titre]]` ;
+  - liens `[[…]]`, callouts `> [!tip]`, `==surlignage==`, `%%commentaires%%`, ids de bloc, notes `[^1]` et `^[en ligne]`, tâches, frontmatter.
+- **Schémas** :
+  - **Mermaid** (organigrammes, séquences, classes, états, entités, Gantt, camemberts, cartes mentales…) dessiné localement avec la police du document ;
+  - dessins **Excalidraw** du plugin Obsidian redessinés avec leur trait à main levée.
+- **Code** façon éditeur :
+  - 11 thèmes (VS Code, GitHub, One Dark, Monokai, Dracula, Solarized, Nord, Xcode, Agrume) ;
+  - onglet avec le nom du fichier (` ```rust title="main.rs" `), numéros de ligne, lignes surlignées (`{2,4-5}`) ;
+  - les lignes trop longues repartent alignées sur le code.
+- **Maths** LaTeX `$…$` et `$$…$$`, police des formules au choix.
+- **Typographie française** : espaces fines insécables devant `; ! ?` et dans « », insécable devant `:`, guillemets « ».
+- **Émojis** en couleur, **HTML courant** (`<img width>`, `<u>`, `<sup>`, `<mark>`, `<kbd>`, images centrées), **liens internes** cliquables vers les titres (`[[#Titre]]`).
+- **PDF** balisé (accessible), PDF/A-2b en option, photos trop lourdes allégées.
 
-| Retouche | Clé JSON | Commentaire dans la note |
-|---|---|---|
-| Nouvelle page avant le bloc | `break_before` | `break-before` / `saut-avant` |
-| Reste de la page vide après le bloc | `break_after` | `break-after` / `saut-apres` |
-| Ne pas séparer du bloc suivant | `keep_with_next` | `keep-with-next` |
-| Pousser en bas de page | `push_to_bottom` | `push-to-bottom` |
-| Masquer à l'export | `hidden` | `hidden` / `masquer` |
-| Espace avant (mm) | `space_before_mm` | `space-before=10` |
-| Format de page à partir d'ici | `page` | `page=a3-paysage`, `page=210x99`, `page=default` |
-| Largeur d'image (% du texte) | `image.width_percent` | `width=60` |
-| Image en haut / bas / pleine page | `image.placement` | `placement=top\|bottom\|full-page` |
-| Légende d'image | `image.caption` | `caption=…` |
+## Styles
 
-Un saut avant une puce coupe la liste en gardant la numérotation. Un saut ou un changement de format posé sur un bloc remonte avant les titres qui le précèdent : un titre ne reste jamais seul en bas de page.
+10 presets repris de la v1 : **Agrume, Académique, Magazine, Entreprise, Technique, Minimal, Carnet, Créatif, Développeur, Élégant**.
+
+Presets personnels dans `%APPDATA%\Nectar Render\presets\`. Un style se compose en couches : défaut ← preset ← réglages de la note (seul ce qui diffère du preset est rangé). Une police absente est remplacée par une police de secours de la même famille.
 
 ## Où vivent les retouches
 
-Dans `<coffre>/.nectar/<chemin de la note>.json`. Obsidian ignore les dossiers qui commencent par un point : la note reste intacte. Chaque retouche désigne un bloc par un **id stable** tiré de son contenu (`p-8d8700e1`) ; si tu modifies le texte, Nectar retrouve le bloc par ressemblance, sinon il signale la retouche orpheline.
+Dans `<coffre>/.nectar/<chemin de la note>.json`, invisible dans Obsidian : la note reste intacte. Chaque retouche désigne un bloc par un id tiré de son contenu. Si tu modifies le texte, Nectar retrouve le bloc par ressemblance et réécrit l'ancre ; sinon il signale la retouche orpheline.
 
-Repli possible directement dans la note, juste avant le bloc :
+Repli possible dans la note, juste avant le bloc :
 
 ```markdown
-<!-- nectar: saut-avant, page=a3-paysage -->
+<!-- nectar: saut-avant, page=a3-paysage, largeur=80, centre -->
 ![[schema.png]]
 ```
 
-`<!-- pagebreak -->` et `\pagebreak` (ancien Nectar) restent compris.
+Une retouche faite dans l'atelier remplace celle écrite dans la note. `<!-- pagebreak -->` et `\pagebreak` (ancien Nectar) restent compris.
 
 ## Ligne de commande
 
-```powershell
-cargo run --release -p nectar-cli -- export "examples/coffre-demo/Démo Nectar.md" --png out
-```
-
 ```text
-nectar export <note.md> [-o sortie.pdf] [--png dossier] [--ppi 110] [--system-fonts]
+nectar export <note.md> [-o sortie.pdf] [--png dossier] [--system-fonts] [--preset magazine]
+nectar check <note.md>                   # l'assistant de mise en page
 nectar blocks <note.md>                  # ids, types, lignes et pages des blocs
-nectar set <note.md> <id> <retouches>    # ex. : nectar set note.md li-8f4c06da break-before
+nectar set <note.md> <id> <retouches>    # ex. : nectar set note.md li-8f4c06da saut-avant
 nectar unset <note.md> <id>
+nectar presets | nectar use-preset <note.md> <preset>
 nectar typst <note.md>                   # la source Typst générée
-nectar presets                           # presets intégrés et personnels
-nectar use-preset <note.md> <preset>     # choisir le preset d'une note
-nectar export <note.md> --preset magazine  # essayer un preset sans l'enregistrer
 ```
 
-Le coffre `examples/coffre-demo` montre les trois cas d'origine : saut entre la phrase d'introduction et la première puce, image suivie d'une page vide, grand schéma sur une page A3 paysage au milieu d'un document A4.
+Le coffre `examples/coffre-demo` montre les cas d'origine : saut entre la phrase d'introduction et la première puce, image suivie d'une page vide, grand schéma sur une page A3 paysage au milieu d'un A4. Il contient aussi un dessin Excalidraw et un diagramme Mermaid.
 
-## Architecture
+## Développer
+
+```powershell
+cargo run -p nectar-app -- "examples/coffre-demo/Démo Nectar.md"
+cargo test --workspace
+cd obsidian-plugin; npm ci; npm run build
+```
 
 ```
 crates/
-  nectar-core    lecture Markdown/Obsidian (comrak), modèle de blocs à ids stables,
-                 retouches (.nectar/*.json), génération de la source Typst
-  nectar-typst   monde Typst virtuel et hors ligne, polices embarquées,
-                 export PDF, rendu PNG/RGBA des pages, position des blocs
-  nectar-cli     ligne de commande
-  nectar-app     l'atelier (egui) : aperçu, retouches à la souris, styles
-assets/
-  fonts/         IBM Plex et JetBrains Mono (OFL)
-  presets/       les 10 presets intégrés (JSON partiels)
-  typst/         le template unique (nectar.typ) et les spécifications mitex (LaTeX → Typst)
+  nectar-core    lecture Markdown/Obsidian, blocs à ids stables, retouches,
+                 styles et presets, génération Typst, Excalidraw, assistant
+  nectar-typst   moteur Typst hors ligne : polices embarquées, PDF, pages
+                 en images, positions et boîtes des blocs, analyse des pages
+  nectar-cli     ligne de commande (nectar.exe)
+  nectar-app     l'atelier egui (nectar-render.exe)
+assets/          polices, presets, template Typst, icône
+obsidian-plugin/ le plugin Obsidian (TypeScript)
+packaging/       installateur Windows (Inno Setup)
 ```
 
-Le template `nectar.typ` ne contient aucune couleur ni police en dur : il lit `/nectar/style.typ`, généré à partir du style de la note.
-
-## Feuille de route
-
-1. ~~Cœur + CLI : note Obsidian → PDF, retouches, pages de formats mixtes~~
-2. ~~Styles réglables, 10 presets, blocs de code façon éditeur~~
-3. ~~Atelier : aperçu en direct, clic sur un bloc → retouches, panneau de style, annuler/rétablir~~
-4. Glisser une image sur la page pour la déplacer, poignées de redimensionnement
-5. Inclusion de notes `![[note]]`, diagrammes Mermaid, PDF/A, installateur Windows
+Un tag `vX.Y.Z` publie l'installateur, la version portable et le plugin.
 
 ## Licences
 
-Code : PolyForm Noncommercial 1.0.0 (`LICENSE`). Polices IBM Plex et JetBrains Mono : SIL OFL 1.1. Spécifications mitex : Apache-2.0.
+Code : PolyForm Noncommercial 1.0.0 (`LICENSE`). Polices :
+- IBM Plex, JetBrains Mono, Virgil et Excalifont : SIL OFL 1.1 ;
+- Twemoji : CC-BY 4.0 / Apache 2.0.
+
+Spécifications mitex : Apache-2.0.
