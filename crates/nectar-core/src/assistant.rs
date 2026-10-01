@@ -25,6 +25,18 @@ pub struct Marker {
     pub y: f64,
 }
 
+/// Une image telle qu'elle est posée dans les pages.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FigureView {
+    pub id: BlockId,
+    pub page: usize,
+    /// Taille affichée, en points.
+    pub width: f64,
+    pub height: f64,
+    /// Taille d'origine en pixels d'une photo (rien pour un dessin vectoriel).
+    pub pixels: Option<(f64, f64)>,
+}
+
 /// Remarque émise par le template pendant la mise en page.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateNote {
@@ -89,6 +101,7 @@ pub struct Inputs<'a> {
     pub pages: &'a [PageMetrics],
     pub markers: &'a [Marker],
     pub notes: &'a [TemplateNote],
+    pub figures: &'a [FigureView],
     /// Avertissements de lecture, de génération et de compilation.
     pub warnings: &'a [String],
     pub missing_fonts: &'a [String],
@@ -134,7 +147,15 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
             // Saut voulu ? On regarde le groupe en tête de la page suivante :
             // titres, liste et sa première puce, phrase d'annonce, puis le
             // premier vrai bloc (un saut posé sur lui remonte devant ses titres).
-            let starts_page = |id: &BlockId| input.ops.get(id).is_some_and(|o| o.break_before || o.page.is_some());
+            let starts_page = |id: &BlockId| {
+                input.ops.get(id).is_some_and(|o| {
+                    o.break_before
+                        || o.page.is_some()
+                        || o.image
+                            .as_ref()
+                            .is_some_and(|i| matches!(i.placement, Placement::Landscape | Placement::FullPage))
+                })
+            };
             let mut explicit =
                 on_page(page).next_back().is_some_and(|m| input.ops.get(&m.id).is_some_and(|o| o.break_after));
             for m in on_page(page + 1) {
@@ -239,6 +260,13 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
         }
     }
 
+    // Schémas larges et détaillés, à lire en grand sur une page paysage.
+    for figure in input.figures {
+        if let Some(issue) = wide_schema(input, figure) {
+            issues.push(issue);
+        }
+    }
+
     // Images réduites par le template pour tenir dans la page.
     for note in input.notes.iter().filter(|n| n.kind == "shrunk") {
         let block = input.markers.iter().rfind(|m| m.page < note.page || (m.page == note.page && m.y <= note.y + 1.0));
@@ -287,6 +315,85 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
     issues
 }
 
+/// Mots qui désignent un schéma dans une légende ou un nom de fichier.
+const SCHEMA_WORDS: &[&str] = &[
+    "schéma",
+    "schema",
+    "diagram",
+    "architecture",
+    "réseau",
+    "reseau",
+    "topolog",
+    "plan ",
+    "carte",
+    "map",
+    "uml",
+    "flux",
+    "flow",
+    "organigramme",
+    "excalidraw",
+    "graphe",
+    "graph",
+    "infra",
+    "câblage",
+    "cablage",
+    "mindmap",
+];
+
+/// Un schéma large et détaillé, affiché à la largeur du texte d'une page en
+/// portrait : sur une page paysage, il serait nettement plus grand.
+fn wide_schema(input: &Inputs<'_>, figure: &FigureView) -> Option<Issue> {
+    let block = input.document.blocks.iter().find(|b| b.id == figure.id)?;
+    let named_schema = |text: &str| {
+        let text = format!("{} ", text.to_lowercase());
+        SCHEMA_WORDS.iter().any(|w| text.contains(w))
+    };
+    let schema = match &block.node {
+        Node::Diagram { .. } => true,
+        Node::Figure(image) => named_schema(&image.alt) || named_schema(&image.target),
+        _ => false,
+    };
+    // Une image déjà retouchée : la personne a décidé de sa taille.
+    if !schema || input.ops.get(&figure.id).is_some_and(|o| o.image.is_some() || o.page.is_some()) {
+        return None;
+    }
+    let page = input.pages.get(figure.page)?;
+    if page.width >= page.height || figure.height <= 0.0 {
+        return None;
+    }
+    let p = &input.style.page;
+    let (left, right) = (f64::from(p.margin_left_mm) * MM, f64::from(p.margin_right_mm) * MM);
+    let (top, bottom) = (f64::from(p.margin_top_mm) * MM, f64::from(p.margin_bottom_mm) * MM);
+    let text_width = page.width - left - right;
+    let aspect = figure.width / figure.height;
+    if aspect < 1.25 || figure.width < text_width * 0.9 {
+        return None;
+    }
+    // Une photo doit avoir des détails à montrer (au moins 200 pixels par pouce affiché).
+    if let Some((px, _)) = figure.pixels
+        && px / (figure.width / 72.0) < 200.0
+    {
+        return None;
+    }
+    // Taille sur la page tournée : largeur et hauteur échangées, place pour la légende.
+    let landscape_width = (page.height - left - right).min((page.width - top - bottom - 30.0) * aspect);
+    let gain = landscape_width / figure.width;
+    if gain < 1.2 {
+        return None;
+    }
+    Some(Issue {
+        severity: Severity::Warning,
+        page: Some(figure.page),
+        block: Some(figure.id.clone()),
+        title: format!("Schéma à lire en grand (page {})", figure.page + 1),
+        detail: format!(
+            "Large et détaillé : sur une page paysage, il serait {} fois plus grand. Le texte reprend ensuite au format normal.",
+            format!("{gain:.1}").replace('.', ",")
+        ),
+        fixes: vec![fix("Le mettre sur une page paysage", &figure.id, FixAction::ImagePlacement(Placement::Landscape))],
+    })
+}
+
 fn fix(label: &str, block: &BlockId, action: FixAction) -> Fix {
     Fix { label: label.into(), block: block.clone(), action }
 }
@@ -329,6 +436,7 @@ mod tests {
             notes: &[],
             warnings: &[],
             missing_fonts: &[],
+            figures: &[],
         });
         let issue = issues.iter().find(|i| i.title.starts_with("Page 1")).expect("page à moitié vide");
         assert_eq!(issue.block.as_ref(), Some(&ids[2]), "le titre suit l'image : c'est l'image qu'on corrige");
@@ -356,6 +464,7 @@ mod tests {
             notes: &[],
             warnings: &[],
             missing_fonts: &[],
+            figures: &[],
         });
         assert!(issues.iter().all(|i| !i.title.starts_with("Page 1")));
     }

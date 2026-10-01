@@ -78,6 +78,7 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
                     "top" | "haut" => Placement::Top,
                     "bottom" | "bas" => Placement::Bottom,
                     "full-page" | "pleine-page" => Placement::FullPage,
+                    "landscape" | "paysage" => Placement::Landscape,
                     _ => return Err(format!("placement inconnu : {v}")),
                 };
             }

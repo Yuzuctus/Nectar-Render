@@ -23,17 +23,29 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let has_overrides = !project.layout.style.overrides.is_empty();
     let current_label = presets.iter().find(|p| p.0 == preset).map(|p| p.1.clone()).unwrap_or(preset.clone());
     let current_builtin = presets.iter().find(|p| p.0 == preset).is_none_or(|p| p.2);
-    ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("preset").selected_text(&current_label).width(200.0).show_ui(ui, |ui| {
-            for (id, label, builtin) in &presets {
-                let text = if *builtin { label.clone() } else { format!("{label}  ·  perso") };
-                ui.selectable_value(&mut preset, id.clone(), text);
+    egui::Grid::new("presets").num_columns(2).spacing([4.0, 4.0]).show(ui, |ui| {
+        for (index, (id, label, builtin)) in presets.iter().enumerate() {
+            let selected = *id == preset;
+            let text = if *builtin { label.clone() } else { format!("{label} · perso") };
+            let text = RichText::new(text).color(if selected { t.accent_ink } else { t.ink });
+            let button = egui::Button::new(text)
+                .fill(if selected { t.accent } else { t.raised })
+                .min_size(egui::vec2(140.0, 28.0));
+            if ui.add(button).clicked() {
+                preset = id.clone();
             }
-        });
-        if has_overrides {
-            ui.label(RichText::new("modifié").font(FontId::new(10.5, theme::mono())).color(t.identity));
+            if index % 2 == 1 {
+                ui.end_row();
+            }
         }
     });
+    if has_overrides {
+        ui.label(
+            RichText::new(format!("{current_label}, modifié à la main"))
+                .font(FontId::new(10.5, theme::mono()))
+                .color(t.identity),
+        );
+    }
     let mut deleted = false;
     ui.horizontal_wrapped(|ui| {
         if ui.add_enabled(has_overrides, egui::Button::new("Rétablir le preset")).clicked() {
@@ -63,10 +75,76 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 
     let families = app.families.clone();
     let mut s = app.style.clone();
-    fields(ui, &mut s, &families);
+    ui.add_space(6.0);
+    essentials(ui, &mut s, &families);
+    ui.add_space(4.0);
+    theme::rule(ui, 1.0, false);
+    egui::CollapsingHeader::new(
+        RichText::new("Réglages détaillés").font(FontId::new(14.0, theme::strong())).color(t.ink),
+    )
+    .default_open(false)
+    .show(ui, |ui| fields(ui, &mut s, &families));
     if s != app.style {
         app.edit_style(&ctx, &s);
     }
+}
+
+/// Les réglages qu'on change vraiment souvent.
+fn essentials(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
+    kicker(ui, "L'essentiel");
+    ui.add_space(2.0);
+    grid(ui, "essentiel", |ui| {
+        label(ui, "Police du texte");
+        font(ui, "police-essentiel", &mut s.text.font, families);
+        ui.end_row();
+        label(ui, "Taille");
+        number(ui, &mut s.text.size_pt, 6.0..=24.0, 0.1, " pt");
+        ui.end_row();
+        label(ui, "Marges");
+        let p = &mut s.page;
+        let same = [p.margin_bottom_mm, p.margin_left_mm, p.margin_right_mm]
+            .iter()
+            .all(|m| (m - p.margin_top_mm).abs() < 0.01);
+        ui.horizontal(|ui| {
+            let mut all = p.margin_top_mm;
+            if number(ui, &mut all, 0.0..=80.0, 0.5, " mm") {
+                p.margin_top_mm = all;
+                p.margin_bottom_mm = all;
+                p.margin_left_mm = all;
+                p.margin_right_mm = all;
+            }
+            if !same {
+                ui.label(RichText::new("(inégales)").small().color(theme::tokens(ui.ctx()).faint))
+                    .on_hover_text("Chaque marge se règle dans Réglages détaillés › Page");
+            }
+        });
+        ui.end_row();
+        label(ui, "Code");
+        let options: Vec<(String, &str)> = THEMES.iter().map(|t| (t.id.to_string(), t.label)).collect();
+        choice(ui, "theme-code-essentiel", &mut s.code.theme, &options);
+        ui.end_row();
+        label(ui, "Page de garde");
+        choice(
+            ui,
+            "garde-essentiel",
+            &mut s.cover.mode,
+            &[
+                (CoverMode::Auto, "Si la note a un titre"),
+                (CoverMode::Page, "Page de garde"),
+                (CoverMode::Header, "Titre en haut de page"),
+                (CoverMode::None, "Aucune"),
+            ],
+        );
+        ui.end_row();
+        label(ui, "Pages");
+        ui.vertical(|ui| {
+            ui.checkbox(&mut s.footer.page_numbers, "Numéros de page");
+            ui.checkbox(&mut s.cover.table_of_contents, "Sommaire");
+            ui.checkbox(&mut s.headings.numbering, "Titres numérotés (1, 1.1…)");
+            ui.checkbox(&mut s.headings.h1_new_page, "Chaque titre 1 sur une nouvelle page");
+        });
+        ui.end_row();
+    });
 }
 
 fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {

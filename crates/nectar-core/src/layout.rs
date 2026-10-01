@@ -444,6 +444,9 @@ pub enum Placement {
     Bottom,
     /// Seule sur sa page, aussi grande que possible.
     FullPage,
+    /// Seule sur une page tournée en paysage, pour lire un schéma en grand ;
+    /// le document reprend ensuite son format.
+    Landscape,
 }
 
 #[cfg(test)]

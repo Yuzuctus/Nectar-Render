@@ -67,6 +67,11 @@ pub struct NectarApp {
     launch_select: Option<String>,
     /// Notes ouvertes récemment (la plus récente d'abord).
     recents: Vec<PathBuf>,
+    /// Dernière image affichée de chaque page : montrée le temps que la
+    /// nouvelle arrive, plutôt qu'une page blanche.
+    shown: HashMap<usize, egui::TextureHandle>,
+    /// Déplacement à la souris qui attend sa nouvelle mise en page.
+    pub ghost: Option<pages::Ghost>,
 }
 
 impl NectarApp {
@@ -105,6 +110,8 @@ impl NectarApp {
                 .and_then(|s| s.get_string(RECENTS))
                 .map(|list| list.lines().map(PathBuf::from).filter(|p| p.is_file()).collect())
                 .unwrap_or_default(),
+            shown: HashMap::new(),
+            ghost: None,
         };
         let remembered = cc.storage.and_then(|s| s.get_string(LAST_NOTE)).map(PathBuf::from).filter(|p| p.is_file());
         if let Some(note) = launch.note.or(remembered) {
@@ -130,6 +137,8 @@ impl NectarApp {
                 self.scroll_to = self.selected.clone();
                 self.rendered = None;
                 self.textures.clear();
+                self.shown.clear();
+                self.ghost = None;
                 self.requested.clear();
                 self.fit_pending = true;
                 self.restyle();
@@ -197,13 +206,12 @@ impl NectarApp {
     pub fn regenerate(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else { return };
         self.generation += 1;
-        let generated = Box::new(project.generate());
         let check = Box::new(CheckInputs {
             document: project.document.clone(),
             layout: project.layout.clone(),
             style: self.style.clone(),
         });
-        self.worker.send(Request::Layout { generation: self.generation, generated, check });
+        self.worker.send(Request::Layout { generation: self.generation, check });
         ctx.request_repaint();
     }
 
@@ -229,6 +237,27 @@ impl NectarApp {
         self.dirty_since.get_or_insert_with(Instant::now);
         self.restyle();
         self.regenerate(ctx);
+    }
+
+    /// Modifie les retouches d'un bloc (ou d'une puce).
+    pub fn edit_block(&mut self, ctx: &egui::Context, id: &BlockId, edit: impl FnOnce(&mut nectar_core::BlockOps)) {
+        let Some(project) = &self.project else { return };
+        let Some(anchor) = project.document.anchors().into_iter().find(|a| a.id == id) else { return };
+        let (kind, line, excerpt) = (anchor.kind, anchor.line, anchor.excerpt.to_string());
+        let mut ops = project.layout.ops_for(&project.document, id);
+        edit(&mut ops);
+        let id = id.clone();
+        self.edit_layout(ctx, move |layout| {
+            *layout.ops_mut(nectar_core::model::AnchorInfo { id: &id, kind, line, excerpt: &excerpt }) = ops;
+        });
+    }
+
+    /// Décale un bloc verticalement (espace avant, en millimètres).
+    pub fn nudge(&mut self, ctx: &egui::Context, id: &BlockId, mm: f32) {
+        self.edit_block(ctx, id, |ops| {
+            let value = ((ops.space_before_mm.unwrap_or(0.0) + mm) * 2.0).round() / 2.0;
+            ops.space_before_mm = (value.abs() >= 0.25).then_some(value.clamp(-50.0, 200.0));
+        });
     }
 
     /// Écrit les retouches en attente.
@@ -395,6 +424,33 @@ impl NectarApp {
         if pressed(Modifiers::COMMAND, Key::O) {
             self.pick_and_open(ctx);
         }
+        // Sur le bloc sélectionné : Alt+flèches le déplace (Maj : 5 mm),
+        // Ctrl+Entrée lui donne une nouvelle page, Suppr efface ses retouches.
+        if !ctx.egui_wants_keyboard_input()
+            && let Some(id) = self.selected.clone()
+        {
+            let mut mm = 0.0;
+            for (modifiers, key, step) in [
+                (Modifiers::ALT | Modifiers::SHIFT, Key::ArrowUp, -5.0),
+                (Modifiers::ALT | Modifiers::SHIFT, Key::ArrowDown, 5.0),
+                (Modifiers::ALT, Key::ArrowUp, -1.0),
+                (Modifiers::ALT, Key::ArrowDown, 1.0),
+            ] {
+                if pressed(modifiers, key) {
+                    mm += step;
+                }
+            }
+            if mm != 0.0 {
+                self.nudge(ctx, &id, mm);
+            }
+            if pressed(Modifiers::COMMAND, Key::Enter) {
+                self.edit_block(ctx, &id, |ops| panels::actions::apply(ops, panels::actions::Quick::BreakBefore));
+            }
+            if pressed(Modifiers::NONE, Key::Delete) {
+                self.edit_block(ctx, &id, |ops| panels::actions::apply(ops, panels::actions::Quick::Clear));
+                self.notify("Retouches du bloc effacées (Ctrl+Z pour annuler)", false);
+            }
+        }
         // Flèches haut/bas : bloc précédent ou suivant.
         if !ctx.egui_wants_keyboard_input() && self.project.is_some() {
             let step = if pressed(Modifiers::NONE, Key::ArrowDown) {
@@ -485,6 +541,7 @@ impl NectarApp {
                             }
                         });
                     });
+                    self.plan_menu(ui);
                     let can_export = self.rendered.as_ref().is_some_and(|r| !r.pages.is_empty());
                     let export = egui::Button::new(RichText::new("Exporter le PDF").color(t.paper)).fill(t.ink);
                     if ui.add_enabled(can_export, export).on_hover_text("Ctrl+E").clicked() {
@@ -540,6 +597,39 @@ impl NectarApp {
                 });
             });
         egui::Panel::top("filet").exact_size(2.0).frame(egui::Frame::new().fill(t.ink)).show(ui, |_| {});
+    }
+
+    /// Le plan de la note : aller directement à un titre.
+    fn plan_menu(&mut self, ui: &mut egui::Ui) {
+        let headings: Vec<(BlockId, u8, String)> = self
+            .project
+            .as_ref()
+            .map(|p| {
+                p.document
+                    .blocks
+                    .iter()
+                    .filter_map(|b| match &b.node {
+                        nectar_core::model::Node::Heading { level, .. } if *level <= 3 => {
+                            Some((b.id.clone(), *level, b.excerpt.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        ui.add_enabled_ui(!headings.is_empty(), |ui| {
+            ui.menu_button("Plan", |ui| {
+                egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
+                    for (id, level, text) in &headings {
+                        let label = format!("{}{text}", "    ".repeat(usize::from(level.saturating_sub(1))));
+                        if ui.selectable_label(self.selected.as_ref() == Some(id), label).clicked() {
+                            self.select(Some(id.clone()), true);
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        });
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
@@ -634,17 +724,23 @@ impl NectarApp {
         self.show_warnings = open;
     }
 
-    /// Les pages à afficher, avec l'image la plus proche disponible.
-    fn views(&self) -> Vec<PageView> {
+    /// Les pages à afficher, avec l'image la plus proche disponible : la
+    /// bonne, ou à défaut la précédente de la même page (pas de clignotement).
+    fn views(&mut self) -> Vec<PageView> {
         let Some(rendered) = &self.rendered else { return Vec::new() };
-        rendered
-            .pages
-            .iter()
-            .map(|page| PageView {
-                texture: self.textures.get(&page.hash).map(|(_, t)| t.clone()),
-                size_pt: page.size_pt,
-            })
-            .collect()
+        let mut views = Vec::with_capacity(rendered.pages.len());
+        for (index, page) in rendered.pages.iter().enumerate() {
+            let view = match self.textures.get(&page.hash) {
+                Some((_, texture)) => {
+                    self.shown.insert(index, texture.clone());
+                    PageView { texture: Some(texture.clone()), fresh: true, size_pt: page.size_pt }
+                }
+                None => PageView { texture: self.shown.get(&index).cloned(), fresh: false, size_pt: page.size_pt },
+            };
+            views.push(view);
+        }
+        self.shown.retain(|index, _| *index < rendered.pages.len());
+        views
     }
 
     /// Demande au moteur les pages visibles (et leurs voisines) qui manquent
@@ -711,12 +807,6 @@ impl eframe::App for NectarApp {
             return;
         }
 
-        egui::Panel::left("blocs")
-            .default_size(270.0)
-            .size_range(200.0..=420.0)
-            .frame(egui::Frame::new().fill(t.paper).inner_margin(egui::Margin::symmetric(14, 12)))
-            .show(ui, |ui| panels::outline::show(self, ui));
-
         egui::Panel::right("reglages")
             .default_size(340.0)
             .size_range(300.0..=520.0)
@@ -732,7 +822,7 @@ impl eframe::App for NectarApp {
                         .unwrap_or(0);
                     let check = if count > 0 { format!("Vérifier · {count}") } else { "Vérifier".to_string() };
                     for (tab, label) in
-                        [(Tab::Block, "Bloc".to_string()), (Tab::Style, "Style".to_string()), (Tab::Check, check)]
+                        [(Tab::Block, "Retoucher".to_string()), (Tab::Style, "Style".to_string()), (Tab::Check, check)]
                     {
                         let selected = self.tab == tab;
                         let text = RichText::new(label.to_uppercase())
@@ -781,16 +871,28 @@ impl eframe::App for NectarApp {
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
             }
-            if let Some((id, width)) = action.resize
-                && let Some(project) = &self.project
-                && let Some(anchor) = project.document.anchors().into_iter().find(|a| *a.id == id)
-            {
-                let (kind, line, excerpt) = (anchor.kind, anchor.line, anchor.excerpt.to_string());
-                let mut ops = project.layout.ops_for(&project.document, &id);
-                ops.image.get_or_insert_with(Default::default).width_percent = Some(width);
-                self.edit_layout(&ctx, move |layout| {
-                    *layout.ops_mut(nectar_core::model::AnchorInfo { id: &id, kind, line, excerpt: &excerpt }) = ops;
+            if let Some((id, width)) = action.resize {
+                self.edit_block(&ctx, &id, |ops| {
+                    ops.image.get_or_insert_with(Default::default).width_percent = Some(width);
                 });
+            }
+            if let Some((id, mm, mut ghost)) = action.nudge {
+                self.nudge(&ctx, &id, mm);
+                ghost.generation = self.generation;
+                self.ghost = Some(ghost);
+            }
+            if let Some((id, quick)) = action.quick {
+                self.edit_block(&ctx, &id, |ops| panels::actions::apply(ops, quick));
+            }
+            if action.more {
+                self.tab = Tab::Block;
+            }
+            // Le fantôme d'un déplacement s'efface quand la nouvelle page est là.
+            if let (Some(ghost), Some(rendered)) = (self.ghost, &self.rendered)
+                && rendered.generation >= ghost.generation
+                && views.get(ghost.page).is_none_or(|v| v.fresh)
+            {
+                self.ghost = None;
             }
             self.request_pages(&ctx, &action.visible);
         });

@@ -42,7 +42,7 @@ pub fn optional_color(ui: &mut egui::Ui, value: &mut Option<String>, fallback: &
     changed
 }
 
-fn parse_hex(value: &str) -> Option<[u8; 3]> {
+pub fn parse_hex(value: &str) -> Option<[u8; 3]> {
     let hex = value.trim().strip_prefix('#')?;
     if hex.len() != 6 && hex.len() != 8 {
         return None;
@@ -120,4 +120,31 @@ pub fn grid(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
 
 pub fn label(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).color(theme::tokens(ui.ctx()).muted));
+}
+
+/// Choix exclusif en boutons côte à côte (plus rapide qu'une liste).
+pub fn segmented<T: PartialEq + Clone>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
+    let t = theme::tokens(ui.ctx());
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (option, label) in options {
+            let selected = option == value;
+            let text = RichText::new(*label).color(if selected { t.accent_ink } else { t.ink });
+            let button = egui::Button::new(text).fill(if selected { t.accent } else { t.raised });
+            if ui.add(button).clicked() && !selected {
+                *value = option.clone();
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// Bouton à bascule : jaune quand il est actif.
+pub fn toggle(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
+    let t = theme::tokens(ui.ctx());
+    let text = RichText::new(label).color(if on { t.accent_ink } else { t.ink });
+    let text = if on { RichText::new(format!("✔ {label}")).color(t.accent_ink) } else { text };
+    ui.add(egui::Button::new(text).fill(if on { t.accent } else { t.raised })).on_hover_text(hint).clicked()
 }

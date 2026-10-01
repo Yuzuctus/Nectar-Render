@@ -20,7 +20,7 @@ pub mod typo;
 mod typst_style;
 pub mod vault;
 
-pub use codegen::{Asset, Generated, generate};
+pub use codegen::{Asset, Generated, Tuning, generate, generate_tuned};
 pub use layout::{BlockOps, Layout, PageChange, PageSpec};
 pub use model::{Block, BlockId, BlockKind, Document};
 pub use parse::{ParseOptions, parse};

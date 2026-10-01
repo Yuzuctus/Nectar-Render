@@ -1,8 +1,8 @@
 //! L'onglet « Vérifier » : ce que l'assistant a repéré dans les pages.
 
 use eframe::egui::{self, FontId, RichText};
-use nectar_core::assistant::{Issue, Severity};
-use nectar_core::model::AnchorInfo;
+use nectar_core::assistant::{FixAction, Issue, Severity};
+use nectar_core::layout::Placement;
 
 use crate::app::NectarApp;
 use crate::theme::{self, kicker};
@@ -23,6 +23,25 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
             .color(t.faint),
     );
     ui.add_space(8.0);
+    // Plusieurs schémas à lire en grand : tous d'un coup.
+    let landscapes: Vec<nectar_core::assistant::Fix> = issues
+        .iter()
+        .flat_map(|i| &i.fixes)
+        .filter(|f| f.action == FixAction::ImagePlacement(Placement::Landscape))
+        .cloned()
+        .collect();
+    if landscapes.len() > 1
+        && ui
+            .button(format!("Mettre les {} schémas en paysage", landscapes.len()))
+            .on_hover_text("Chacun sur sa page paysage, en grand ; le texte continue autour")
+            .clicked()
+    {
+        for fix in &landscapes {
+            app.edit_block(&ctx, &fix.block, |ops| fix.apply(ops));
+        }
+        app.notify(format!("{} schémas mis en paysage", landscapes.len()), false);
+        return;
+    }
     let mut select = None;
     let mut apply = None;
     for (index, issue) in issues.iter().enumerate() {
@@ -61,14 +80,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     }
     if let Some((index, k)) = apply {
         let fix = issues[index].fixes[k].clone();
-        let Some(project) = &app.project else { return };
-        let Some(anchor) = project.document.anchors().into_iter().find(|a| *a.id == fix.block) else { return };
-        let (id, kind, line, excerpt) = (anchor.id.clone(), anchor.kind, anchor.line, anchor.excerpt.to_string());
-        let mut ops = project.layout.ops_for(&project.document, &id);
-        fix.apply(&mut ops);
-        app.edit_layout(&ctx, move |layout| {
-            *layout.ops_mut(AnchorInfo { id: &id, kind, line, excerpt: &excerpt }) = ops;
-        });
+        app.edit_block(&ctx, &fix.block, |ops| fix.apply(ops));
         app.notify(format!("Retouche appliquée : {}", fix.label), false);
     }
 }

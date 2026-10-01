@@ -87,10 +87,20 @@ fn main() -> Result<()> {
         Command::Unset { note, block } => unset(&note, &block),
         Command::Typst { note } => {
             let project = open(&note)?;
-            print!("{}", project.generate().source);
+            let engine = Engine::new(FontSources::Bundled);
+            print!("{}", lay_out(&project, &engine).0.source);
             Ok(())
         }
     }
+}
+
+/// Mise en page en deux temps (voir `nectar_typst::lay_out`).
+fn lay_out(project: &Project, engine: &Engine) -> (nectar_core::Generated, Result<nectar_typst::Compiled>) {
+    let (style, warning) = project.style();
+    let laid = nectar_typst::lay_out(engine, &project.document, &project.layout, &style);
+    let mut generated = laid.generated;
+    generated.warnings.extend(warning);
+    (generated, laid.compiled.map_err(Into::into))
 }
 
 fn open(note: &Path) -> Result<Project> {
@@ -114,15 +124,15 @@ fn export(
     if let Some(preset) = preset {
         project.layout.style.preset = preset;
     }
-    let generated = project.generate();
+    let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled });
+    let (generated, compiled) = lay_out(&project, &engine);
     for warning in &generated.warnings {
         eprintln!("avertissement : {warning}");
     }
-    let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled });
     for font in engine.missing_fonts(&generated.fonts) {
         eprintln!("police absente : {font} (remplacée par une police de secours)");
     }
-    let compiled = engine.compile(&generated)?;
+    let compiled = compiled?;
     for warning in &compiled.warnings {
         eprintln!("typst : {warning}");
     }
@@ -151,10 +161,10 @@ fn export(
 
 fn check(note: &Path) -> Result<()> {
     let project = open(note)?;
-    let generated = project.generate();
     let engine = Engine::new(FontSources::Bundled);
+    let (generated, compiled) = lay_out(&project, &engine);
     let missing = engine.missing_fonts(&generated.fonts);
-    let compiled = engine.compile(&generated)?;
+    let compiled = compiled?;
     let (style, _) = project.style();
     let issues = nectar_typst::inspect(&compiled, &project.document, &project.layout, &style, &generated, &missing);
     if issues.is_empty() {
@@ -179,9 +189,8 @@ fn check(note: &Path) -> Result<()> {
 
 fn blocks(note: &Path) -> Result<()> {
     let project = open(note)?;
-    let generated = project.generate();
     let engine = Engine::new(FontSources::Bundled);
-    let positions = match engine.compile(&generated) {
+    let positions = match lay_out(&project, &engine).1 {
         Ok(compiled) => compiled.block_positions(),
         Err(error) => {
             eprintln!("{error}");

@@ -8,12 +8,15 @@ use nectar_core::model::Node;
 use nectar_typst::BlockPosition;
 
 use crate::app::NectarApp;
+use crate::panels::actions::{self, Quick};
 use crate::theme;
 
 pub struct PageView {
-    /// Image de la page, éventuellement à une autre résolution (zoom en cours)
-    /// ou absente (pas encore rendue).
+    /// Image de la page, éventuellement à une autre résolution (zoom en cours),
+    /// d'une version précédente le temps du rendu, ou absente.
     pub texture: Option<egui::TextureHandle>,
+    /// L'image correspond bien à la mise en page actuelle.
+    pub fresh: bool,
     pub size_pt: egui::Vec2,
 }
 
@@ -25,11 +28,37 @@ pub struct PageAction {
     pub visible: Vec<usize>,
     /// Nouvelle largeur (en %) donnée à l'image sélectionnée avec la poignée.
     pub resize: Option<(BlockId, f32)>,
+    /// Bloc déplacé à la souris : décalage vertical en millimètres, et le
+    /// fantôme à garder affiché jusqu'à la nouvelle mise en page.
+    pub nudge: Option<(BlockId, f32, Ghost)>,
+    /// Action rapide choisie sur le bloc (barre ou clic droit).
+    pub quick: Option<(BlockId, Quick)>,
+    /// « Plus… » : ouvrir toutes les retouches du bloc.
+    pub more: bool,
+}
+
+/// Aperçu d'un déplacement : la partie de la page sous le haut du bloc,
+/// décalée de `dy` points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ghost {
+    pub page: usize,
+    pub top: f32,
+    pub dy: f32,
+    /// Mise en page attendue (le fantôme disparaît quand elle est affichée).
+    pub generation: u64,
+}
+
+/// Bloc en cours de déplacement.
+#[derive(Clone, Debug)]
+struct Drag {
+    id: BlockId,
+    origin_y: f32,
 }
 
 /// Points typographiques → points d'écran à 100 % (96 ppp).
 const PT_TO_SCREEN: f32 = 96.0 / 72.0;
 const TOP_GAP: f32 = 24.0;
+const MM: f32 = 72.0 / 25.4;
 
 pub fn show(
     app: &NectarApp,
@@ -46,10 +75,17 @@ pub fn show(
     let scale = zoom * PT_TO_SCREEN;
     let margins = Margins::from(&app.style);
     let children = list_children(app);
+    let paper = crate::panels::widgets::parse_hex(&app.style.page.background)
+        .map(|[r, g, b]| Color32::from_rgb(r, g, b))
+        .unwrap_or(Color32::WHITE);
+    let drag_id = ui.id().with("glisser-bloc");
+    let menu_id = ui.id().with("menu-bloc");
 
     // Défilement vers un bloc : on calcule le décalage vertical d'avance,
     // sans toucher au défilement horizontal.
-    let mut area = egui::ScrollArea::both().auto_shrink(false);
+    let mut area = egui::ScrollArea::both()
+        .auto_shrink(false)
+        .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL);
     if reset_horizontal {
         area = area.horizontal_scroll_offset(0.0);
     }
@@ -65,9 +101,11 @@ pub fn show(
         ui.vertical_centered(|ui| {
             let mut hovered: Option<BlockId> = None;
             let mut page_rects = Vec::with_capacity(views.len());
+            let mut drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id));
+            let mut drag_dy = 0.0f32;
             for (index, view) in views.iter().enumerate() {
                 let size = view.size_pt * scale;
-                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
                 page_rects.push(rect);
                 let painter = ui.painter_at(rect.expand(2.0));
                 painter.rect_stroke(rect, 0.0, Stroke::new(1.0, t.rule_strong), StrokeKind::Outside);
@@ -79,18 +117,20 @@ pub fn show(
                         let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                         painter.image(texture.id(), rect, uv, Color32::WHITE);
                     }
-                    // Pas encore rendue : une page blanche le temps du rendu.
+                    // Pas encore rendue : une page vierge le temps du rendu.
                     None => {
-                        painter.rect_filled(rect, 0.0, Color32::WHITE);
+                        painter.rect_filled(rect, 0.0, paper);
                     }
                 }
 
                 let to_pt = |p: Pos2| ((p.x - rect.left()) / scale, (p.y - rect.top()) / scale);
-                if let Some(pointer) = response.hover_pos() {
+                if let Some(pointer) = response.hover_pos()
+                    && drag.is_none()
+                {
                     let (_, y) = to_pt(pointer);
                     hovered = hit(positions, index, y);
                     if hovered.is_some() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                     }
                 }
                 if response.clicked()
@@ -98,6 +138,61 @@ pub fn show(
                 {
                     let (_, y) = to_pt(pointer);
                     action.clicked = Some(hit(positions, index, y));
+                }
+                // Clic droit : on sélectionne le bloc et on ouvre ses actions.
+                if response.secondary_clicked()
+                    && let Some(pointer) = response.interact_pointer_pos()
+                {
+                    let (_, y) = to_pt(pointer);
+                    let target = hit(positions, index, y);
+                    action.clicked = Some(target.clone());
+                    ui.data_mut(|d| d.insert_temp(menu_id, target));
+                }
+                response.context_menu(|ui| {
+                    let target: Option<BlockId> = ui.data(|d| d.get_temp(menu_id)).flatten();
+                    let Some(id) = target else {
+                        ui.close();
+                        return;
+                    };
+                    for offer in actions::offers(app, &id) {
+                        let label = if offer.active { format!("✔ {}", offer.label) } else { offer.label.to_string() };
+                        if ui.button(label).on_hover_text(offer.hint).clicked() {
+                            action.quick = Some((id.clone(), offer.quick));
+                            ui.close();
+                        }
+                    }
+                    ui.separator();
+                    if ui.button("Toutes les retouches…").clicked() {
+                        action.more = true;
+                        ui.close();
+                    }
+                });
+
+                // Glisser un bloc : il descend ou remonte, et tout ce qui suit avec lui.
+                if response.drag_started()
+                    && let Some(origin) = ui.input(|i| i.pointer.press_origin())
+                    && let Some(id) = hit(positions, index, to_pt(origin).1)
+                {
+                    action.clicked = Some(Some(id.clone()));
+                    drag = Some(Drag { id, origin_y: origin.y });
+                }
+                if let Some(d) = &drag
+                    && (response.dragged() || response.drag_stopped())
+                    && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
+                {
+                    drag_dy = ((pointer.y - d.origin_y) / scale).clamp(-30.0 * MM, 80.0 * MM);
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    if response.drag_stopped() {
+                        let mm = (drag_dy / MM * 2.0).round() / 2.0;
+                        if mm.abs() >= 0.5
+                            && let Some((page, [_, top, _, _])) =
+                                bands(rendered, &d.id, &children, views, &margins).into_iter().next()
+                        {
+                            let ghost = Ghost { page, top, dy: mm * MM, generation: 0 };
+                            action.nudge = Some((d.id.clone(), mm, ghost));
+                        }
+                        drag = None;
+                    }
                 }
 
                 // Repère de page.
@@ -111,13 +206,38 @@ pub fn show(
                 );
                 ui.add_space(20.0);
             }
+            if !ui.input(|i| i.pointer.any_down()) && action.nudge.is_none() {
+                drag = None;
+            }
+            ui.data_mut(|d| match &drag {
+                Some(value) => {
+                    d.insert_temp(drag_id, value.clone());
+                }
+                None => d.remove::<Drag>(drag_id),
+            });
+
+            // Fantôme du déplacement en cours, ou de celui qui attend sa mise en page.
+            let live = drag.as_ref().and_then(|d| {
+                let (page, [_, top, _, _]) = bands(rendered, &d.id, &children, views, &margins).into_iter().next()?;
+                Some(Ghost { page, top, dy: drag_dy, generation: 0 })
+            });
+            let pending =
+                app.ghost.filter(|g| g.generation > rendered.generation || views.get(g.page).is_some_and(|v| !v.fresh));
+            if let Some(ghost) = live.or(pending)
+                && let (Some(view), Some(page_rect)) = (views.get(ghost.page), page_rects.get(ghost.page))
+                && let Some(texture) = &view.texture
+            {
+                paint_ghost(ui, &ghost, view, *page_rect, texture, scale, &margins, paper, t, live.is_some());
+            }
+            let shift = live.map(|g| g.dy).unwrap_or(0.0);
 
             let paint = |id: &BlockId, fill: Color32, stroke: Stroke| {
                 for (page, [x0, y0, x1, y1]) in bands(rendered, id, &children, views, &margins) {
                     let Some(page_rect) = page_rects.get(page) else { continue };
+                    let dy = if live.is_some_and(|g| g.page == page) { shift } else { 0.0 };
                     let r = Rect::from_min_max(
-                        page_rect.min + egui::vec2((x0 - 5.0) * scale, (y0 - 4.0) * scale),
-                        page_rect.min + egui::vec2((x1 + 5.0) * scale, (y1 + 3.0) * scale),
+                        page_rect.min + egui::vec2((x0 - 5.0) * scale, (y0 - 4.0 + dy) * scale),
+                        page_rect.min + egui::vec2((x1 + 5.0) * scale, (y1 + 3.0 + dy) * scale),
                     );
                     let painter = ui.painter_at(*page_rect);
                     painter.rect_filled(r, 0.0, fill);
@@ -154,6 +274,7 @@ pub fn show(
 
             // Poignée de largeur de l'image sélectionnée.
             if let Some(id) = &app.selected
+                && live.is_none()
                 && let Some(project) = &app.project
                 && project
                     .document
@@ -202,10 +323,119 @@ pub fn show(
                     }
                 }
             }
+
+            // Barre d'actions posée sur le bloc sélectionné.
+            if let Some(id) = &app.selected
+                && live.is_none()
+                && let Some((page, [_, top, x1, bottom])) =
+                    bands(rendered, id, &children, views, &margins).into_iter().next()
+                && let Some(page_rect) = page_rects.get(page)
+            {
+                let clip = ui.clip_rect();
+                let right = page_rect.left() + (x1 + 5.0).max(margins.left + 120.0) * scale;
+                let above = page_rect.top() + (top - 6.0) * scale;
+                let below = page_rect.top() + (bottom + 5.0) * scale;
+                let (pos, pivot) = if above - 36.0 > clip.top() {
+                    (egui::pos2(right, above), egui::Align2::RIGHT_BOTTOM)
+                } else {
+                    (egui::pos2(right, below), egui::Align2::RIGHT_TOP)
+                };
+                if clip.contains(pos) {
+                    toolbar(app, ui.ctx(), id, pos, pivot, &mut action);
+                }
+            }
         });
         ui.add_space(40.0);
     });
     action
+}
+
+/// La barre des actions rapides du bloc sélectionné.
+fn toolbar(
+    app: &NectarApp,
+    ctx: &egui::Context,
+    id: &BlockId,
+    pos: Pos2,
+    pivot: egui::Align2,
+    action: &mut PageAction,
+) {
+    let t = theme::tokens(ctx);
+    egui::Area::new(egui::Id::new("barre-bloc")).fixed_pos(pos).pivot(pivot).order(egui::Order::Foreground).show(
+        ctx,
+        |ui| {
+            egui::Frame::new()
+                .fill(t.raised)
+                .stroke(Stroke::new(1.0, t.ink))
+                .inner_margin(egui::Margin::symmetric(4, 3))
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.spacing_mut().button_padding = egui::vec2(7.0, 3.0);
+                    ui.horizontal(|ui| {
+                        for offer in actions::offers(app, id) {
+                            if offer.quick == Quick::Clear {
+                                continue;
+                            }
+                            let text = egui::RichText::new(offer.label).size(12.5);
+                            let text = if offer.active { text.color(t.accent_ink) } else { text.color(t.ink) };
+                            let button = egui::Button::new(text)
+                                .fill(if offer.active { t.accent } else { t.raised })
+                                .stroke(Stroke::NONE);
+                            if ui.add(button).on_hover_text(offer.hint).clicked() {
+                                action.quick = Some((id.clone(), offer.quick));
+                            }
+                        }
+                        let more = egui::Button::new(egui::RichText::new("Plus…").size(12.5).color(t.identity))
+                            .fill(t.raised)
+                            .stroke(Stroke::NONE);
+                        if ui.add(more).on_hover_text("Toutes les retouches de ce bloc").clicked() {
+                            action.more = true;
+                        }
+                    });
+                });
+        },
+    );
+}
+
+/// Peint le déplacement d'un bloc : tout ce qui est sous son haut glisse de
+/// `dy`, la place libérée reprend la couleur de la page.
+#[allow(clippy::too_many_arguments)]
+fn paint_ghost(
+    ui: &egui::Ui,
+    ghost: &Ghost,
+    view: &PageView,
+    page_rect: Rect,
+    texture: &egui::TextureHandle,
+    scale: f32,
+    margins: &Margins,
+    paper: Color32,
+    t: theme::Tokens,
+    live: bool,
+) {
+    let size = view.size_pt;
+    let top = (ghost.top - 4.0).max(0.0);
+    let body_bottom = size.y - margins.bottom;
+    if body_bottom <= top {
+        return;
+    }
+    let screen = |x: f32, y: f32| page_rect.min + egui::vec2(x * scale, y * scale);
+    let clip = Rect::from_min_max(screen(0.0, (top + ghost.dy.min(0.0)).max(0.0)), screen(size.x, body_bottom));
+    let painter = ui.painter_at(clip.intersect(page_rect));
+    painter.rect_filled(clip, 0.0, paper);
+    let uv = Rect::from_min_max(Pos2::new(0.0, top / size.y), Pos2::new(1.0, body_bottom / size.y));
+    let dest = Rect::from_min_max(screen(0.0, top + ghost.dy), screen(size.x, body_bottom + ghost.dy));
+    painter.image(texture.id(), dest, uv, Color32::WHITE);
+    if live {
+        // Le nouveau haut du bloc et le décalage, au millimètre.
+        let y = screen(0.0, top + 4.0 + ghost.dy).y;
+        ui.painter_at(page_rect).hline(page_rect.x_range(), y, Stroke::new(1.0, t.identity));
+        let mm = (ghost.dy / MM * 2.0).round() / 2.0;
+        let text = format!("{}{} mm", if mm > 0.0 { "+" } else { "" }, format!("{mm:.1}").replace('.', ","));
+        let galley = ui.painter().layout_no_wrap(text, egui::FontId::new(12.0, theme::mono()), t.accent_ink);
+        let at = egui::pos2(page_rect.right() - galley.size().x - 18.0, y - galley.size().y - 8.0);
+        let tag = Rect::from_min_size(at, galley.size() + egui::vec2(10.0, 4.0));
+        ui.painter().rect_filled(tag, 0.0, t.accent);
+        ui.painter().galley(at + egui::vec2(5.0, 2.0), galley, t.accent_ink);
+    }
 }
 
 /// Les retouches d'un bloc, en mots.
@@ -247,6 +477,7 @@ fn summary(ops: &nectar_core::BlockOps) -> Vec<String> {
             Placement::Top => out.push("Image en haut de page".into()),
             Placement::Bottom => out.push("Image en bas de page".into()),
             Placement::FullPage => out.push("Image pleine page".into()),
+            Placement::Landscape => out.push("Image sur une page paysage".into()),
             Placement::Inline => {}
         }
     }

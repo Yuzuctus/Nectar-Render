@@ -5,7 +5,7 @@
 //! [`Style`]. Chaque bloc adressable est précédé d'un marqueur `#nb("id")`
 //! qui permet ensuite de savoir où il a atterri dans les pages.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -45,12 +45,30 @@ impl Generated {
     }
 }
 
+/// Ajustements du placement automatique décidés après une première mise en
+/// page (voir `nectar_typst::lay_out`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Tuning {
+    /// Blocs gardés d'un seul tenant par la règle automatique, mais qui
+    /// laissaient une page à moitié vide : ils peuvent être coupés.
+    pub relaxed: HashSet<BlockId>,
+    /// Pages paysage repoussées (image, bloc après lequel la placer) : le
+    /// texte qui suit remplit d'abord la page en cours, comme un flottant.
+    pub deferred: Vec<(BlockId, BlockId)>,
+}
+
 /// Produit la source Typst d'un document retouché.
 pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
+    generate_tuned(doc, layout, style, &Tuning::default())
+}
+
+/// [`generate`], avec les ajustements d'une mise en page précédente.
+pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &Tuning) -> Generated {
     let mut resolution = layout.resolve(doc);
     hoist_over_headings(doc, &mut resolution.ops);
     let mut g = Gen {
         ops: &resolution.ops,
+        relaxed: &tuning.relaxed,
         layout,
         style,
         french: style.text.french_typography && doc.meta.lang.as_deref().unwrap_or("fr").starts_with("fr"),
@@ -71,8 +89,14 @@ pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
         ));
     }
     g.preamble(&doc.meta);
-    for (index, block) in doc.blocks.iter().enumerate() {
-        g.block(block, doc.blocks.get(index + 1));
+    let deferred: HashSet<&BlockId> = tuning.deferred.iter().map(|(figure, _)| figure).collect();
+    let emitted: Vec<&Block> = doc.blocks.iter().filter(|b| !deferred.contains(&b.id)).collect();
+    for (index, block) in emitted.iter().enumerate() {
+        g.block(block, emitted.get(index + 1).copied());
+        // Les pages paysage repoussées ici, dans l'ordre du document.
+        for figure in doc.blocks.iter().filter(|b| tuning.deferred.iter().any(|(f, a)| *f == b.id && *a == block.id)) {
+            g.block(figure, None);
+        }
     }
     let (style_source, fonts) = crate::typst_style::style_module(style);
     let theme = crate::code_themes::get(&style.code.theme).unwrap_or(&crate::code_themes::THEMES[0]);
@@ -117,6 +141,7 @@ fn hoist_over_headings(doc: &Document, ops: &mut HashMap<BlockId, BlockOps>) {
 
 struct Gen<'a> {
     ops: &'a HashMap<BlockId, BlockOps>,
+    relaxed: &'a HashSet<BlockId>,
     layout: &'a Layout,
     style: &'a Style,
     /// Typographie française active (langue `fr` et réglage du style).
@@ -178,6 +203,21 @@ impl Gen<'_> {
         if ops.hidden {
             return;
         }
+        // Image sur sa propre page paysage : le marqueur va dans la page.
+        if ops.image.as_ref().is_some_and(|i| i.placement == Placement::Landscape)
+            && let Some(body) = match &block.node {
+                Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
+                Node::Diagram { lang, source } => Some(self.diagram(lang, source, ops.image.as_ref())),
+                _ => None,
+            }
+        {
+            self.out.push_str("#page(flipped: true)[\n");
+            self.block_lines.push((block.id.clone(), self.line()));
+            let _ = writeln!(self.out, "#nb({})\n{body}\n]", string(block.id.as_str()));
+            self.after(&ops);
+            self.out.push('\n');
+            return;
+        }
         self.block_lines.push((block.id.clone(), self.line()));
         let _ = writeln!(self.out, "#nb({})", string(block.id.as_str()));
 
@@ -190,7 +230,9 @@ impl Gen<'_> {
         });
         let sticky = ops.keep_with_next
             || (p.keep_intro_with_next && !ops.break_after && !next_breaks && announces(&block.node, next));
-        let unbreakable = ops.keep_together.unwrap_or(p.keep_small_blocks && is_small(&block.node));
+        let unbreakable = ops
+            .keep_together
+            .unwrap_or(p.keep_small_blocks && is_small(&block.node) && !self.relaxed.contains(&block.id));
         let body = match &block.node {
             Node::List(list) => {
                 let start = self.out.len();
@@ -387,7 +429,7 @@ impl Gen<'_> {
                     })
                     .collect::<Vec<_>>(),
             ),
-            None => columns.to_string(),
+            None => auto_widths(table, columns),
         };
         let mut out = format!(
             "#table(\n  columns: {widths},\n  align: {},\n",
@@ -492,6 +534,7 @@ impl Gen<'_> {
                 Placement::Top => "top",
                 Placement::Bottom => "bottom",
                 Placement::FullPage => "full-page",
+                Placement::Landscape => "landscape",
             };
             args.push(format!("placement: {}", string(placement)));
         }
@@ -614,6 +657,41 @@ impl Gen<'_> {
         }
         out
     }
+}
+
+/// Largeurs automatiques des colonnes d'un tableau : une colonne aux contenus
+/// courts (adresses, nombres, dates) garde sa largeur naturelle et ne passe
+/// jamais à la ligne ; les colonnes de texte se partagent le reste selon la
+/// longueur de leur contenu.
+fn auto_widths(table: &Table, columns: usize) -> String {
+    const SHORT: usize = 24;
+    let mut longest = vec![0usize; columns];
+    let mut total = vec![0usize; columns];
+    let rows = std::iter::once(&table.header).chain(&table.rows).filter(|r| !r.is_empty());
+    let mut count = 0usize;
+    for row in rows {
+        count += 1;
+        for (i, cell) in row.iter().enumerate().take(columns) {
+            let length = plain_text(cell).chars().count();
+            longest[i] = longest[i].max(length);
+            total[i] += length;
+        }
+    }
+    if longest.iter().all(|l| *l <= SHORT) {
+        // Tout est court : chaque colonne à sa largeur naturelle.
+        return columns.to_string();
+    }
+    let widths: Vec<String> = (0..columns)
+        .map(|i| {
+            if longest[i] <= SHORT {
+                "auto".to_string()
+            } else {
+                let average = total[i] as f32 / count.max(1) as f32;
+                format!("{}fr", num((average / 12.0).clamp(1.0, 4.0)))
+            }
+        })
+        .collect();
+    array(&widths)
 }
 
 /// Enveloppe un bloc : insécable, collé au suivant, apparence propre.
@@ -956,6 +1034,30 @@ mod tests {
         assert!(g.source.contains("#set align(center)") && g.source.contains("size: 1.2em"));
         assert!(g.source.contains("#columns(2"));
         assert!(g.source.contains("columns: (2fr, auto)") && g.source.contains("align: (start, end)"));
+    }
+
+    #[test]
+    fn short_columns_keep_their_natural_width() {
+        let g = gen_with(
+            "| Ressource | IP | Rôle |\n|---|---|---|\n\
+             | Windows 11 (VM, windows 11 famille) | `192.168.107.11` | Passerelle et administration du switch |\n",
+            |_, _| {},
+        );
+        assert!(g.source.contains("columns: (1.833fr, auto, 1.75fr)"), "{}", g.source);
+        let g = gen_with("| a | b |\n|---|---|\n| 1 | 2 |\n", |_, _| {});
+        assert!(g.source.contains("columns: 2,"), "tout est court : largeurs naturelles");
+    }
+
+    #[test]
+    fn landscape_figure_gets_its_own_page() {
+        let g = gen_with("Intro.\n\n![schéma](https://exemple.org/s.png)\n\nSuite.\n", |doc, layout| {
+            let figure = doc.anchors()[1];
+            layout.ops_mut(figure).image =
+                Some(crate::layout::ImageOps { placement: Placement::Landscape, ..Default::default() });
+        });
+        let page = g.source.find("#page(flipped: true)[").expect("page paysage");
+        let marker = g.source[page..].find("#nb(").expect("marqueur dans la page");
+        assert!(marker < 40, "{}", g.source);
     }
 
     #[test]

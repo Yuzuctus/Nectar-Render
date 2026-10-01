@@ -12,17 +12,15 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
 use eframe::egui;
-use nectar_core::Generated;
 use nectar_typst::{BlockPosition, Compiled, Engine, FontSources, PdfOptions};
 
 /// Images de pages gardées en mémoire par le moteur.
 const CACHE_PAGES: usize = 24;
 
 pub enum Request {
-    /// Compiler une nouvelle source (et la vérifier avec l'assistant).
+    /// Mettre en page la note retouchée (et la vérifier avec l'assistant).
     Layout {
         generation: u64,
-        generated: Box<Generated>,
         check: Box<CheckInputs>,
     },
     /// Rendre ces pages (indices) à cette résolution.
@@ -37,7 +35,7 @@ pub enum Request {
     },
 }
 
-/// Ce que l'assistant de mise en page doit connaître de la note.
+/// La note, ses retouches et son style : de quoi la mettre en page.
 pub struct CheckInputs {
     pub document: nectar_core::Document,
     pub layout: nectar_core::Layout,
@@ -122,17 +120,19 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
         let mut exports = Vec::new();
         for request in pending {
             match request {
-                Request::Layout { generation, generated, check } => layout = Some((generation, generated, check)),
+                Request::Layout { generation, check } => layout = Some((generation, check)),
                 Request::Pages { pages: p, ppi } => pages = Some((p, ppi)),
                 Request::Export { path, ident, pdf_a } => exports.push((path, ident, pdf_a)),
             }
         }
 
-        if let Some((generation, generated, check)) = layout {
+        if let Some((generation, check)) = layout {
             let started = Instant::now();
+            let laid = nectar_typst::lay_out(&engine, &check.document, &check.layout, &check.style);
+            let generated = laid.generated;
             let missing_fonts = engine.missing_fonts(&generated.fonts);
             let mut error = None;
-            match engine.compile(&generated) {
+            match laid.compiled {
                 Ok(compiled) => current = Some(compiled),
                 Err(e) => error = Some(e.to_string()),
             }

@@ -12,15 +12,16 @@
 ## L'atelier
 
 - Les **pages du PDF** au centre, mises en page en direct ; la note est surveillée, chaque enregistrement dans Obsidian met l'aperçu à jour. Seules les pages visibles sont dessinées : 50 pages restent fluides.
-- **Clic sur un bloc** (ou flèches haut/bas) : il est surligné tel qu'il est sur la page, et l'onglet **Bloc** propose ses retouches.
-  - Pages : nouvelle page avant, reste de la page vide après, garder avec le suivant, garder d'un seul tenant ou autoriser la coupure, pousser en bas, espace avant.
-  - Format de page à partir de ce bloc (A3 paysage au milieu d'un A4, format libre, retour au format du document).
-  - Image : largeur (aussi avec la **poignée** à la souris), alignement, en haut ou en bas de page, pleine page, légende.
-  - Apparence : alignement, taille, couleur, gras, italique, fond, cadre, retrait, texte sur 2 ou 3 colonnes.
-  - Tableau : largeur et alignement de chaque colonne.
-  - Titre : appliquer les mêmes retouches à tous les titres de ce niveau.
+- **À la souris, directement sur la page** :
+  - clic sur un bloc : il est surligné et une **barre d'actions** apparaît dessus (nouvelle page avant, garder avec la suite, d'un seul tenant, page paysage, pleine page…) ;
+  - **glisser un bloc** vers le haut ou le bas le déplace au demi-millimètre, avec tout ce qui suit, en direct ;
+  - la **poignée** à droite d'une image règle sa largeur ;
+  - **clic droit** : les mêmes actions rapides.
+- Au clavier : Alt + ↑ / ↓ déplace le bloc d'1 mm (Maj : 5 mm), Ctrl + Entrée lui donne une nouvelle page, Suppr efface ses retouches, ↑ / ↓ passe au bloc voisin.
+- Onglet **Retoucher** : l'essentiel d'abord (actions, décalage, image, colonnes du tableau), le reste dans « Plus d'options » (format de page à partir du bloc, apparence, masquer, appliquer à tous les titres du même niveau).
+- **Plan** dans la barre du haut : aller directement à un titre.
 - **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
-- Onglet **Style** : un preset, puis tout réglable à la main ; « Enregistrer comme preset… ».
+- Onglet **Style** : un preset en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme preset… ».
 - Onglet **Vérifier** : l'assistant de mise en page (voir plus bas).
 - Annuler et rétablir (un glisser = une seule étape), export PDF, zoom, notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.
 
@@ -29,11 +30,15 @@
 - Les titres restent avec leur contenu ; une phrase qui finit par « : » reste avec ce qu'elle annonce.
 - Liste courte, code court, petit tableau, encadré : jamais coupés entre deux pages.
 - Lignes isolées (veuves, orphelines) évitées ; images limitées à 85 % de la page pour garder leur annonce et leur légende.
+- Tableaux : les colonnes courtes (adresses, nombres, dates) gardent leur largeur et ne passent pas à la ligne ; les colonnes de texte se partagent le reste.
+- **Second passage** : Nectar relit les pages produites. Un bloc gardé d'un seul tenant qui laisserait une demi-page vide est autorisé à se couper (le tableau répète son en-tête).
+- **Schémas en grand** : un schéma large et détaillé est repéré et peut passer, en un clic, sur une page paysage. Le texte qui suit remplit d'abord la page en cours, puis vient la page paysage, sans quitter la section.
 - Une retouche l'emporte toujours sur ces règles.
 
 **Assistant** (`Vérifier` dans l'atelier, `nectar check` en ligne de commande) : il relit les pages réelles et signale :
 
 - une page à moitié vide, avec le bloc responsable ;
+- un schéma à lire en grand (« Mettre les N schémas en paysage » d'un coup) ;
 - un titre isolé, un contenu qui dépasse la marge, une image réduite pour tenir ;
 - une dernière page presque vide ;
 - une image ou une note introuvable, une formule non convertie, une police absente.
@@ -72,6 +77,7 @@ Repli possible dans la note, juste avant le bloc :
 
 ```markdown
 <!-- nectar: saut-avant, page=a3-paysage, largeur=80, centre -->
+<!-- nectar: placement=paysage -->
 ![[schema.png]]
 ```
 

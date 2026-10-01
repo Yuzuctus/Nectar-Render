@@ -102,6 +102,10 @@
     let big = nectar-image(src, alt: alt, page: page, width-ratio: 1.0, max-height: if caption == none { 100% } else { 90% })
     align(center + horizon, if caption == none { big } else { figure(big, caption: caption) })
     pagebreak(weak: true)
+  } else if placement == "landscape" {
+    // La page paysage elle-même est ouverte par la source générée.
+    let big = nectar-image(src, alt: alt, page: page, width-ratio: 1.0, max-height: if caption == none { 100% } else { 92% })
+    align(center + horizon, if caption == none { big } else { figure(big, caption: caption) })
   } else if placement == "top" or placement == "bottom" {
     place(
       (if placement == "top" { top } else { bottom }) + align-to,

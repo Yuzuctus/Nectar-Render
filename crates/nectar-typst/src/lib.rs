@@ -286,6 +286,29 @@ impl Compiled {
         boxes
     }
 
+    /// Les images posées dans les pages, rattachées à leur bloc.
+    pub fn figures(&self) -> Vec<nectar_core::assistant::FigureView> {
+        let positions = self.block_positions();
+        let mut out = Vec::new();
+        for (page_index, page) in self.document.pages().iter().enumerate() {
+            let mut images = Vec::new();
+            collect_images(&page.frame, typst::layout::Point::zero(), &mut images);
+            for (rect, pixels) in images {
+                let owner =
+                    positions.iter().rfind(|p| p.page < page_index || (p.page == page_index && p.y <= rect[1] + 2.0));
+                let Some(owner) = owner else { continue };
+                out.push(nectar_core::assistant::FigureView {
+                    id: owner.id.clone(),
+                    page: page_index,
+                    width: rect[2] - rect[0],
+                    height: rect[3] - rect[1],
+                    pixels,
+                });
+            }
+        }
+        out
+    }
+
     /// Remarques laissées par le template (`<nectar-issue>`), avec leur place.
     pub fn template_notes(&self) -> Vec<nectar_core::assistant::TemplateNote> {
         let introspector = self.document.introspector();
@@ -354,6 +377,7 @@ pub fn inspect(
     let markers: Vec<Marker> =
         compiled.block_positions().into_iter().map(|p| Marker { id: p.id, page: p.page, y: p.y }).collect();
     let notes = compiled.template_notes();
+    let figures = compiled.figures();
     let ops = layout.resolve(document).ops;
     let warnings: Vec<String> =
         document.warnings.iter().chain(&generated.warnings).chain(&compiled.warnings).cloned().collect();
@@ -364,9 +388,191 @@ pub fn inspect(
         pages: &pages,
         markers: &markers,
         notes: &notes,
+        figures: &figures,
         warnings: &warnings,
         missing_fonts,
     })
+}
+
+/// Une mise en page complète : la source finale et son résultat.
+pub struct LaidOut {
+    pub generated: Generated,
+    pub compiled: Result<Compiled, EngineError>,
+    /// Blocs que le second passage a autorisés à se couper.
+    pub relaxed: Vec<BlockId>,
+}
+
+/// Met en page un document avec le placement automatique en deux temps.
+///
+/// Premier passage : les règles (petits blocs d'un seul tenant, annonces
+/// gardées avec la suite…). Puis on relit les pages : si un bloc gardé d'un
+/// seul tenant par la seule règle automatique laisse une page à moitié vide,
+/// il est autorisé à se couper (un tableau répète alors son en-tête) et on
+/// recompose. Une retouche manuelle n'est jamais remise en cause.
+pub fn lay_out(
+    engine: &Engine,
+    document: &nectar_core::Document,
+    layout: &nectar_core::Layout,
+    style: &nectar_core::Style,
+) -> LaidOut {
+    use nectar_core::assistant::FixAction;
+    use nectar_core::layout::Placement;
+    let mut tuning = nectar_core::Tuning::default();
+    let mut generated = nectar_core::generate_tuned(document, layout, style, &tuning);
+    let mut compiled = engine.compile(&generated);
+    let ops = layout.resolve(document).ops;
+    for _ in 0..3 {
+        let Ok(current) = &compiled else { break };
+        let holes: Vec<BlockId> = inspect(current, document, layout, style, &generated, &[])
+            .into_iter()
+            .flat_map(|issue| issue.fixes)
+            .filter(|fix| fix.action == FixAction::KeepTogether(false))
+            .map(|fix| fix.block)
+            .filter(|id| ops.get(id).is_none_or(|o| o.keep_together.is_none()) && !tuning.relaxed.contains(id))
+            .collect();
+        if holes.is_empty() {
+            break;
+        }
+        tuning.relaxed.extend(holes);
+        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
+        match engine.compile(&retry) {
+            Ok(better) => {
+                compiled = Ok(better);
+                generated = retry;
+            }
+            Err(_) => break,
+        }
+    }
+    // Pages paysage : si la page d'avant reste à moitié vide, le texte qui
+    // suit vient la remplir et la page paysage arrive juste après.
+    let landscapes: Vec<BlockId> = document
+        .blocks
+        .iter()
+        .filter(|b| ops.get(&b.id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape))
+        .map(|b| b.id.clone())
+        .collect();
+    // De la dernière à la première : une image plus loin, déjà repoussée,
+    // laisse son texte disponible pour les précédentes.
+    for figure in landscapes.iter().rev().take(6) {
+        let Ok(current) = &compiled else { break };
+        let moved: Vec<&BlockId> = tuning.deferred.iter().map(|(f, _)| f).collect();
+        let Some(after) = defer_point(current, document, style, figure, &moved) else { continue };
+        tuning.deferred.push((figure.clone(), after));
+        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
+        match engine.compile(&retry) {
+            Ok(better) => {
+                compiled = Ok(better);
+                generated = retry;
+            }
+            Err(_) => {
+                tuning.deferred.pop();
+            }
+        }
+    }
+    let mut relaxed: Vec<BlockId> = tuning.relaxed.into_iter().collect();
+    relaxed.sort();
+    LaidOut { generated, compiled, relaxed }
+}
+
+/// Le bloc après lequel placer la page paysage d'une image pour que le texte
+/// qui la suit remplisse d'abord la page d'avant ; `None` si elle est déjà
+/// bien remplie ou si rien ne peut y monter.
+fn defer_point(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    style: &nectar_core::Style,
+    figure: &BlockId,
+    moved: &[&BlockId],
+) -> Option<BlockId> {
+    use nectar_core::model::Node;
+    let mm = 72.0 / 25.4;
+    let (top, bottom) = (f64::from(style.page.margin_top_mm) * mm, f64::from(style.page.margin_bottom_mm) * mm);
+    let positions = compiled.block_positions();
+    let metrics = compiled.page_metrics(bottom);
+    let page = positions.iter().find(|p| &p.id == figure)?.page;
+    let before = metrics.get(page.checked_sub(1)?)?;
+    let after = metrics.get(page + 1)?;
+    if before.width > before.height || after.width > after.height {
+        return None;
+    }
+    let content_bottom = before.content.map(|c| c[3]).unwrap_or(top);
+    let free = before.height - bottom - content_bottom - 12.0;
+    if free < (before.height - top - bottom) * 0.25 {
+        return None;
+    }
+    // Blocs de premier niveau qui suivent l'image et ouvrent la page d'après.
+    let index = document.blocks.iter().position(|b| &b.id == figure)?;
+    let following: Vec<&nectar_core::Block> =
+        document.blocks[index + 1..].iter().filter(|b| !moved.contains(&&b.id)).collect();
+    let y_of = |id: &BlockId| positions.iter().find(|p| &p.id == id && p.page == page + 1).map(|p| p.y);
+    // Bas du dernier bloc de la page d'après, s'il s'y termine (une page
+    // pleine laisse penser qu'il continue plus loin).
+    let last_bottom =
+        after.content.map(|c| c[3]).filter(|b| *b < after.height - bottom - (after.height - top - bottom) * 0.1);
+    // Le schéma reste dans sa section : on ne passe pas un titre de même niveau.
+    let section = document.blocks[..index].iter().rev().find_map(|b| match b.node {
+        Node::Heading { level, .. } => Some(level),
+        _ => None,
+    });
+    let mut chosen = None;
+    for (i, block) in following.iter().enumerate() {
+        let Some(_) = y_of(&block.id) else { break };
+        if let (Node::Heading { level, .. }, Some(section)) = (&block.node, section)
+            && *level <= section
+        {
+            break;
+        }
+        let next = following.get(i + 1);
+        let end = match next.and_then(|n| y_of(&n.id)) {
+            Some(y) => y,
+            None => match last_bottom {
+                Some(b) => b,
+                None => break,
+            },
+        };
+        if end - top > free {
+            break;
+        }
+        // Jamais un titre ou une phrase d'annonce juste avant la page paysage.
+        let dangling = match &block.node {
+            Node::Heading { .. } => true,
+            Node::Paragraph(text) => nectar_core::model::plain_text(text).trim_end().ends_with(':'),
+            _ => false,
+        };
+        if !dangling {
+            chosen = Some(block.id.clone());
+        }
+        // Une autre image : on s'arrête avant, elle a sa propre place. Fin de
+        // la page d'après : on ne mesure pas plus loin.
+        if next.is_none_or(|n| matches!(n.node, Node::Figure(_) | Node::Diagram { .. }) || y_of(&n.id).is_none()) {
+            break;
+        }
+    }
+    chosen
+}
+
+/// Une image d'un cadre : son rectangle et, pour une photo, sa taille en pixels.
+type PlacedImage = ([f64; 4], Option<(f64, f64)>);
+
+/// Images d'un cadre : leur rectangle et, pour une photo, sa taille en pixels.
+fn collect_images(frame: &typst::layout::Frame, offset: typst::layout::Point, out: &mut Vec<PlacedImage>) {
+    use typst::layout::FrameItem;
+    use typst::visualize::ImageKind;
+    for (pos, item) in frame.items() {
+        let p = offset + *pos;
+        match item {
+            FrameItem::Group(group) => {
+                let shifted = typst::layout::Point::new(p.x + group.transform.tx, p.y + group.transform.ty);
+                collect_images(&group.frame, shifted, out);
+            }
+            FrameItem::Image(image, size, _) => {
+                let (x, y) = (p.x.to_pt(), p.y.to_pt());
+                let pixels = matches!(image.kind(), ImageKind::Raster(_)).then(|| (image.width(), image.height()));
+                out.push(([x, y, x + size.x.to_pt(), y + size.y.to_pt()], pixels));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Rectangles des éléments visibles d'un cadre, au-dessus de `cutoff`.
