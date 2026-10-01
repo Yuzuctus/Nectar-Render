@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="640" viewBox="0 0 1600 640" role="img">
+  <title>Le pipeline de Nectar Render</title>
+  <style>
+    .t { font-family: 'IBM Plex Sans'; font-size: 26px; font-weight: 600; fill: #141c17; }
+    .s { font-family: 'IBM Plex Sans'; font-size: 19px; fill: #4b554f; }
+    .k { font-family: 'IBM Plex Mono'; font-size: 15px; font-weight: 500; fill: #4b554f; letter-spacing: 1.5px; }
+    .box { fill: #fbfcf5; stroke: #141c17; stroke-width: 2; }
+    .edge { stroke: #141c17; stroke-width: 2.5; fill: none; marker-end: url(#a); }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#141c17"/>
+    </marker>
+  </defs>
+  <rect width="1600" height="640" fill="#f3f6ea"/>
+  <text x="60" y="70" class="k">NECTAR RENDER · DE LA NOTE AU PDF</text>
+  <line x1="60" y1="88" x2="1540" y2="88" stroke="#141c17" stroke-width="3"/>
+
+  <rect x="60" y="150" width="270" height="130" class="box"/>
+  <rect x="60" y="150" width="8" height="130" fill="#a6e9d1"/>
+  <text x="90" y="200" class="k">OBSIDIAN</text>
+  <text x="90" y="240" class="t">Note .md</text>
+  <text x="90" y="268" class="s">+ images du coffre</text>
+
+  <rect x="430" y="150" width="300" height="130" class="box"/>
+  <text x="460" y="200" class="k">NECTAR-CORE</text>
+  <text x="460" y="240" class="t">Lecture</text>
+  <text x="460" y="268" class="s">comrak + syntaxe Obsidian</text>
+
+  <rect x="830" y="150" width="300" height="130" class="box"/>
+  <text x="860" y="200" class="k">MODÈLE</text>
+  <text x="860" y="240" class="t">Blocs + ids stables</text>
+  <text x="860" y="268" class="s">titre, puce, image…</text>
+
+  <rect x="830" y="400" width="300" height="130" class="box"/>
+  <rect x="830" y="400" width="8" height="130" fill="#f2e285"/>
+  <text x="860" y="450" class="k">.NECTAR/*.JSON</text>
+  <text x="860" y="490" class="t">Retouches</text>
+  <text x="860" y="518" class="s">sauts, formats, images</text>
+
+  <rect x="1230" y="150" width="310" height="130" class="box"/>
+  <text x="1260" y="200" class="k">NECTAR-TYPST</text>
+  <text x="1260" y="240" class="t">Mise en page</text>
+  <text x="1260" y="268" class="s">thème Agrume, Plex</text>
+
+  <rect x="1230" y="400" width="140" height="130" fill="#141c17"/>
+  <text x="1255" y="475" class="t" style="fill:#f3f6ea">PDF</text>
+  <rect x="1400" y="400" width="140" height="130" class="box"/>
+  <text x="1418" y="460" class="t">Aperçu</text>
+  <text x="1418" y="490" class="s">pages</text>
+
+  <path d="M330 215 H425" class="edge"/>
+  <path d="M730 215 H825" class="edge"/>
+  <path d="M1130 215 H1225" class="edge"/>
+  <path d="M980 400 V285" class="edge"/>
+  <path d="M1300 280 V395" class="edge"/>
+  <path d="M1470 280 V395" class="edge"/>
+  <path d="M1470 530 V585 H980 V535" class="edge" stroke-dasharray="8 6"/>
+  <text x="1015" y="612" class="s">clic sur une page → nouvelle retouche</text>
+</svg>

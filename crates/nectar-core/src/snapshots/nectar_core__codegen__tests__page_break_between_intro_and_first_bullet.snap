@@ -1,0 +1,26 @@
+---
+source: crates/nectar-core/src/codegen.rs
+expression: g.source
+---
+#import "/nectar/lib.typ": *
+#import "/nectar/theme.typ": *
+#show: template.with(
+  title: none,
+  subtitle: none,
+  author: none,
+  date: none,
+  lang: "fr",
+  tags: (),
+  page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
+  params: (:),
+)
+
+#nb("p-dcbb4511")
+Phrase qui introduit la liste :
+
+#pagebreak(weak: true)
+#nb("list-a1dc3ea5")
+#list(tight: true,
+  [#nb("li-31cf55bd");première puce],
+  [#nb("li-d9c340cb");deuxième],
+)

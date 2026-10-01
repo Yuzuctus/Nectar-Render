@@ -1,0 +1,32 @@
+---
+source: crates/nectar-core/src/codegen.rs
+expression: g.source
+---
+#import "/nectar/lib.typ": *
+#import "/nectar/theme.typ": *
+#show: template.with(
+  title: none,
+  subtitle: none,
+  author: none,
+  date: none,
+  lang: "fr",
+  tags: (),
+  page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
+  params: (:),
+)
+
+#nb("callout-e8d1580a")
+#callout("tip", title: [Astuce])[
+Corps.
+]
+
+#nb("table-8078f5d7")
+#table(
+  columns: 2,
+  align: (start, end),
+  table.header([a], [b], ),
+  [1], [2], 
+)
+
+#nb("code-9f731f0f")
+#raw(block: true, lang: "rust", "fn main() {}")

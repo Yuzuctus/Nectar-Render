@@ -1,0 +1,30 @@
+---
+source: crates/nectar-core/src/codegen.rs
+expression: g.source
+---
+#import "/nectar/lib.typ": *
+#import "/nectar/theme.typ": *
+#show: template.with(
+  title: none,
+  subtitle: none,
+  author: none,
+  date: none,
+  lang: "fr",
+  tags: (),
+  page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
+  params: (:),
+)
+
+#nb("p-f183c9bd")
+Texte.
+
+#set page(paper: "a3", flipped: true, margin: page-margin)
+#nb("fig-ef0f774f")
+#missing-image("schema.png")
+
+#nb("p-ac7229bd")
+Explication.
+
+#set page(paper: "a4", flipped: false, margin: page-margin)
+#nb("p-c97ffb39")
+Suite normale.

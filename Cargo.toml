@@ -1,0 +1,41 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license-file = "LICENSE"
+repository = "https://github.com/Yuzuctus/Nectar-Render"
+authors = ["Yuzuctus"]
+
+[workspace.dependencies]
+nectar-core = { path = "crates/nectar-core" }
+nectar-typst = { path = "crates/nectar-typst" }
+
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+comrak = { version = "0.55", default-features = false }
+yaml-rust2 = "0.10"
+walkdir = "2"
+strsim = "0.11"
+clap = { version = "4", features = ["derive"] }
+
+typst = "=0.15.1"
+typst-layout = "=0.15.1"
+typst-pdf = "=0.15.1"
+typst-render = "=0.15.1"
+typst-kit = { version = "=0.15.1", default-features = false }
+
+insta = "1"
+tempfile = "3"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,19 @@
+[package]
+name = "nectar-typst"
+description = "Compilation Typst locale : polices, monde virtuel, export PDF et rendu des pages."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+nectar-core.workspace = true
+thiserror.workspace = true
+typst.workspace = true
+typst-layout.workspace = true
+typst-pdf.workspace = true
+typst-render.workspace = true
+typst-kit = { workspace = true, features = ["embedded-fonts", "scan-fonts"] }
+tiny-skia = "0.12"

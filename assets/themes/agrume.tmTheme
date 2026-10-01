@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Agrume : coloration du code avec les couleurs de texte du kit (contraste ≥ 4.5:1 sur #eaeedd). -->
+<plist version="1.0">
+<dict>
+  <key>name</key><string>Agrume</string>
+  <key>settings</key>
+  <array>
+    <dict><key>settings</key><dict>
+      <key>foreground</key><string>#141c17</string>
+      <key>background</key><string>#eaeedd</string>
+    </dict></dict>
+    <dict><key>name</key><string>Commentaires</string>
+      <key>scope</key><string>comment, punctuation.definition.comment</string>
+      <key>settings</key><dict><key>foreground</key><string>#5f6761</string><key>fontStyle</key><string>italic</string></dict></dict>
+    <dict><key>name</key><string>Mots-clés</string>
+      <key>scope</key><string>keyword, storage, keyword.control, storage.type, storage.modifier</string>
+      <key>settings</key><dict><key>foreground</key><string>#0e6b4c</string><key>fontStyle</key><string>bold</string></dict></dict>
+    <dict><key>name</key><string>Chaînes</string>
+      <key>scope</key><string>string, punctuation.definition.string</string>
+      <key>settings</key><dict><key>foreground</key><string>#9e2452</string></dict></dict>
+    <dict><key>name</key><string>Nombres et constantes</string>
+      <key>scope</key><string>constant, constant.numeric, constant.language, support.constant</string>
+      <key>settings</key><dict><key>foreground</key><string>#6b5a00</string></dict></dict>
+    <dict><key>name</key><string>Fonctions et types</string>
+      <key>scope</key><string>entity.name.function, support.function, entity.name.type, support.type, entity.name.class</string>
+      <key>settings</key><dict><key>foreground</key><string>#156b85</string></dict></dict>
+    <dict><key>name</key><string>Balises et attributs</string>
+      <key>scope</key><string>entity.name.tag, entity.other.attribute-name, variable.parameter</string>
+      <key>settings</key><dict><key>foreground</key><string>#4b554f</string></dict></dict>
+    <dict><key>name</key><string>Erreurs</string>
+      <key>scope</key><string>invalid</string>
+      <key>settings</key><dict><key>foreground</key><string>#a52638</string></dict></dict>
+  </array>
+</dict>
+</plist>

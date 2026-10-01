@@ -1,0 +1,19 @@
+---
+source: crates/nectar-core/src/codegen.rs
+expression: g.source
+---
+#import "/nectar/lib.typ": *
+#import "/nectar/theme.typ": *
+#show: template.with(
+  title: none,
+  subtitle: none,
+  author: none,
+  date: none,
+  lang: "fr",
+  tags: (),
+  page: (paper: "a4", flipped: false, width: auto, height: auto, margin: auto),
+  params: (:),
+)
+
+#nb("p-0aeaa113")
+Du #strong[gras];, de l'#emph[italique];, du #raw("code");, un #link("https://ex.com")[lien];, #wikilink[une note];, #highlight[surligné];, #nectar-math("x ^(2 )", block: false); et une note#footnote[Bas de page.];.

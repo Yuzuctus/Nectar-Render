@@ -1,173 +1,83 @@
 # Nectar Render
 
-Desktop application to convert Markdown files to styled PDF and HTML with browser preview, syntax highlighting, and preset themes.
+**Atelier de mise en page pour Obsidian.** Tu écris dans Obsidian ; Nectar transforme la note en PDF soigné, et tu décides à la main où tombent les pages, quel format prend chaque page et comment se placent les images. Tout reste local.
 
-![Python](https://img.shields.io/badge/python-%3E%3D3.10-blue)
-![License](https://img.shields.io/badge/license-PolyForm%20NC%201.0.0-orange)
+> Version 2, réécrite de zéro en Rust. L'ancienne version Python/Tkinter reste dans l'historique de `main` (tag `python-final` à poser).
 
-<!-- ![Screenshot](docs/screenshot.png) -->
+## Ce que ça sait faire aujourd'hui
 
-## Features
+- Lire une note Obsidian : `![[image.png|400]]` cherchée dans tout le coffre, `[[liens]]`, callouts `> [!tip] Titre`, `==surlignage==`, `%%commentaires%%`, ids de bloc `^abc`, notes `[^1]` et `^[en ligne]`, tâches, tableaux, code, maths LaTeX `$…$` / `$$…$$`, frontmatter (titre, auteur, date, tags, langue).
+- Mettre en page avec [Typst](https://typst.app), en local, en ~100 ms : thème **Agrume** (IBM Plex, encre et papier, jaune yuzu), page de garde, numéros de page, PDF balisé (accessible).
+- Appliquer des **retouches** par bloc :
 
-- Convert Markdown to **PDF**, **HTML**, or both in one pass
-- Tkinter GUI with light and dark themes
-- **9 built-in presets**: Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, Elegant
-- Syntax highlighting for code blocks (7+ Pygments themes)
-- Full typography control: fonts, sizes, colors for body, headings (H1-H6), and code
-- Page break markers: `<!-- pagebreak -->`, `\pagebreak`, `[[PAGEBREAK]]`
-- Smart pagination to avoid orphaned headings and split tables
-- Footnotes compatible with PDF rendering (CSS `float: footnote`)
-- Obsidian image embeds: `![[image.png]]`
-- Optional PDF compression via `qpdf`
-- Save and load custom presets
-- Undo/redo for all style changes (Ctrl+Z / Ctrl+Alt+Z)
+| Retouche | Clé JSON | Commentaire dans la note |
+|---|---|---|
+| Nouvelle page avant le bloc | `break_before` | `break-before` / `saut-avant` |
+| Reste de la page vide après le bloc | `break_after` | `break-after` / `saut-apres` |
+| Ne pas séparer du bloc suivant | `keep_with_next` | `keep-with-next` |
+| Pousser en bas de page | `push_to_bottom` | `push-to-bottom` |
+| Masquer à l'export | `hidden` | `hidden` / `masquer` |
+| Espace avant (mm) | `space_before_mm` | `space-before=10` |
+| Format de page à partir d'ici | `page` | `page=a3-paysage`, `page=210x99`, `page=default` |
+| Largeur d'image (% du texte) | `image.width_percent` | `width=60` |
+| Image en haut / bas / pleine page | `image.placement` | `placement=top\|bottom\|full-page` |
+| Légende d'image | `image.caption` | `caption=…` |
+
+Un saut avant une puce coupe la liste en gardant la numérotation. Un saut ou un changement de format posé sur un bloc remonte avant les titres qui le précèdent : un titre ne reste jamais seul en bas de page.
+
+## Où vivent les retouches
+
+Dans `<coffre>/.nectar/<chemin de la note>.json`. Obsidian ignore les dossiers qui commencent par un point : la note reste intacte. Chaque retouche désigne un bloc par un **id stable** tiré de son contenu (`p-8d8700e1`) ; si tu modifies le texte, Nectar retrouve le bloc par ressemblance, sinon il signale la retouche orpheline.
+
+Repli possible directement dans la note, juste avant le bloc :
+
+```markdown
+<!-- nectar: saut-avant, page=a3-paysage -->
+![[schema.png]]
+```
+
+`<!-- pagebreak -->` et `\pagebreak` (ancien Nectar) restent compris.
+
+## Essayer
+
+```powershell
+cargo run --release -p nectar-cli -- export "examples/coffre-demo/Démo Nectar.md" --png out
+```
+
+```text
+nectar export <note.md> [-o sortie.pdf] [--png dossier] [--ppi 110] [--system-fonts]
+nectar blocks <note.md>                  # ids, types, lignes et pages des blocs
+nectar set <note.md> <id> <retouches>    # ex. : nectar set note.md li-8f4c06da break-before
+nectar unset <note.md> <id>
+nectar typst <note.md>                   # la source Typst générée
+```
+
+Le coffre `examples/coffre-demo` montre les trois cas d'origine : saut entre la phrase d'introduction et la première puce, image suivie d'une page vide, grand schéma sur une page A3 paysage au milieu d'un document A4.
 
 ## Architecture
 
-The current codebase is organized in four layers:
-
-- `core/` contains the canonical style and preset models.
-- `application/` contains use cases such as conversion and preview.
-- `adapters/` contains rendering, storage, and runtime integration.
-- `adapters/rendering/` is the canonical Markdown -> HTML -> PDF pipeline.
-- `interfaces/desktop/` contains the Tkinter application, widgets, controllers, and state mapping.
-
-The legacy packages `ui/`, `converter/`, `services/`, `presets.py`, and `style_schema.py` are compatibility shims kept for now so older imports still work. New code should use the canonical layers above.
-
-## Quick Start
-
-### Windows (automated)
-
-```powershell
-.\launch.bat
+```
+crates/
+  nectar-core    lecture Markdown/Obsidian (comrak), modèle de blocs à ids stables,
+                 retouches (.nectar/*.json), génération de la source Typst
+  nectar-typst   monde Typst virtuel et hors ligne, polices embarquées,
+                 export PDF, rendu PNG/RGBA des pages, position des blocs
+  nectar-cli     ligne de commande
+assets/
+  fonts/         IBM Plex (OFL)
+  themes/        thèmes Typst (agrume.typ + coloration du code)
+  typst/         aides communes (lib.typ) et spécifications mitex (LaTeX → Typst)
 ```
 
-This script creates a virtual environment, installs dependencies, and launches the GUI.
+Un thème est un fichier `.typ` qui exporte `template` et `page-margin`, et peut redéfinir les aides de `lib.typ` (`callout`, `wikilink`, `task`…).
 
-### Manual installation
+## Feuille de route
 
-```bash
-python -m venv .venv
-# Windows:
-.\.venv\Scripts\Activate.ps1
-# Linux/macOS:
-source .venv/bin/activate
+1. ~~Cœur + CLI : note Obsidian → PDF, retouches, pages de formats mixtes~~
+2. Atelier `egui` (Windows) : ouvrir une note, aperçu des pages, surveillance du fichier, réglages du thème
+3. Clic sur un bloc dans l'aperçu → retouches, annuler/rétablir
+4. Inclusion de notes `![[note]]`, diagrammes Mermaid, PDF/A, installateur Windows
 
-pip install -e ".[dev]"
-nectar-render
-```
+## Licences
 
-Or run directly:
-
-```bash
-python -m nectar_render.main
-```
-
-## CLI
-
-The CLI is the simplest way to run conversions without opening the desktop app.
-
-```bash
-nectar-render --input examples/sample.md --format pdf
-nectar-render --input examples/sample.md --format html
-nectar-render --input examples/sample.md --format pdf+html --preset Academic
-```
-
-Available options:
-
-- `--input`, `-i`: Markdown input file
-- `--output`, `-o`: Output directory
-- `--format`, `-f`: `pdf`, `html`, or `pdf+html`
-- `--page-size`: `A4`, `Letter`, `Legal`, `A3`, `A5`
-- `--preset`, `-p`: built-in style preset
-- `--no-compression`: disable PDF compression
-
-The CLI uses the same application layer and rendering pipeline as the desktop app.
-
-## Built-in Presets
-
-Academic, Magazine, Corporate, Technical, Minimal, Notebook, Creative, Developer, and Elegant are available out of the box.
-
-## WeasyPrint on Windows
-
-HTML export works out of the box. PDF export requires native GTK/Pango libraries.
-
-The app auto-detects common installation paths:
-
-- `C:\msys64\ucrt64\bin`
-- `C:\msys64\mingw64\bin`
-- `WEASYPRINT_DLL_DIRECTORIES` environment variable
-
-If you see errors like `cannot load library 'libgobject-2.0-0'`, install MSYS2 and Pango:
-
-```powershell
-winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements
-C:\msys64\usr\bin\bash.exe -lc "pacman -S --needed mingw-w64-ucrt-x86_64-pango"
-```
-
-## PDF Compression
-
-`qpdf` is optional but recommended for smaller PDF files:
-
-```powershell
-winget install --id qpdf.qpdf
-```
-
-Two profiles are available: **balanced** (default) and **max**.
-Post-processing is only kept when the resulting PDF does not grow beyond the original file size.
-
-## Example
-
-The repository includes a showcase file:
-
-```
-examples/sample.md
-examples/assets/service-overview.svg
-examples/assets/diagrams/sequence.svg
-```
-
-1. Launch the app
-2. Open `examples/sample.md`
-3. Select **PDF+HTML** format
-4. Click **Convert**
-
-## Desktop Status
-
-The desktop application is the primary interface today. Tkinter-specific code lives under `interfaces/desktop/`.
-
-The older `ui/` package is still present as a compatibility layer during the migration. It should be treated as legacy plumbing, not as the canonical home for new code.
-
-The older `converter/` package is also legacy plumbing now. The active rendering implementation lives under `adapters/rendering/`.
-
-## Tests and Verification
-
-The repository includes unit and integration tests for the parser, renderer, CLI, PDF compression, and state management.
-
-```bash
-pytest -q
-ruff check src tests
-ruff format --check src tests
-```
-
-## Notes
-
-- On Windows, PDF export depends on WeasyPrint and native GTK/Pango libraries.
-- `qpdf` is optional but recommended for smaller PDFs.
-- A future web interface is planned, and the current `core` / `application` split is intended to make that migration simpler.
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Run `pytest` before submitting
-4. Open a pull request
-
-## License
-
-[PolyForm Noncommercial 1.0.0](LICENSE)
-
-You may use, copy, modify, and redistribute this project for noncommercial purposes.
-Commercial use is not permitted without separate permission from the author.
-
-Versions that were already distributed under MIT before this change remain available
-under MIT for those existing copies.
+Code : PolyForm Noncommercial 1.0.0 (`LICENSE`). Polices IBM Plex : SIL OFL 1.1. Spécifications mitex : Apache-2.0.

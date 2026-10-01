@@ -1,43 +1,16 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.so
-*.egg-info/
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-build/
-dist/
-pip-wheel-metadata/
+# Rust
+/target/
+**/*.rs.bk
+*.pending-snap
+*.snap.new
 
-# Virtual environments
-.venv/
-venv/
+# Sorties d'export
+*.pdf
+/out/
 
-# Editors
+# Éditeurs et système
 .vscode/
 .idea/
-
-# Local application state
-.nectar-render/
-
-# Generated outputs
-output/
-examples/output/
-
-# Logs
-*.log
-
-# Temporary preview files
-_style_preview*.html
-
-# OS
 Thumbs.db
 .DS_Store
 desktop.ini
-*.lnk
-.kilo
-*.kilo

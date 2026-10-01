@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "theme": {
+    "name": "agrume"
+  },
+  "page": {
+    "paper": "a4"
+  },
+  "blocks": [
+    {
+      "anchor": {
+        "id": "li-8f4c06da",
+        "kind": "list-item",
+        "excerpt": "Première puce, envoyée en haut de la page suivante par une retouche.",
+        "line": 13
+      },
+      "break_before": true
+    },
+    {
+      "anchor": {
+        "id": "fig-ac7fc788",
+        "kind": "figure",
+        "excerpt": "sequence.svg",
+        "line": 19
+      },
+      "break_after": true
+    },
+    {
+      "anchor": {
+        "id": "fig-ecdcac58",
+        "kind": "figure",
+        "excerpt": "pipeline.svg Le pipeline de Nectar Render, de la note au PDF.",
+        "line": 25
+      },
+      "page": {
+        "paper": "a3",
+        "landscape": true
+      },
+      "image": {
+        "width_percent": 100.0,
+        "placement": "inline"
+      }
+    },
+    {
+      "anchor": {
+        "id": "h-a58e8b04",
+        "kind": "heading",
+        "excerpt": "Retour au format A4",
+        "line": 29
+      },
+      "page": "default"
+    }
+  ]
+}

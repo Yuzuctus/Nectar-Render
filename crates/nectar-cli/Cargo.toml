@@ -1,0 +1,20 @@
+[package]
+name = "nectar-cli"
+description = "Export en ligne de commande : Markdown Obsidian vers PDF."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "nectar"
+path = "src/main.rs"
+
+[dependencies]
+nectar-core.workspace = true
+nectar-typst.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true

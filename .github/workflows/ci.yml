@@ -4,73 +4,25 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-dev.lock
-          pip install -e . --no-deps
-
-      - name: Run tests
-        run: pytest -q -m "not requires_weasyprint"
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements-dev.lock
-          pip install -e . --no-deps
-
-      - name: Lint
-        run: ruff check src/ tests/
-
-      - name: Format check
-        run: ruff format --check src/ tests/
-
-  weasyprint-smoke:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: "3.13"
-
-      - name: Install locked dependencies
-        run: |
-          pip install -r requirements-dev.lock
-          pip install -e . --no-deps
-
-      - name: Install MSYS2 and Pango
-        shell: pwsh
-        run: |
-          winget install --id MSYS2.MSYS2 --accept-package-agreements --accept-source-agreements --silent
-          C:\msys64\usr\bin\bash.exe -lc "pacman -S --noconfirm --needed mingw-w64-ucrt-x86_64-pango"
-
-      - name: Run WeasyPrint smoke test
-        shell: pwsh
-        run: |
-          python -c "from pathlib import Path; from tempfile import TemporaryDirectory; from nectar_render.utils.weasyprint_runtime import prepare_weasyprint_environment; prepare_weasyprint_environment(); from weasyprint import HTML; tmp = TemporaryDirectory(); out = Path(tmp.name) / 'smoke.pdf'; HTML(string='<h1>Nectar Render</h1>').write_pdf(out); assert out.exists() and out.stat().st_size > 0"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+      - name: Export de la démo
+        run: cargo run --release -p nectar-cli -- export "examples/coffre-demo/Démo Nectar.md" -o demo.pdf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demo-pdf
+          path: demo.pdf

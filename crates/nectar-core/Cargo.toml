@@ -1,0 +1,23 @@
+[package]
+name = "nectar-core"
+description = "Modèle de document, lecture Markdown/Obsidian, retouches de mise en page et génération Typst."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+comrak.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+yaml-rust2.workspace = true
+walkdir.workspace = true
+strsim.workspace = true
+mitex = "0.2.4"
+
+[dev-dependencies]
+insta.workspace = true
+tempfile.workspace = true
