@@ -1,0 +1,36 @@
+Nectar Render : version d'essai
+===============================
+
+Rien à installer : tout tourne depuis ce dossier.
+
+1. Lancer nectar-render.exe (l'atelier).
+   Windows peut afficher « Windows a protégé votre ordinateur » : l'exécutable
+   n'est pas signé. Cliquer sur « Informations complémentaires », puis
+   « Exécuter quand même ».
+
+2. Ouvrir une note : bouton « Ouvrir une note… », ou glisser un fichier .md
+   sur la fenêtre. Pour la démo :
+       coffre-demo\Démo Nectar.md
+   On peut aussi ouvrir directement n'importe quelle note de son coffre
+   Obsidian : les images et les retouches sont retrouvées toutes seules.
+
+3. Cliquer sur un bloc dans les pages pour le retoucher (onglet Bloc) ;
+   onglet Style pour le preset et les réglages ; onglet Vérifier pour
+   l'assistant ; « Exporter le PDF » en haut.
+
+   « Démo Nectar (export).pdf » montre le résultat attendu de la démo.
+
+Les retouches sont rangées dans <coffre>\.nectar\ : la note n'est jamais modifiée.
+
+Plugin Obsidian (facultatif)
+----------------------------
+Copier le dossier plugin-obsidian\nectar-render dans
+<ton coffre>\.obsidian\plugins\, puis dans Obsidian : Paramètres > Modules
+complémentaires > activer « Nectar Render ». Dans les paramètres du plugin,
+indiquer le chemin de nectar-render.exe et de nectar.exe de ce dossier
+(par défaut, il les cherche là où l'installateur les mettra).
+
+Ligne de commande
+-----------------
+    nectar.exe export "coffre-demo\Démo Nectar.md" -o demo.pdf
+    nectar.exe check  "coffre-demo\Démo Nectar.md"

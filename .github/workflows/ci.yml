@@ -24,13 +24,25 @@ jobs:
         run: cargo build --release -p nectar-app -p nectar-cli
       - name: Export de la démo
         run: target/release/nectar.exe export "examples/coffre-demo/Démo Nectar.md" -o demo.pdf --system-fonts
+      - name: Plugin Obsidian
+        working-directory: obsidian-plugin
+        run: |
+          npm ci
+          npm run build
+      - name: Dossier à tester
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force essai/plugin-obsidian/nectar-render | Out-Null
+          Copy-Item target/release/nectar-render.exe, target/release/nectar.exe essai/
+          Copy-Item demo.pdf "essai/Démo Nectar (export).pdf"
+          Copy-Item -Recurse examples/coffre-demo essai/coffre-demo
+          Copy-Item obsidian-plugin/main.js, obsidian-plugin/manifest.json essai/plugin-obsidian/nectar-render/
+          Copy-Item packaging/windows/LISEZ-MOI.txt essai/
       - uses: actions/upload-artifact@v4
         with:
           name: nectar-render-windows
-          path: |
-            target/release/nectar-render.exe
-            target/release/nectar.exe
-            demo.pdf
+          path: essai/
+          include-hidden-files: true
 
   plugin-obsidian:
     runs-on: ubuntu-latest
