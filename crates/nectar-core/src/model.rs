@@ -148,6 +148,11 @@ pub enum Node {
     /// Une image seule dans son paragraphe.
     Figure(Image),
     List(List),
+    /// Diagramme décrit en texte (` ```mermaid `), dessiné à la génération.
+    Diagram {
+        lang: String,
+        source: String,
+    },
     Code {
         lang: Option<String>,
         text: String,
@@ -171,6 +176,7 @@ impl Node {
             Node::Figure(_) => BlockKind::Figure,
             Node::List(_) => BlockKind::List,
             Node::Code { .. } => BlockKind::Code,
+            Node::Diagram { .. } => BlockKind::Figure,
             Node::Quote(_) => BlockKind::Quote,
             Node::Callout(_) => BlockKind::Callout,
             Node::Table(_) => BlockKind::Table,
@@ -235,6 +241,8 @@ pub struct Image {
     pub height_px: Option<u32>,
     /// Page d'un PDF inclus (`![[doc.pdf#page=3]]`).
     pub page: Option<u32>,
+    /// Image produite par Nectar (dessin Excalidraw, diagramme) : SVG en mémoire.
+    pub svg: Option<std::sync::Arc<String>>,
 }
 
 /// Contenu en ligne.
@@ -334,7 +342,7 @@ fn push_node_text(node: &Node, out: &mut String) {
                 }
             }
         }
-        Node::Code { text, .. } | Node::Math(text) => out.push_str(text),
+        Node::Code { text, .. } | Node::Math(text) | Node::Diagram { source: text, .. } => out.push_str(text),
         Node::Quote(children) => {
             for child in children {
                 sep(out);

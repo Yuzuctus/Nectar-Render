@@ -86,6 +86,15 @@ fn to_typst(value: &Value, key: &str, fonts: &mut Vec<String>) -> String {
     }
 }
 
+/// Nom de famille réel d'une police (« IBM Plex Sans Condensed » → « IBM Plex Sans »).
+pub(crate) fn family_name(name: &str) -> String {
+    let trimmed = name.trim();
+    match trimmed.to_lowercase().strip_suffix(" condensed") {
+        Some(_) => trimmed[..trimmed.len() - " condensed".len()].to_string(),
+        None => trimmed.to_string(),
+    }
+}
+
 /// `"Georgia"` → `(font: ("Georgia", "Libertinus Serif"), stretch: 100%)`.
 pub(crate) fn font_spec(name: &str) -> String {
     let lower = name.trim().to_lowercase();

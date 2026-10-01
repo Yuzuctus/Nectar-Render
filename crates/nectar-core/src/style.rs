@@ -28,6 +28,7 @@ pub struct Style {
     pub footnotes: FootnoteStyle,
     pub footer: FooterStyle,
     pub cover: CoverStyle,
+    pub diagrams: DiagramStyle,
     /// Fond du `==surlignage==`.
     pub highlight: Color,
     /// Afficher les séparateurs `---`.
@@ -49,9 +50,27 @@ impl Default for Style {
             footnotes: FootnoteStyle::default(),
             footer: FooterStyle::default(),
             cover: CoverStyle::default(),
+            diagrams: DiagramStyle::default(),
             highlight: "#fff3a3".into(),
             rules: true,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiagramStyle {
+    /// Thème Mermaid : `default`, `neutral`, `forest`, `dark`, `base`.
+    pub theme: String,
+    /// Écrire les diagrammes avec la police du texte.
+    pub document_font: bool,
+    /// Taille par rapport à la taille naturelle du diagramme.
+    pub scale: f32,
+}
+
+impl Default for DiagramStyle {
+    fn default() -> Self {
+        Self { theme: "neutral".into(), document_font: true, scale: 1.0 }
     }
 }
 

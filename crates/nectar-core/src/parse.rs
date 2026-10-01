@@ -359,6 +359,9 @@ impl Cx<'_> {
                 if text.ends_with('\n') {
                     text.pop();
                 }
+                if lang.as_deref().is_some_and(|l| l.eq_ignore_ascii_case("mermaid")) {
+                    return Some(Node::Diagram { lang: "mermaid".into(), source: text });
+                }
                 Some(Node::Code { lang, text, title, highlight })
             }
             NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => Some(self.quote(node)),
@@ -567,10 +570,58 @@ impl Cx<'_> {
             let (alt, width, height) = split_size(alias);
             let alt = if alias.is_empty() || width.is_some() { String::new() } else { alt };
             out.push(Inline::Image(self.image(target, alt, width, height, line)));
+        } else if let Some(path) = self.find_note(target).filter(|p| is_drawing_file(p)) {
+            // Dessin Excalidraw : une image comme les autres.
+            let (_, width, height) = split_size(alias);
+            if let Some(mut image) = self.drawing(&path, target, line) {
+                image.width_px = width;
+                image.height_px = height;
+                out.push(Inline::Image(image));
+            }
         } else {
             let label = if alias.is_empty() { wikilink_label(target) } else { alias.to_string() };
             out.push(Inline::Embed { target: target.to_string(), label });
         }
+    }
+
+    /// Le fichier d'une note désignée par `[[nom]]` (avec ou sans `.md`).
+    fn find_note(&self, target: &str) -> Option<std::path::PathBuf> {
+        let name = target.split('#').next().unwrap_or(target).trim();
+        let dir = self.options.note_dir.or(self.options.vault.map(Vault::root)).unwrap_or(Path::new("."));
+        let resolve = |file: &str| match self.options.vault {
+            Some(vault) => vault.resolve(file, dir),
+            None => Vault::at(dir).resolve(file, dir),
+        };
+        let has_ext = Path::new(name).extension().is_some_and(|e| e.eq_ignore_ascii_case("md"));
+        if has_ext { resolve(name) } else { resolve(&format!("{name}.md")).or_else(|| resolve(name)) }
+    }
+
+    /// Un dessin Excalidraw : l'export du plugin s'il est à jour, sinon notre rendu.
+    fn drawing(&mut self, path: &Path, target: &str, line: usize) -> Option<Image> {
+        let dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let vault = self.options.vault;
+        let resolve = |file: &str| match vault {
+            Some(v) => v.resolve(file, &dir),
+            None => Vault::at(&dir).resolve(file, &dir),
+        };
+        let mut image = Image {
+            target: target.to_string(),
+            path: None,
+            alt: String::new(),
+            width_px: None,
+            height_px: None,
+            page: None,
+            svg: None,
+        };
+        match crate::excalidraw::load(path, &resolve) {
+            Ok(crate::excalidraw::Drawing::Exported(file)) => image.path = Some(file),
+            Ok(crate::excalidraw::Drawing::Svg(svg)) => image.svg = Some(std::sync::Arc::new(svg)),
+            Err(e) => {
+                self.warn(line, format!("dessin {target} : {e}"));
+                return None;
+            }
+        }
+        Some(image)
     }
 
     /// Les blocs d'une note incluse (`![[note]]`, `![[note#Titre]]`).
@@ -593,10 +644,22 @@ impl Cx<'_> {
             }
         };
         let dir = self.options.note_dir.unwrap_or(vault.root());
-        let Some(path) = vault.resolve(&file, dir) else {
+        let Some(path) = vault.resolve(&file, dir).or_else(|| vault.resolve(name, dir)) else {
             self.warn(line, format!("note incluse introuvable : {name}"));
             return Vec::new();
         };
+        if is_drawing_file(&path) {
+            return match self.drawing(&path, target, line) {
+                Some(image) => vec![Block {
+                    id: BlockId(String::new()),
+                    line,
+                    excerpt: String::new(),
+                    node: Node::Figure(image),
+                    inline_ops: None,
+                }],
+                None => Vec::new(),
+            };
+        }
         let Ok(text) = std::fs::read_to_string(&path) else {
             self.warn(line, format!("note incluse illisible : {}", path.display()));
             return Vec::new();
@@ -645,7 +708,7 @@ impl Cx<'_> {
             }
         }
         let page = target.split_once("#page=").and_then(|(_, p)| p.trim().parse().ok());
-        Image { target: target.to_string(), path, alt, width_px: width, height_px: height, page }
+        Image { target: target.to_string(), path, alt, width_px: width, height_px: height, page, svg: None }
     }
 }
 
@@ -684,6 +747,13 @@ fn split_size(alt: &str) -> (String, Option<u32>, Option<u32>) {
         Some((w, h)) => (text.to_string(), w, h),
         None => (alt.to_string(), None, None),
     }
+}
+
+/// Un dessin Excalidraw, reconnu à son nom ou à son frontmatter.
+fn is_drawing_file(path: &Path) -> bool {
+    crate::excalidraw::is_drawing(path)
+        || (path.extension().is_some_and(|e| e.eq_ignore_ascii_case("md"))
+            && std::fs::read_to_string(path).is_ok_and(|t| crate::excalidraw::is_drawing_note(&t)))
 }
 
 fn is_image(target: &str) -> bool {

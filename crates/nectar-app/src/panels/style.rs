@@ -225,6 +225,31 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
         });
     });
 
+    section(ui, "Schémas (Mermaid)", false, |ui| {
+        grid(ui, "schemas", |ui| {
+            label(ui, "Thème");
+            choice(
+                ui,
+                "theme-mermaid",
+                &mut s.diagrams.theme,
+                &[
+                    ("neutral".to_string(), "Neutre"),
+                    ("default".to_string(), "Mermaid"),
+                    ("forest".to_string(), "Forêt"),
+                    ("base".to_string(), "Sobre"),
+                    ("dark".to_string(), "Sombre"),
+                ],
+            );
+            ui.end_row();
+            label(ui, "Police du texte");
+            ui.checkbox(&mut s.diagrams.document_font, "Utiliser celle du document");
+            ui.end_row();
+            label(ui, "Taille");
+            ui.add(egui::Slider::new(&mut s.diagrams.scale, 0.4..=2.0).fixed_decimals(2));
+            ui.end_row();
+        });
+    });
+
     section(ui, "Encadrés et citations", false, |ui| {
         grid(ui, "encadres", |ui| {
             label(ui, "Encadrés");

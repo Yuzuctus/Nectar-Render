@@ -37,6 +37,8 @@ const BUNDLED_FONTS: &[&[u8]] = &[
     include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf"),
     include_bytes!("../../../assets/fonts/JetBrainsMono-Italic.ttf"),
     include_bytes!("../../../assets/fonts/Twemoji.ttf"),
+    include_bytes!("../../../assets/fonts/Excalifont-Regular.ttf"),
+    include_bytes!("../../../assets/fonts/Virgil-Regular.ttf"),
 ];
 
 const TEMPLATE: &str = include_str!("../../../assets/typst/nectar.typ");

@@ -31,8 +31,8 @@ pub(crate) struct NectarWorld {
     sources: HashMap<FileId, Source>,
     /// Fichiers binaires embarqués (thème de coloration…).
     embedded: HashMap<FileId, Bytes>,
-    /// Images de la note : chemin virtuel → fichier réel.
-    assets: HashMap<FileId, PathBuf>,
+    /// Images de la note : chemin virtuel → fichier réel ou contenu en mémoire.
+    assets: HashMap<FileId, nectar_core::Asset>,
     /// Images déjà lues, partagées entre compilations.
     cache: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, Bytes)>>>,
 }
@@ -55,7 +55,7 @@ impl NectarWorld {
             sources.insert(id, Source::new(id, (*text).to_string()));
         }
         let embedded = binaries.iter().map(|(path, data)| (file_id(path), Bytes::new(*data))).collect();
-        let assets = assets.iter().map(|a| (file_id(&a.vpath), a.path.clone())).collect();
+        let assets = assets.iter().map(|a| (file_id(&a.vpath), a.clone())).collect();
         Self { library, fonts, main, sources, embedded, assets, cache }
     }
 
@@ -64,7 +64,11 @@ impl NectarWorld {
     }
 
     fn read_asset(&self, id: FileId) -> FileResult<Bytes> {
-        let path = self.assets.get(&id).ok_or_else(|| not_found(id))?;
+        let asset = self.assets.get(&id).ok_or_else(|| not_found(id))?;
+        if let Some(data) = &asset.data {
+            return Ok(Bytes::from_string(data.as_str().to_owned()));
+        }
+        let path = &asset.path;
         let modified = std::fs::metadata(path).and_then(|m| m.modified()).map_err(|e| FileError::from_io(e, path))?;
         let mut cache = self.cache.lock().expect("cache d'images");
         if let Some((stamp, bytes)) = cache.get(path)

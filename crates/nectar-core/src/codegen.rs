@@ -18,6 +18,8 @@ use crate::style::Style;
 pub struct Asset {
     pub vpath: String,
     pub path: PathBuf,
+    /// Contenu produit en mémoire (SVG d'un diagramme), sinon lu sur `path`.
+    pub data: Option<std::sync::Arc<String>>,
 }
 
 /// Résultat de la génération.
@@ -183,6 +185,7 @@ impl Gen<'_> {
                 None
             }
             Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
+            Node::Diagram { lang, source } => Some(self.diagram(lang, source, ops.image.as_ref())),
             node @ Node::Heading { .. } => {
                 // Étiquette pour les liens internes `[[#Titre]]`.
                 Some(format!("{} <nectar-h-{}>", self.node(node), heading_label.unwrap_or_default()))
@@ -309,6 +312,7 @@ impl Gen<'_> {
             }
             Node::Paragraph(content) => self.inlines(content),
             Node::Figure(image) => self.figure(image, None),
+            Node::Diagram { lang, source } => self.diagram(lang, source, None),
             Node::List(list) => {
                 let items: Vec<&ListItem> = list.items.iter().collect();
                 self.list_markup(list, &items, list.start)
@@ -370,11 +374,50 @@ impl Gen<'_> {
         out
     }
 
+    /// Diagramme Mermaid dessiné en SVG, puis placé comme une image.
+    fn diagram(&mut self, lang: &str, source: &str, ops: Option<&crate::layout::ImageOps>) -> String {
+        let d = &self.style.diagrams;
+        let mut theme = mermaid_svg::Theme::by_name(&d.theme).unwrap_or_else(mermaid_svg::Theme::neutral);
+        if d.document_font {
+            let family = crate::typst_style::family_name(&self.style.text.font);
+            theme = theme.with_font(format!("{family}, sans-serif"));
+        }
+        match mermaid_svg::render_with(source, &theme) {
+            Ok(svg) => {
+                let image = Image {
+                    target: format!("{lang}.svg"),
+                    path: None,
+                    alt: String::new(),
+                    width_px: None,
+                    height_px: None,
+                    page: None,
+                    svg: Some(std::sync::Arc::new(svg)),
+                };
+                let mut figure = self.figure(&image, ops);
+                // Un diagramme se lit à sa taille naturelle (et non à 75 %).
+                figure.insert_str(figure.len() - 1, &format!(", scale: {}", num(d.scale)));
+                figure
+            }
+            Err(error) => {
+                self.warnings.push(format!("diagramme {lang} non dessiné : {error}"));
+                self.node(&Node::Code {
+                    lang: Some(lang.to_string()),
+                    text: source.to_string(),
+                    title: None,
+                    highlight: Vec::new(),
+                })
+            }
+        }
+    }
+
     fn figure(&mut self, image: &Image, ops: Option<&crate::layout::ImageOps>) -> String {
-        let Some(path) = &image.path else {
-            return format!("#missing-image({})", string(&image.target));
+        let vpath = match (&image.path, &image.svg) {
+            (_, Some(svg)) => self.memory_asset(svg),
+            (Some(path), None) => self.asset(path),
+            (None, None) => return format!("#missing-image({})", string(&image.target)),
         };
-        let vpath = self.asset(path);
+        let path = image.path.clone().unwrap_or_default();
+        let path = &path;
         let caption =
             ops.and_then(|o| o.caption.clone()).or_else(|| Some(image.alt.clone())).filter(|c| !c.trim().is_empty());
         let mut args = vec![string(&vpath)];
@@ -431,8 +474,15 @@ impl Gen<'_> {
                 })
                 .collect();
         let vpath = format!("/assets/{:04}-{safe}", self.assets.len() + 1);
-        self.assets.push(Asset { vpath: vpath.clone(), path: path.to_path_buf() });
+        self.assets.push(Asset { vpath: vpath.clone(), path: path.to_path_buf(), data: None });
         self.asset_ids.insert(path.to_path_buf(), vpath.clone());
+        vpath
+    }
+
+    /// Fichier produit en mémoire (SVG d'un dessin ou d'un diagramme).
+    fn memory_asset(&mut self, svg: &std::sync::Arc<String>) -> String {
+        let vpath = format!("/assets/{:04}-dessin.svg", self.assets.len() + 1);
+        self.assets.push(Asset { vpath: vpath.clone(), path: PathBuf::new(), data: Some(svg.clone()) });
         vpath
     }
 
@@ -491,9 +541,17 @@ impl Gen<'_> {
                     }
                     None => wrap(&mut out, "wikilink", &escape(label)),
                 },
-                Inline::Image(image) => match &image.path {
-                    Some(path) => {
-                        let vpath = self.asset(path);
+                Inline::Image(image) => match image
+                    .path
+                    .as_ref()
+                    .map(|p| (p.clone(), None))
+                    .or(image.svg.as_ref().map(|s| (PathBuf::new(), Some(s.clone()))))
+                {
+                    Some((path, svg)) => {
+                        let vpath = match svg {
+                            Some(svg) => self.memory_asset(&svg),
+                            None => self.asset(&path),
+                        };
                         let width = image.width_px.map(|w| format!(", width-px: {w}")).unwrap_or_default();
                         let page = image.page.map(|p| format!(", page: {p}")).unwrap_or_default();
                         let _ = write!(out, "#box(nectar-image({}{width}{page}, inline: true));", string(&vpath));

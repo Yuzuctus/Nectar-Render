@@ -17,6 +17,9 @@ yaml-rust2.workspace = true
 walkdir.workspace = true
 strsim.workspace = true
 mitex = "0.2.4"
+mermaid-svg = "0.7"
+lz-str = "0.2"
+base64 = "0.22"
 
 [dev-dependencies]
 insta.workspace = true

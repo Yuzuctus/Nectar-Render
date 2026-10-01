@@ -26,6 +26,23 @@ Cette description vient après l'image. Une retouche « saut après » laisse le
 
 Le schéma ci-dessus est posé sur une page **A3 paysage** au milieu d'un document A4 : il garde sa taille réelle et reste lisible. L'explication suit sur la même page, ou sur la suivante si la place manque.
 
+## Schémas : Excalidraw et Mermaid
+
+Un dessin Excalidraw du coffre, redessiné par Nectar avec son trait à main levée :
+
+![[Atelier.excalidraw]]
+
+Et un diagramme Mermaid, écrit en texte dans la note :
+
+```mermaid
+flowchart LR
+    A[Note .md] --> B{Bloc retouché ?}
+    B -->|oui| C[Retouche appliquée]
+    B -->|non| D[Placement automatique]
+    C --> E[(PDF)]
+    D --> E
+```
+
 ## Retour au format A4
 
 Ce titre porte la retouche « format par défaut » : le document repart en A4 portrait.

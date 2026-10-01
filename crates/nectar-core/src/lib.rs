@@ -7,6 +7,7 @@
 pub mod code_themes;
 pub mod codegen;
 pub mod directives;
+pub mod excalidraw;
 pub mod frontmatter;
 mod html;
 pub mod ids;
