@@ -16,6 +16,7 @@ use crate::theme::{self, kicker};
 use crate::worker::{CheckInputs, Layouted, Request, Response, Worker};
 
 const LAST_NOTE: &str = "derniere-note";
+const RECENTS: &str = "notes-recentes";
 const ZOOMS: &[f32] = &[0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,8 @@ pub struct NectarApp {
     pub save_preset_dialog: Option<String>,
     show_warnings: bool,
     launch_select: Option<String>,
+    /// Notes ouvertes récemment (la plus récente d'abord).
+    recents: Vec<PathBuf>,
 }
 
 impl NectarApp {
@@ -97,6 +100,11 @@ impl NectarApp {
             save_preset_dialog: None,
             show_warnings: false,
             launch_select: launch.select,
+            recents: cc
+                .storage
+                .and_then(|s| s.get_string(RECENTS))
+                .map(|list| list.lines().map(PathBuf::from).filter(|p| p.is_file()).collect())
+                .unwrap_or_default(),
         };
         let remembered = cc.storage.and_then(|s| s.get_string(LAST_NOTE)).map(PathBuf::from).filter(|p| p.is_file());
         if let Some(note) = launch.note.or(remembered) {
@@ -112,6 +120,9 @@ impl NectarApp {
         match Project::open(note) {
             Ok(project) => {
                 self.watch(&project, ctx);
+                self.recents.retain(|p| p != &project.note);
+                self.recents.insert(0, project.note.clone());
+                self.recents.truncate(10);
                 self.project = Some(project);
                 self.undo.clear();
                 self.redo.clear();
@@ -380,6 +391,29 @@ impl NectarApp {
         if pressed(Modifiers::COMMAND, Key::O) {
             self.pick_and_open(ctx);
         }
+        // Flèches haut/bas : bloc précédent ou suivant.
+        if !ctx.egui_wants_keyboard_input() && self.project.is_some() {
+            let step = if pressed(Modifiers::NONE, Key::ArrowDown) {
+                1
+            } else if pressed(Modifiers::NONE, Key::ArrowUp) {
+                -1
+            } else {
+                0
+            };
+            if step != 0
+                && let Some(project) = &self.project
+            {
+                let ids: Vec<BlockId> = project.document.anchors().into_iter().map(|a| a.id.clone()).collect();
+                let current = self.selected.as_ref().and_then(|s| ids.iter().position(|i| i == s));
+                let next = match current {
+                    Some(i) => (i as isize + step).clamp(0, ids.len() as isize - 1) as usize,
+                    None => 0,
+                };
+                if let Some(id) = ids.get(next).cloned() {
+                    self.select(Some(id), true);
+                }
+            }
+        }
         if pressed(Modifiers::COMMAND, Key::E) {
             self.export();
         }
@@ -434,6 +468,19 @@ impl NectarApp {
                     if ui.button("Ouvrir…").on_hover_text("Ctrl+O").clicked() {
                         self.pick_and_open(&ctx);
                     }
+                    let recents = self.recents.clone();
+                    ui.add_enabled_ui(!recents.is_empty(), |ui| {
+                        ui.menu_button("Récents", |ui| {
+                            for path in &recents {
+                                let name =
+                                    path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+                                if ui.button(name).on_hover_text(path.display().to_string()).clicked() {
+                                    self.open(path, &ctx);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                     let can_export = self.rendered.as_ref().is_some_and(|r| !r.pages.is_empty());
                     let export = egui::Button::new(RichText::new("Exporter le PDF").color(t.paper)).fill(t.ink);
                     if ui.add_enabled(can_export, export).on_hover_text("Ctrl+E").clicked() {
@@ -730,6 +777,17 @@ impl eframe::App for NectarApp {
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
             }
+            if let Some((id, width)) = action.resize
+                && let Some(project) = &self.project
+                && let Some(anchor) = project.document.anchors().into_iter().find(|a| *a.id == id)
+            {
+                let (kind, line, excerpt) = (anchor.kind, anchor.line, anchor.excerpt.to_string());
+                let mut ops = project.layout.ops_for(&project.document, &id);
+                ops.image.get_or_insert_with(Default::default).width_percent = Some(width);
+                self.edit_layout(&ctx, move |layout| {
+                    *layout.ops_mut(nectar_core::model::AnchorInfo { id: &id, kind, line, excerpt: &excerpt }) = ops;
+                });
+            }
             self.request_pages(&ctx, &action.visible);
         });
 
@@ -740,6 +798,8 @@ impl eframe::App for NectarApp {
             && let Some(storage) = _frame.storage_mut()
         {
             storage.set_string(LAST_NOTE, project.note.display().to_string());
+            let list: Vec<String> = self.recents.iter().map(|p| p.display().to_string()).collect();
+            storage.set_string(RECENTS, list.join("\n"));
         }
     }
 }

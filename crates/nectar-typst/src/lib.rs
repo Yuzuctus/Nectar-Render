@@ -168,6 +168,14 @@ pub struct BlockPosition {
     pub y: f64,
 }
 
+/// Boîte occupée par un bloc sur une page (points : gauche, haut, droite, bas).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockBox {
+    pub id: BlockId,
+    pub page: usize,
+    pub rect: [f64; 4],
+}
+
 /// Métadonnées et options de l'export PDF.
 #[derive(Debug, Clone, Default)]
 pub struct PdfOptions {
@@ -234,6 +242,37 @@ impl Compiled {
                 nectar_core::assistant::PageMetrics { width: size.x.to_pt(), height: size.y.to_pt(), content: extent }
             })
             .collect()
+    }
+
+    /// Boîte réelle de chaque bloc sur chaque page : l'union des éléments
+    /// dessinés entre son marqueur et le suivant (pied de page exclu).
+    pub fn block_boxes(&self, margin_bottom_pt: f64) -> Vec<BlockBox> {
+        let positions = self.block_positions();
+        let mut boxes: Vec<BlockBox> = Vec::new();
+        for (page_index, page) in self.document.pages().iter().enumerate() {
+            let cutoff = page.frame.size().y.to_pt() - margin_bottom_pt + 1.0;
+            let mut rects = Vec::new();
+            collect(&page.frame, typst::layout::Point::zero(), cutoff, &mut rects);
+            for rect in rects {
+                let owner = positions
+                    .iter()
+                    .rfind(|p| p.page < page_index || (p.page == page_index && p.y <= rect[1] + 2.0))
+                    .or_else(|| positions.iter().find(|p| p.page == page_index));
+                let Some(owner) = owner else { continue };
+                match boxes.iter_mut().find(|b| b.id == owner.id && b.page == page_index) {
+                    Some(b) => {
+                        b.rect = [
+                            b.rect[0].min(rect[0]),
+                            b.rect[1].min(rect[1]),
+                            b.rect[2].max(rect[2]),
+                            b.rect[3].max(rect[3]),
+                        ]
+                    }
+                    None => boxes.push(BlockBox { id: owner.id.clone(), page: page_index, rect }),
+                }
+            }
+        }
+        boxes
     }
 
     /// Remarques laissées par le template (`<nectar-issue>`), avec leur place.
@@ -317,6 +356,35 @@ pub fn inspect(
         warnings: &warnings,
         missing_fonts,
     })
+}
+
+/// Rectangles des éléments visibles d'un cadre, au-dessus de `cutoff`.
+fn collect(frame: &typst::layout::Frame, offset: typst::layout::Point, cutoff: f64, out: &mut Vec<[f64; 4]>) {
+    use typst::layout::FrameItem;
+    for (pos, item) in frame.items() {
+        let p = offset + *pos;
+        let (x, y) = (p.x.to_pt(), p.y.to_pt());
+        let rect = match item {
+            FrameItem::Group(group) => {
+                let shifted = typst::layout::Point::new(p.x + group.transform.tx, p.y + group.transform.ty);
+                collect(&group.frame, shifted, cutoff, out);
+                continue;
+            }
+            FrameItem::Text(text) => {
+                let size = text.size.to_pt();
+                [x, y - size * 0.8, x + text.width().to_pt(), y + size * 0.25]
+            }
+            FrameItem::Shape(shape, _) => {
+                let bbox = shape.bbox(true);
+                [x + bbox.min.x.to_pt(), y + bbox.min.y.to_pt(), x + bbox.max.x.to_pt(), y + bbox.max.y.to_pt()]
+            }
+            FrameItem::Image(_, size, _) => [x, y, x + size.x.to_pt(), y + size.y.to_pt()],
+            _ => continue,
+        };
+        if rect[1] < cutoff {
+            out.push(rect);
+        }
+    }
 }
 
 /// Parcourt un cadre et agrandit l'étendue avec chaque élément visible

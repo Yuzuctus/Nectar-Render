@@ -1,7 +1,9 @@
 //! Les retouches du bloc sélectionné : sauts, format de page, image.
 
 use eframe::egui::{self, FontId, RichText};
-use nectar_core::layout::{BlockOps, DefaultPage, HAlign, ImageOps, PageChange, PageSpec, Placement};
+use nectar_core::layout::{
+    BlockOps, BlockStyle, DefaultPage, HAlign, ImageOps, PageChange, PageSpec, Placement, TableOps, TextAlign,
+};
 use nectar_core::model::{AnchorInfo, BlockKind, Node};
 
 use super::widgets::{self, choice, grid, label, section};
@@ -45,6 +47,18 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let is_figure =
         project.document.blocks.iter().any(|b| b.id == id && matches!(b.node, Node::Figure(_) | Node::Diagram { .. }));
     let inline_ops = project.document.blocks.iter().find(|b| b.id == id).and_then(|b| b.inline_ops.clone());
+    let table_columns = project.document.blocks.iter().find(|b| b.id == id).and_then(|b| match &b.node {
+        Node::Table(t) => Some(
+            (0..t.align.len().max(t.header.len()))
+                .map(|i| t.header.get(i).map(|c| nectar_core::model::plain_text(c)).unwrap_or_default())
+                .collect::<Vec<String>>(),
+        ),
+        _ => None,
+    });
+    let heading_level = project.document.blocks.iter().find(|b| b.id == id).and_then(|b| match &b.node {
+        Node::Heading { level, .. } => Some(*level),
+        _ => None,
+    });
     let current: BlockOps = project.layout.ops_for(&project.document, &id);
     let position = app.rendered.as_ref().and_then(|r| r.positions.iter().find(|p| p.id == id)).map(|p| p.page + 1);
 
@@ -199,11 +213,184 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         });
     }
 
+    if kind != BlockKind::ListItem && !is_figure {
+        section(ui, "Apparence", false, |ui| {
+            let style = ops.style.get_or_insert_with(BlockStyle::default);
+            grid(ui, "apparence", |ui| {
+                label(ui, "Alignement");
+                let mut align = style.align;
+                choice(
+                    ui,
+                    "align-bloc",
+                    &mut align,
+                    &[
+                        (None, "Comme le document"),
+                        (Some(TextAlign::Left), "À gauche"),
+                        (Some(TextAlign::Center), "Centré"),
+                        (Some(TextAlign::Right), "À droite"),
+                        (Some(TextAlign::Justify), "Justifié"),
+                    ],
+                );
+                style.align = align;
+                ui.end_row();
+                if heading_level.is_none() {
+                    label(ui, "Taille du texte");
+                    ui.horizontal(|ui| {
+                        let mut own = style.size_percent.is_some();
+                        if ui.checkbox(&mut own, "").changed() {
+                            style.size_percent = own.then_some(100.0);
+                        }
+                        if let Some(size) = &mut style.size_percent {
+                            ui.add(egui::Slider::new(size, 50.0..=200.0).suffix(" %").integer());
+                        }
+                    });
+                    ui.end_row();
+                    label(ui, "Couleur du texte");
+                    let fallback = "#1f2328".to_string();
+                    widgets::optional_color(ui, &mut style.color, &fallback);
+                    ui.end_row();
+                    label(ui, "Style");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut style.bold, "gras");
+                        ui.checkbox(&mut style.italic, "italique");
+                    });
+                    ui.end_row();
+                }
+                label(ui, "Fond");
+                ui.horizontal(|ui| {
+                    let mut own = style.background.is_some();
+                    if ui.checkbox(&mut own, "").changed() {
+                        style.background = own.then(|| "#f6f8fa".to_string());
+                    }
+                    if let Some(bg) = &mut style.background {
+                        widgets::color(ui, bg);
+                    }
+                });
+                ui.end_row();
+                label(ui, "Cadre");
+                ui.checkbox(&mut style.border, "Filet fin autour du bloc");
+                ui.end_row();
+                label(ui, "Retrait à gauche");
+                ui.horizontal(|ui| {
+                    let mut own = style.indent_mm.is_some();
+                    if ui.checkbox(&mut own, "").changed() {
+                        style.indent_mm = own.then_some(10.0);
+                    }
+                    if let Some(mm) = &mut style.indent_mm {
+                        widgets::number(ui, mm, 0.0..=80.0, 0.5, " mm");
+                    }
+                });
+                ui.end_row();
+                if matches!(kind, BlockKind::Paragraph | BlockKind::List) {
+                    label(ui, "Colonnes");
+                    let mut columns = style.columns.unwrap_or(1);
+                    choice(ui, "colonnes", &mut columns, &[(1, "Une"), (2, "Deux"), (3, "Trois")]);
+                    style.columns = (columns > 1).then_some(columns);
+                    ui.end_row();
+                }
+            });
+            if style == &BlockStyle::default() {
+                ops.style = None;
+            }
+        });
+    }
+
+    if let Some(headers) = &table_columns {
+        section(ui, "Colonnes du tableau", true, |ui| {
+            let table = ops.table.get_or_insert_with(TableOps::default);
+            table.widths.resize(headers.len(), 0.0);
+            table.align.resize(headers.len(), None);
+            grid(ui, "colonnes-tableau", |ui| {
+                for (i, header) in headers.iter().enumerate() {
+                    let name = if header.is_empty() { format!("Colonne {}", i + 1) } else { header.clone() };
+                    label(ui, &name);
+                    ui.horizontal(|ui| {
+                        let mut fixed = table.widths[i] > 0.0;
+                        if ui.checkbox(&mut fixed, "").on_hover_text("Largeur relative (sinon automatique)").changed() {
+                            table.widths[i] = if fixed { 1.0 } else { 0.0 };
+                        }
+                        if fixed {
+                            ui.add(
+                                egui::DragValue::new(&mut table.widths[i])
+                                    .range(0.2..=10.0)
+                                    .speed(0.05)
+                                    .suffix(" part"),
+                            );
+                        } else {
+                            ui.label(RichText::new("auto").color(t.faint));
+                        }
+                        let mut align = table.align[i];
+                        choice(
+                            ui,
+                            &format!("align-col-{i}"),
+                            &mut align,
+                            &[
+                                (None, "—"),
+                                (Some(HAlign::Left), "Gauche"),
+                                (Some(HAlign::Center), "Centre"),
+                                (Some(HAlign::Right), "Droite"),
+                            ],
+                        );
+                        table.align[i] = align;
+                    });
+                    ui.end_row();
+                }
+            });
+            if table.widths.iter().all(|w| *w <= 0.0) && table.align.iter().all(Option::is_none) {
+                ops.table = None;
+            }
+        });
+    }
+
     section(ui, "Export", false, |ui| {
         ui.checkbox(&mut ops.hidden, "Masquer ce bloc dans le PDF");
     });
 
     ui.add_space(8.0);
+    if let Some(level) = heading_level {
+        let label = format!("Appliquer ces retouches à tous les titres de niveau {level}");
+        if ui.button(label).on_hover_text("Sauts, espace, format de page et apparence").clicked() {
+            let model = ops.clone();
+            let targets: Vec<(nectar_core::BlockId, usize, String)> = app
+                .project
+                .as_ref()
+                .map(|p| {
+                    p.document
+                        .blocks
+                        .iter()
+                        .filter(|b| matches!(b.node, Node::Heading { level: l, .. } if l == level))
+                        .map(|b| (b.id.clone(), b.line, b.excerpt.clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let count = targets.len();
+            app.edit_layout(&ctx, move |layout| {
+                for (id, line, excerpt) in &targets {
+                    let ops = layout.ops_mut(AnchorInfo { id, kind: BlockKind::Heading, line: *line, excerpt });
+                    ops.break_before = model.break_before;
+                    ops.break_after = model.break_after;
+                    ops.space_before_mm = model.space_before_mm;
+                    ops.keep_with_next = model.keep_with_next;
+                    ops.style = model.style.clone();
+                }
+            });
+            app.notify(format!("Retouches appliquées à {count} titres"), false);
+            return;
+        }
+    }
+    if ui.button("Ouvrir la note dans Obsidian").clicked()
+        && let Some(project) = &app.project
+    {
+        let path = project.note.display().to_string().replace('\\', "/");
+        let encoded: String = path
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect();
+        ctx.open_url(egui::OpenUrl::new_tab(format!("obsidian://open?path={encoded}")));
+    }
     let clear = ui.add_enabled(!current.is_empty(), egui::Button::new("Effacer les retouches de ce bloc"));
     if clear.clicked() {
         ops = BlockOps::default();

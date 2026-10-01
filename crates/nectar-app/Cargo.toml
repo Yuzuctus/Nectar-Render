@@ -16,6 +16,6 @@ path = "src/main.rs"
 nectar-core.workspace = true
 nectar-typst.workspace = true
 serde_json.workspace = true
-eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "x11", "wayland"] }
+eframe = { version = "0.36", default-features = false, features = ["accesskit", "default_fonts", "glow", "links", "persistence", "x11", "wayland"] }
 rfd = "0.17"
 notify = "8"

@@ -74,6 +74,8 @@ pub struct Layouted {
     pub missing_fonts: Vec<String>,
     /// Remarques de l'assistant de mise en page.
     pub issues: Vec<nectar_core::assistant::Issue>,
+    /// Boîte réelle de chaque bloc, page par page.
+    pub boxes: Vec<nectar_typst::BlockBox>,
     /// Erreur de compilation : la mise en page précédente reste affichée.
     pub error: Option<String>,
     pub millis: u128,
@@ -146,6 +148,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         })
                         .collect(),
                     positions: compiled.block_positions(),
+                    boxes: compiled.block_boxes(f64::from(check.style.page.margin_bottom_mm) * 72.0 / 25.4),
                     warnings: generated.warnings.iter().chain(&compiled.warnings).cloned().collect(),
                     issues: nectar_typst::inspect(
                         compiled,
@@ -163,6 +166,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                     generation,
                     pages: Vec::new(),
                     positions: Vec::new(),
+                    boxes: Vec::new(),
                     warnings: generated.warnings.clone(),
                     issues: Vec::new(),
                     missing_fonts,

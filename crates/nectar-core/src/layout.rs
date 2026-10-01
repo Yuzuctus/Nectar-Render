@@ -253,6 +253,62 @@ pub struct BlockOps {
     /// Réglages d'une image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageOps>,
+    /// Apparence propre à ce bloc (alignement, taille, couleurs, cadre…).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub style: Option<BlockStyle>,
+    /// Colonnes d'un tableau réglées à la main.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableOps>,
+}
+
+/// Apparence d'un bloc, par-dessus le style du document.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BlockStyle {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub align: Option<TextAlign>,
+    /// Taille du texte en pourcentage de la taille normale.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_percent: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Fond (le bloc devient un encadré).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<String>,
+    /// Cadre fin autour du bloc.
+    #[serde(skip_serializing_if = "is_false")]
+    pub border: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub italic: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub bold: bool,
+    /// Retrait à gauche, en millimètres.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_mm: Option<f32>,
+    /// Texte sur plusieurs colonnes (2 ou 3).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub columns: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    Left,
+    Center,
+    Right,
+    Justify,
+}
+
+/// Colonnes d'un tableau.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TableOps {
+    /// Largeur relative de chaque colonne (0 = automatique).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub widths: Vec<f32>,
+    /// Alignement de chaque colonne (`None` = celui de la note).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub align: Vec<Option<HAlign>>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -282,6 +338,12 @@ impl BlockOps {
         }
         if let Some(image) = &other.image {
             self.image = Some(image.clone());
+        }
+        if let Some(style) = &other.style {
+            self.style = Some(style.clone());
+        }
+        if let Some(table) = &other.table {
+            self.table = Some(table.clone());
         }
     }
 }

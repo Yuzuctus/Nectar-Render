@@ -9,13 +9,13 @@
 //! Le commentaire s'applique au bloc qui le suit. `<!-- pagebreak -->`
 //! (syntaxe de l'ancien Nectar Render) vaut `break-before`.
 
-use crate::layout::{BlockOps, DefaultPage, HAlign, ImageOps, PageChange, PageSpec, Placement};
+use crate::layout::{BlockOps, BlockStyle, DefaultPage, HAlign, ImageOps, PageChange, PageSpec, Placement, TextAlign};
 
 #[derive(Debug, PartialEq)]
 pub enum DirectiveLine {
     /// Ce n'est pas une directive Nectar.
     None,
-    Ops(BlockOps),
+    Ops(Box<BlockOps>),
     Invalid(String),
 }
 
@@ -26,11 +26,11 @@ pub fn parse_html(html: &str) -> DirectiveLine {
     };
     let inner = inner.trim();
     if inner.eq_ignore_ascii_case("pagebreak") || inner.eq_ignore_ascii_case("page-break") {
-        return DirectiveLine::Ops(BlockOps { break_before: true, ..BlockOps::default() });
+        return DirectiveLine::Ops(Box::new(BlockOps { break_before: true, ..BlockOps::default() }));
     }
     let Some(body) = inner.strip_prefix("nectar:") else { return DirectiveLine::None };
     match parse_ops(body) {
-        Ok(ops) => DirectiveLine::Ops(ops),
+        Ok(ops) => DirectiveLine::Ops(Box::new(ops)),
         Err(message) => DirectiveLine::Invalid(message),
     }
 }
@@ -81,6 +81,10 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
                     _ => return Err(format!("placement inconnu : {v}")),
                 };
             }
+            ("center" | "centre" | "centrer", None) => style(&mut ops).align = Some(TextAlign::Center),
+            ("right" | "droite", None) => style(&mut ops).align = Some(TextAlign::Right),
+            ("columns" | "colonnes", v) => style(&mut ops).columns = Some(number(v)? as u8),
+            ("size" | "taille", v) => style(&mut ops).size_percent = Some(number(v)?),
             ("caption" | "legende" | "légende", Some(v)) => {
                 image(&mut ops).caption = Some(v.trim_matches('"').to_string());
             }
@@ -88,6 +92,10 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
         }
     }
     Ok(ops)
+}
+
+fn style(ops: &mut BlockOps) -> &mut BlockStyle {
+    ops.style.get_or_insert_with(BlockStyle::default)
 }
 
 fn image(ops: &mut BlockOps) -> &mut ImageOps {

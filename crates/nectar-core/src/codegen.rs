@@ -194,12 +194,15 @@ impl Gen<'_> {
                 let start = self.out.len();
                 self.top_list(list, first_item_done);
                 let item_ops = list.items.iter().any(|i| i.id.as_ref().is_some_and(|id| self.ops.contains_key(id)));
-                if (sticky || unbreakable) && !item_ops {
+                let keep = !item_ops && (sticky || unbreakable);
+                if keep || ops.style.is_some() {
                     let inner = self.out.split_off(start);
-                    let _ = writeln!(self.out, "#block(sticky: {sticky}, breakable: {})[\n{}]", !unbreakable, inner);
+                    let wrapped = wrap_block(&inner, keep && sticky, keep && unbreakable, ops.style.as_ref());
+                    self.out.push_str(&wrapped);
                 }
                 None
             }
+            Node::Table(table) => Some(self.table(table, ops.table.as_ref())),
             Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
             Node::Diagram { lang, source } => Some(self.diagram(lang, source, ops.image.as_ref())),
             node @ Node::Heading { .. } => {
@@ -209,10 +212,9 @@ impl Gen<'_> {
             node => Some(self.node(node)),
         };
         if let Some(body) = body {
-            if sticky || unbreakable {
-                let _ = writeln!(self.out, "#block(sticky: {sticky}, breakable: {})[\n{body}\n]", !unbreakable);
-            } else {
-                self.out.push_str(&body);
+            let wrapped = wrap_block(&body, sticky, unbreakable, ops.style.as_ref());
+            self.out.push_str(&wrapped);
+            if !wrapped.ends_with('\n') {
                 self.out.push('\n');
             }
         }
@@ -347,7 +349,7 @@ impl Gen<'_> {
                 };
                 format!("#callout({}, title: {title})[\n{}\n]", string(&callout.kind), self.nodes(&callout.body))
             }
-            Node::Table(table) => self.table(table),
+            Node::Table(table) => self.table(table, None),
             Node::Math(latex) => self.math(latex, true),
             Node::Rule => "#nectar-rule()".into(),
         }
@@ -357,17 +359,36 @@ impl Gen<'_> {
         nodes.iter().map(|n| self.node(n)).collect::<Vec<_>>().join("\n\n")
     }
 
-    fn table(&mut self, table: &Table) -> String {
+    fn table(&mut self, table: &Table, ops: Option<&crate::layout::TableOps>) -> String {
         let columns = table.align.len().max(table.header.len()).max(1);
         let align: Vec<&str> = (0..columns)
-            .map(|i| match table.align.get(i).copied().unwrap_or(Align::Auto) {
-                Align::Auto | Align::Left => "start",
-                Align::Center => "center",
-                Align::Right => "end",
+            .map(|i| {
+                let manual = ops.and_then(|o| o.align.get(i).copied().flatten());
+                match manual {
+                    Some(HAlign::Left) => "start",
+                    Some(HAlign::Center) => "center",
+                    Some(HAlign::Right) => "end",
+                    None => match table.align.get(i).copied().unwrap_or(Align::Auto) {
+                        Align::Auto | Align::Left => "start",
+                        Align::Center => "center",
+                        Align::Right => "end",
+                    },
+                }
             })
             .collect();
+        let widths = match ops.filter(|o| o.widths.iter().any(|w| *w > 0.0)) {
+            Some(o) => array(
+                &(0..columns)
+                    .map(|i| match o.widths.get(i).copied().unwrap_or(0.0) {
+                        w if w > 0.0 => format!("{}fr", num(w)),
+                        _ => "auto".into(),
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+            None => columns.to_string(),
+        };
         let mut out = format!(
-            "#table(\n  columns: {columns},\n  align: {},\n",
+            "#table(\n  columns: {widths},\n  align: {},\n",
             array(&align.iter().map(|s| s.to_string()).collect::<Vec<_>>())
         );
         let row = |out: &mut String, cells: &[Vec<Inline>], g: &mut Self| {
@@ -589,6 +610,60 @@ impl Gen<'_> {
         }
         out
     }
+}
+
+/// Enveloppe un bloc : insécable, collé au suivant, apparence propre.
+fn wrap_block(body: &str, sticky: bool, unbreakable: bool, style: Option<&crate::layout::BlockStyle>) -> String {
+    use crate::layout::TextAlign;
+    let Some(s) = style.filter(|s| **s != crate::layout::BlockStyle::default()) else {
+        return if sticky || unbreakable {
+            format!("#block(sticky: {sticky}, breakable: {})[\n{body}\n]\n", !unbreakable)
+        } else {
+            body.to_string()
+        };
+    };
+    let mut args = vec![format!("sticky: {sticky}"), format!("breakable: {}", !unbreakable), "width: 100%".into()];
+    if let Some(bg) = &s.background {
+        args.push(format!("fill: rgb({})", string(bg)));
+    }
+    if s.border {
+        args.push("stroke: 0.6pt + luma(160)".into());
+    }
+    if s.background.is_some() || s.border {
+        args.push("inset: (x: 10pt, y: 8pt)".into());
+    }
+    let mut sets = String::new();
+    match s.align {
+        Some(TextAlign::Left) => sets.push_str("#set align(left)\n#set par(justify: false)\n"),
+        Some(TextAlign::Center) => sets.push_str("#set align(center)\n#set par(justify: false)\n"),
+        Some(TextAlign::Right) => sets.push_str("#set align(right)\n#set par(justify: false)\n"),
+        Some(TextAlign::Justify) => sets.push_str("#set par(justify: true)\n"),
+        None => {}
+    }
+    let mut text = Vec::new();
+    if let Some(p) = s.size_percent {
+        text.push(format!("size: {}em", num(p / 100.0)));
+    }
+    if let Some(c) = &s.color {
+        text.push(format!("fill: rgb({})", string(c)));
+    }
+    if s.italic {
+        text.push("style: \"italic\"".into());
+    }
+    if s.bold {
+        text.push("weight: \"bold\"".into());
+    }
+    if !text.is_empty() {
+        let _ = writeln!(sets, "#set text({})", text.join(", "));
+    }
+    let mut inner = format!("{sets}{body}");
+    if let Some(n) = s.columns.filter(|n| *n > 1) {
+        inner = format!("#columns({n}, gutter: 1.4em)[\n{inner}\n]");
+    }
+    if let Some(mm) = s.indent_mm {
+        inner = format!("#pad(left: {}mm)[\n{inner}\n]", num(mm));
+    }
+    format!("#block({})[\n{inner}\n]\n", args.join(", "))
 }
 
 /// Une phrase qui annonce la suite (« Voici les étapes : ») et ce qui la suit.
@@ -857,6 +932,26 @@ mod tests {
         assert_eq!(g.source.matches("#link(<nectar-h-1>)").count(), 2, "{}", g.source);
         assert_eq!(g.source.matches("#link(<nectar-h-0>)").count(), 1);
         assert_eq!(g.source.matches("#link(").count(), 3, "[[Autre#Fin]] reste un simple libellé");
+    }
+
+    #[test]
+    fn block_style_and_table_columns() {
+        let g = gen_with("Texte centré.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n", |doc, layout| {
+            let anchors = doc.anchors();
+            layout.ops_mut(anchors[0]).style = Some(crate::layout::BlockStyle {
+                align: Some(crate::layout::TextAlign::Center),
+                size_percent: Some(120.0),
+                background: Some("#fff3a3".into()),
+                columns: Some(2),
+                ..Default::default()
+            });
+            layout.ops_mut(anchors[1]).table =
+                Some(crate::layout::TableOps { widths: vec![2.0, 0.0], align: vec![None, Some(HAlign::Right)] });
+        });
+        assert!(g.source.contains("fill: rgb(\"#fff3a3\")"), "{}", g.source);
+        assert!(g.source.contains("#set align(center)") && g.source.contains("size: 1.2em"));
+        assert!(g.source.contains("#columns(2"));
+        assert!(g.source.contains("columns: (2fr, auto)") && g.source.contains("align: (start, end)"));
     }
 
     #[test]
