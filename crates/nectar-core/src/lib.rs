@@ -57,6 +57,13 @@ impl Project {
         Ok(project)
     }
 
+    /// Relit les retouches (modifiées hors de l'atelier).
+    pub fn reload_layout(&mut self) -> Result<(), ProjectError> {
+        self.layout = Layout::load(&self.layout_path)?;
+        self.layout.heal(&self.document);
+        Ok(())
+    }
+
     /// Relit la note (après une modification dans Obsidian).
     pub fn reload(&mut self) -> Result<(), ProjectError> {
         let text = std::fs::read_to_string(&self.note)
@@ -64,6 +71,11 @@ impl Project {
         let note_dir = self.note.parent().map(Path::to_path_buf).unwrap_or_default();
         let options = ParseOptions { vault: Some(&self.vault), note_dir: Some(&note_dir) };
         self.document = parse(&text, &options);
+        // Les retouches suivent le texte : on recale leurs ancres et on les
+        // réenregistre si besoin.
+        if self.layout.heal(&self.document) && self.layout_path.exists() {
+            self.layout.save(&self.layout_path)?;
+        }
         Ok(())
     }
 
@@ -80,7 +92,7 @@ impl Project {
     }
 
     pub fn save_layout(&mut self) -> Result<(), ProjectError> {
-        self.layout.prune();
+        self.layout.prune(&self.document);
         self.layout.save(&self.layout_path)?;
         Ok(())
     }

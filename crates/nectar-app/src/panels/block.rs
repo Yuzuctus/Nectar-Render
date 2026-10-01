@@ -36,14 +36,15 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     };
     let anchors = project.document.anchors();
     let Some(anchor) = anchors.iter().find(|a| a.id == &id).copied() else {
-        ui.label("Ce bloc n'existe plus dans la note.");
+        // Le bloc a disparu de la note : on revient à « aucune sélection ».
+        app.selected = None;
+        ui.ctx().request_repaint();
         return;
     };
     let (kind, line, excerpt) = (anchor.kind, anchor.line, anchor.excerpt.to_string());
     let is_figure = project.document.blocks.iter().any(|b| b.id == id && matches!(b.node, Node::Figure(_)));
     let inline_ops = project.document.blocks.iter().find(|b| b.id == id).and_then(|b| b.inline_ops.clone());
-    let current: BlockOps =
-        project.layout.blocks.iter().find(|d| d.anchor.id == id).map(|d| d.ops.clone()).unwrap_or_default();
+    let current: BlockOps = project.layout.ops_for(&project.document, &id);
     let position = app.rendered.as_ref().and_then(|r| r.positions.iter().find(|p| p.id == id)).map(|p| p.page + 1);
 
     // En-tête du bloc.
@@ -62,7 +63,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     if inline_ops.is_some() {
         ui.add_space(4.0);
         ui.label(
-            RichText::new("Ce bloc a aussi des retouches écrites dans la note (<!-- nectar: … -->).")
+            RichText::new("Retouches écrites dans la note (<!-- nectar: … -->) : les modifier ici les remplace.")
                 .color(t.muted)
                 .small(),
         );

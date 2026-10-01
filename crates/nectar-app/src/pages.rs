@@ -11,7 +11,9 @@ use crate::app::NectarApp;
 use crate::theme;
 
 pub struct PageView {
-    pub texture: egui::TextureHandle,
+    /// Image de la page, éventuellement à une autre résolution (zoom en cours)
+    /// ou absente (pas encore rendue).
+    pub texture: Option<egui::TextureHandle>,
     pub size_pt: egui::Vec2,
 }
 
@@ -19,6 +21,8 @@ pub struct PageView {
 pub struct PageAction {
     /// `Some(None)` : clic dans le vide (désélection).
     pub clicked: Option<Option<BlockId>>,
+    /// Pages au moins en partie visibles.
+    pub visible: Vec<usize>,
 }
 
 /// Points typographiques → points d'écran à 100 % (96 ppp).
@@ -65,12 +69,19 @@ pub fn show(
                 page_rects.push(rect);
                 let painter = ui.painter_at(rect.expand(2.0));
                 painter.rect_stroke(rect, 0.0, Stroke::new(1.0, t.rule_strong), StrokeKind::Outside);
-                painter.image(
-                    view.texture.id(),
-                    rect,
-                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-                    Color32::WHITE,
-                );
+                if ui.is_rect_visible(rect) {
+                    action.visible.push(index);
+                }
+                match &view.texture {
+                    Some(texture) => {
+                        let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                        painter.image(texture.id(), rect, uv, Color32::WHITE);
+                    }
+                    // Pas encore rendue : une page blanche le temps du rendu.
+                    None => {
+                        painter.rect_filled(rect, 0.0, Color32::WHITE);
+                    }
+                }
 
                 let to_pt = |p: Pos2| ((p.x - rect.left()) / scale, (p.y - rect.top()) / scale);
                 if let Some(pointer) = response.hover_pos() {

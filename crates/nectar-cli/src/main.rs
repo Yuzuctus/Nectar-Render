@@ -113,7 +113,7 @@ fn export(
     }
     let generated = project.generate();
     for warning in &generated.warnings {
-        eprintln!("retouches : {warning}");
+        eprintln!("avertissement : {warning}");
     }
     let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled });
     for font in engine.missing_fonts(&generated.fonts) {

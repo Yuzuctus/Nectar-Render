@@ -13,7 +13,7 @@ use notify::Watcher;
 use crate::pages::{self, PageView};
 use crate::panels;
 use crate::theme::{self, kicker};
-use crate::worker::{Rendered, Request, Response, Worker};
+use crate::worker::{Layouted, Request, Response, Worker};
 
 const LAST_NOTE: &str = "derniere-note";
 const ZOOMS: &[f32] = &[0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
@@ -41,8 +41,11 @@ pub struct NectarApp {
     pub style: Style,
     pub preset_style: Style,
     generation: u64,
-    pub rendered: Option<Rendered>,
-    textures: HashMap<(u128, u32), egui::TextureHandle>,
+    pub rendered: Option<Layouted>,
+    /// Image de chaque page déjà rendue (par empreinte), avec sa résolution.
+    textures: HashMap<u128, (f32, egui::TextureHandle)>,
+    /// Dernière demande d'images envoyée au moteur.
+    requested: Vec<(u128, u32)>,
     zoom: f32,
     fit_pending: bool,
     reset_horizontal: bool,
@@ -50,7 +53,11 @@ pub struct NectarApp {
     pub tab: Tab,
     undo: Vec<Layout>,
     redo: Vec<Layout>,
-    watcher: Option<(notify::RecommendedWatcher, Receiver<()>)>,
+    watcher: Option<(notify::RecommendedWatcher, Receiver<Changed>)>,
+    /// Retouches modifiées mais pas encore écrites (pendant un glisser).
+    dirty_since: Option<Instant>,
+    /// Dernière modification, pour regrouper un glisser en une seule annulation.
+    last_edit: Option<Instant>,
     status: Option<(String, bool, Instant)>,
     scroll_to: Option<BlockId>,
     pub save_preset_dialog: Option<String>,
@@ -73,6 +80,7 @@ impl NectarApp {
             generation: 0,
             rendered: None,
             textures: HashMap::new(),
+            requested: Vec::new(),
             zoom: 1.0,
             fit_pending: true,
             reset_horizontal: true,
@@ -81,6 +89,8 @@ impl NectarApp {
             undo: Vec::new(),
             redo: Vec::new(),
             watcher: None,
+            dirty_since: None,
+            last_edit: None,
             status: None,
             scroll_to: None,
             save_preset_dialog: None,
@@ -97,15 +107,18 @@ impl NectarApp {
     // ------------------------------------------------------------ actions
 
     pub fn open(&mut self, note: &Path, ctx: &egui::Context) {
+        self.flush();
         match Project::open(note) {
             Ok(project) => {
-                self.watch(&project.note, ctx);
+                self.watch(&project, ctx);
                 self.project = Some(project);
                 self.undo.clear();
                 self.redo.clear();
                 self.selected = self.launch_select.take().map(BlockId);
                 self.scroll_to = self.selected.clone();
                 self.rendered = None;
+                self.textures.clear();
+                self.requested.clear();
                 self.fit_pending = true;
                 self.restyle();
                 self.regenerate(ctx);
@@ -114,22 +127,41 @@ impl NectarApp {
         }
     }
 
-    fn watch(&mut self, note: &Path, ctx: &egui::Context) {
+    fn watch(&mut self, project: &Project, ctx: &egui::Context) {
         let (tx, rx) = channel();
-        let target = std::fs::canonicalize(note).unwrap_or_else(|_| note.to_path_buf());
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let note = canon(&project.note);
+        let layout = canon(&project.layout_path);
+        let layout_name = project.layout_path.file_name().map(|n| n.to_os_string());
         let ctx = ctx.clone();
         let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
             let Ok(event) = event else { return };
-            let touches = event.paths.iter().any(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.clone()) == target);
-            if touches && (event.kind.is_modify() || event.kind.is_create()) {
-                let _ = tx.send(());
-                ctx.request_repaint();
+            if !(event.kind.is_modify() || event.kind.is_create()) {
+                return;
+            }
+            for path in &event.paths {
+                let changed = if canon(path) == note {
+                    Some(Changed::Note)
+                } else if canon(path) == layout || (path.file_name().map(|n| n.to_os_string()) == layout_name) {
+                    Some(Changed::Layout)
+                } else {
+                    None
+                };
+                if let Some(changed) = changed {
+                    let _ = tx.send(changed);
+                    ctx.request_repaint();
+                }
             }
         });
         self.watcher = watcher
             .and_then(|mut w| {
-                let dir = note.parent().unwrap_or(Path::new("."));
-                w.watch(dir, notify::RecursiveMode::NonRecursive).map(|()| (w, rx))
+                w.watch(project.note.parent().unwrap_or(Path::new(".")), notify::RecursiveMode::NonRecursive)?;
+                if let Some(dir) = project.layout_path.parent()
+                    && dir.is_dir()
+                {
+                    w.watch(dir, notify::RecursiveMode::NonRecursive)?;
+                }
+                Ok((w, rx))
             })
             .ok();
     }
@@ -154,29 +186,50 @@ impl NectarApp {
         let Some(project) = &self.project else { return };
         self.generation += 1;
         let generated = Box::new(project.generate());
-        self.worker.send(Request::Render { generation: self.generation, generated, ppi: self.ppi(ctx) });
+        self.worker.send(Request::Layout { generation: self.generation, generated });
+        ctx.request_repaint();
     }
 
     /// Applique une modification des retouches, avec annulation possible.
+    ///
+    /// Les modifications rapprochées (un curseur qu'on fait glisser, un champ
+    /// qu'on tape) forment une seule étape d'annulation, et le fichier n'est
+    /// écrit qu'une fois le geste terminé.
     pub fn edit_layout(&mut self, ctx: &egui::Context, edit: impl FnOnce(&mut Layout)) {
         let Some(project) = &mut self.project else { return };
         let before = project.layout.clone();
         edit(&mut project.layout);
-        project.layout.prune();
+        project.layout.prune(&project.document);
         if project.layout == before {
             return;
         }
-        self.undo.push(before);
+        let gesture = self.last_edit.is_some_and(|t| t.elapsed() < Duration::from_millis(700));
+        if !gesture || self.undo.is_empty() {
+            self.undo.push(before);
+        }
+        self.last_edit = Some(Instant::now());
         self.redo.clear();
-        self.save_and_refresh(ctx);
+        self.dirty_since.get_or_insert_with(Instant::now);
+        self.restyle();
+        self.regenerate(ctx);
     }
 
-    fn save_and_refresh(&mut self, ctx: &egui::Context) {
+    /// Écrit les retouches en attente.
+    fn flush(&mut self) {
+        if self.dirty_since.take().is_none() {
+            return;
+        }
         if let Some(project) = &mut self.project
             && let Err(e) = project.save_layout()
         {
             self.notify(format!("Enregistrement des retouches impossible : {e}"), true);
         }
+    }
+
+    fn save_and_refresh(&mut self, ctx: &egui::Context) {
+        self.dirty_since = Some(Instant::now());
+        self.flush();
+        self.last_edit = None;
         self.restyle();
         self.regenerate(ctx);
     }
@@ -248,23 +301,63 @@ impl NectarApp {
         while let Ok(response) = self.worker.rx.try_recv() {
             match response {
                 Response::Ready { families } => self.families = families,
-                Response::Rendered(rendered) => {
-                    if rendered.generation == self.generation || self.rendered.is_none() {
-                        if let Some(error) = &rendered.error {
+                Response::Laid(laid) => {
+                    if laid.generation == self.generation || self.rendered.is_none() {
+                        if let Some(error) = &laid.error {
                             self.notify(first_line(error), true);
                         }
-                        self.rendered = Some(*rendered);
+                        self.rendered = Some(*laid);
+                        self.requested.clear();
+                    }
+                }
+                Response::Images(images) => {
+                    for page in images {
+                        let texture = ctx.load_texture(
+                            format!("page-{:x}", page.hash),
+                            egui::ImageData::Color(page.image),
+                            egui::TextureOptions::LINEAR,
+                        );
+                        self.textures.insert(page.hash, (page.ppi, texture));
                     }
                 }
                 Response::Exported(Ok(path)) => self.notify(format!("PDF exporté : {}", path.display()), false),
                 Response::Exported(Err(e)) => self.notify(format!("Export impossible : {e}"), true),
             }
         }
-        let changed = self.watcher.as_ref().is_some_and(|(_, rx)| rx.try_iter().count() > 0);
-        if changed && let Some(project) = &mut self.project {
+        let changes: Vec<Changed> = self.watcher.as_ref().map(|(_, rx)| rx.try_iter().collect()).unwrap_or_default();
+        if changes.contains(&Changed::Note)
+            && let Some(project) = &mut self.project
+        {
             match project.reload() {
                 Ok(()) => self.regenerate(ctx),
                 Err(e) => self.notify(format!("Relecture impossible : {e}"), true),
+            }
+        }
+        // Retouches modifiées hors de l'atelier (à la main, autre fenêtre).
+        if changes.contains(&Changed::Layout)
+            && self.dirty_since.is_none()
+            && let Some(project) = &mut self.project
+            && let Ok(on_disk) = nectar_core::Layout::load(&project.layout_path)
+            && on_disk != project.layout
+        {
+            let before = project.layout.clone();
+            match project.reload_layout() {
+                Ok(()) => {
+                    self.undo.push(before);
+                    self.restyle();
+                    self.regenerate(ctx);
+                    self.notify("Retouches rechargées depuis le disque", false);
+                }
+                Err(e) => self.notify(format!("Retouches illisibles : {e}"), true),
+            }
+        }
+        // Écrire les retouches une fois le geste terminé.
+        if let Some(since) = self.dirty_since {
+            let pointer_down = ctx.input(|i| i.pointer.any_down());
+            if !pointer_down && since.elapsed() > Duration::from_millis(400) {
+                self.flush();
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(200));
             }
         }
         // Glisser-déposer d'une note.
@@ -305,7 +398,7 @@ impl NectarApp {
         let zoom = zoom.clamp(0.25, 4.0);
         if (zoom - self.zoom).abs() > 0.001 {
             self.zoom = zoom;
-            self.worker.send(Request::Rescale { ppi: self.ppi(ctx) });
+            ctx.request_repaint();
         }
     }
 
@@ -484,29 +577,69 @@ impl NectarApp {
         self.show_warnings = open;
     }
 
-    fn sync_textures(&mut self, ctx: &egui::Context) -> Vec<PageView> {
+    /// Les pages à afficher, avec l'image la plus proche disponible.
+    fn views(&self) -> Vec<PageView> {
         let Some(rendered) = &self.rendered else { return Vec::new() };
-        let mut keep = HashMap::new();
-        let mut views = Vec::with_capacity(rendered.pages.len());
-        for page in &rendered.pages {
-            let key = (page.hash, page.image.size[0] as u32);
-            let texture = match self.textures.remove(&key) {
-                Some(texture) => texture,
-                None => ctx.load_texture(
-                    format!("page-{:x}", page.hash),
-                    egui::ImageData::Color(page.image.clone()),
-                    egui::TextureOptions::LINEAR,
-                ),
-            };
-            views.push(PageView { texture: texture.clone(), size_pt: page.size_pt });
-            keep.insert(key, texture);
+        rendered
+            .pages
+            .iter()
+            .map(|page| PageView {
+                texture: self.textures.get(&page.hash).map(|(_, t)| t.clone()),
+                size_pt: page.size_pt,
+            })
+            .collect()
+    }
+
+    /// Demande au moteur les pages visibles (et leurs voisines) qui manquent
+    /// à la bonne résolution, et oublie les images trop éloignées.
+    fn request_pages(&mut self, ctx: &egui::Context, visible: &[usize]) {
+        let Some(rendered) = &self.rendered else { return };
+        let ppi = self.ppi(ctx);
+        let count = rendered.pages.len();
+        let mut wanted: Vec<usize> = Vec::new();
+        for &index in visible {
+            for i in index.saturating_sub(1)..=(index + 1).min(count.saturating_sub(1)) {
+                if !wanted.contains(&i) {
+                    wanted.push(i);
+                }
+            }
         }
-        self.textures = keep;
-        views
+        // Les pages visibles d'abord, leurs voisines ensuite.
+        wanted.sort_by_key(|i| !visible.contains(i));
+        let missing: Vec<usize> = wanted
+            .iter()
+            .copied()
+            .filter(|&i| self.textures.get(&rendered.pages[i].hash).is_none_or(|(p, _)| (p - ppi).abs() > 0.5))
+            .collect();
+        let key: Vec<(u128, u32)> = missing.iter().map(|&i| (rendered.pages[i].hash, ppi.to_bits())).collect();
+        if !missing.is_empty() && key != self.requested {
+            self.worker.send(Request::Pages { pages: missing, ppi });
+            self.requested = key;
+        }
+        // Mémoire bornée : on garde les images des pages proches de la vue.
+        if let (Some(&first), Some(&last)) = (visible.iter().min(), visible.iter().max()) {
+            let keep: std::collections::HashSet<u128> = rendered.pages
+                [first.saturating_sub(4)..=(last + 4).min(count.saturating_sub(1))]
+                .iter()
+                .map(|p| p.hash)
+                .collect();
+            self.textures.retain(|hash, _| keep.contains(hash));
+        }
     }
 }
 
+/// Ce que le surveillant de fichiers a vu changer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Changed {
+    Note,
+    Layout,
+}
+
 impl eframe::App for NectarApp {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.flush();
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
@@ -554,7 +687,7 @@ impl eframe::App for NectarApp {
                 });
             });
 
-        let views = self.sync_textures(&ctx);
+        let views = self.views();
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.sunken)).show(ui, |ui| {
             if self.fit_pending
                 && let Some(width) = usual_width(&views)
@@ -580,6 +713,7 @@ impl eframe::App for NectarApp {
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
             }
+            self.request_pages(&ctx, &action.visible);
         });
 
         self.warnings_window(&ctx);

@@ -85,9 +85,53 @@ impl Layout {
         &mut directive.ops
     }
 
-    /// Retire les retouches devenues vides.
-    pub fn prune(&mut self) {
-        self.blocks.retain(|d| !d.ops.is_empty());
+    /// Retire les retouches devenues vides. Une retouche vide reste si le
+    /// bloc a des retouches écrites dans la note : elle les annule.
+    pub fn prune(&mut self, doc: &Document) {
+        let inline: HashSet<&BlockId> = doc.blocks.iter().filter(|b| b.inline_ops.is_some()).map(|b| &b.id).collect();
+        self.blocks.retain(|d| !d.ops.is_empty() || inline.contains(&d.anchor.id));
+    }
+
+    /// Les retouches qui s'appliquent à un bloc : celles de l'atelier, sinon
+    /// celles écrites dans la note.
+    pub fn ops_for(&self, doc: &Document, id: &BlockId) -> BlockOps {
+        if let Some(directive) = self.blocks.iter().find(|d| &d.anchor.id == id) {
+            return directive.ops.clone();
+        }
+        doc.blocks.iter().find(|b| &b.id == id).and_then(|b| b.inline_ops.clone()).unwrap_or_default()
+    }
+
+    /// Recale les ancres sur le document : une retouche rattachée par
+    /// ressemblance prend l'id, l'extrait et la ligne de son nouveau bloc, et
+    /// deux retouches tombées sur le même bloc fusionnent. Renvoie `true` si
+    /// quelque chose a changé (les retouches sont alors à réenregistrer).
+    pub fn heal(&mut self, doc: &Document) -> bool {
+        let resolution = self.resolve(doc);
+        let anchors = doc.anchors();
+        let fresh = |id: &BlockId| anchors.iter().find(|a| a.id == id).map(|a| Anchor::from(*a));
+        let before = self.blocks.clone();
+        for (old, new) in &resolution.relinked {
+            if let Some(directive) = self.blocks.iter_mut().find(|d| &d.anchor.id == old)
+                && let Some(anchor) = fresh(new)
+            {
+                directive.anchor = anchor;
+            }
+        }
+        for directive in &mut self.blocks {
+            if let Some(anchor) = fresh(&directive.anchor.id) {
+                directive.anchor = anchor;
+            }
+        }
+        // Fusion des doublons : la dernière retouche l'emporte champ par champ.
+        let mut merged: Vec<Directive> = Vec::with_capacity(self.blocks.len());
+        for directive in std::mem::take(&mut self.blocks) {
+            match merged.iter_mut().find(|d| d.anchor.id == directive.anchor.id) {
+                Some(existing) => existing.ops.merge(&directive.ops),
+                None => merged.push(directive),
+            }
+        }
+        self.blocks = merged;
+        self.blocks != before
     }
 
     /// Associe chaque retouche à un bloc du document.
@@ -138,8 +182,10 @@ impl Layout {
     }
 }
 
+/// Une retouche de l'atelier remplace entièrement celle écrite dans la note :
+/// c'est ce qui permet de décocher dans l'atelier une case cochée par la note.
 fn merge_into(map: &mut HashMap<BlockId, BlockOps>, id: &BlockId, ops: &BlockOps) {
-    map.entry(id.clone()).or_default().merge(ops);
+    map.insert(id.clone(), ops.clone());
 }
 
 /// Résultat de l'ancrage des retouches sur un document.
@@ -375,6 +421,33 @@ mod tests {
         assert!(resolution.ops[target].break_before);
         assert_eq!(resolution.relinked.len(), 1);
         assert!(resolution.orphans.is_empty());
+    }
+
+    #[test]
+    fn healed_directive_can_be_cleared() {
+        let before = doc("Premier paragraphe.\n\nUne image importante suit ici.\n");
+        let mut layout = Layout::default();
+        layout.ops_mut(before.anchors()[1]).break_before = true;
+
+        let after = doc("Premier paragraphe.\n\nUne image très importante suit ici.\n");
+        assert!(layout.heal(&after));
+        assert_eq!(layout.blocks[0].anchor.id, after.blocks[1].id);
+        // L'atelier efface la retouche : elle disparaît pour de bon.
+        layout.ops_mut(after.anchors()[1]).break_before = false;
+        layout.prune(&after);
+        assert!(layout.resolve(&after).ops.is_empty());
+        assert!(!layout.heal(&after));
+    }
+
+    #[test]
+    fn workshop_overrides_inline_directives() {
+        let note = doc("A\n\n<!-- nectar: break-before -->\n\nB\n");
+        let mut layout = Layout::default();
+        assert!(layout.ops_for(&note, &note.blocks[1].id).break_before);
+        layout.ops_mut(note.anchors()[1]).break_before = false;
+        layout.prune(&note);
+        assert_eq!(layout.blocks.len(), 1, "la retouche vide annule celle de la note");
+        assert!(!layout.resolve(&note).ops[&note.blocks[1].id].break_before);
     }
 
     #[test]
