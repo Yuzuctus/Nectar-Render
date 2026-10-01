@@ -188,8 +188,9 @@ mod tests {
 
     #[test]
     fn layout_path_mirrors_note() {
-        let vault = Vault::at("/coffre");
-        let path = vault.layout_path(Path::new("/coffre/cours/maths.md"));
-        assert_eq!(path, Path::new("/coffre/.nectar/cours/maths.md.json"));
+        let root = std::path::absolute("coffre").unwrap();
+        let vault = Vault::at(&root);
+        let path = vault.layout_path(&root.join("cours").join("maths.md"));
+        assert_eq!(path, root.join(".nectar").join("cours").join("maths.md.json"));
     }
 }

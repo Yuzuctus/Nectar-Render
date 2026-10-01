@@ -155,7 +155,7 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
                 if let Node::List(list) = &block.node
                     && on_page(page + 1).take(3).any(|m| m.id == block.id)
                 {
-                    explicit |= list.items.first().and_then(|i| i.id.as_ref()).is_some_and(&starts_page);
+                    explicit |= list.items.first().and_then(|i| i.id.as_ref()).is_some_and(starts_page);
                 }
             }
             if !explicit {
