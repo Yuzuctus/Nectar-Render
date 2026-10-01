@@ -17,3 +17,6 @@ typst-pdf.workspace = true
 typst-render.workspace = true
 typst-kit = { workspace = true, features = ["embedded-fonts", "scan-fonts"] }
 tiny-skia = "0.12"
+
+[dev-dependencies]
+tempfile.workspace = true

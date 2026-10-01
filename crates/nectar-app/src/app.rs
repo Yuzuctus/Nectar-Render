@@ -13,7 +13,7 @@ use notify::Watcher;
 use crate::pages::{self, PageView};
 use crate::panels;
 use crate::theme::{self, kicker};
-use crate::worker::{Layouted, Request, Response, Worker};
+use crate::worker::{CheckInputs, Layouted, Request, Response, Worker};
 
 const LAST_NOTE: &str = "derniere-note";
 const ZOOMS: &[f32] = &[0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
@@ -22,6 +22,7 @@ const ZOOMS: &[f32] = &[0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5
 pub enum Tab {
     Block,
     Style,
+    Check,
 }
 
 /// Options de lancement (`nectar-render note.md --bloc ID --onglet style`).
@@ -186,7 +187,12 @@ impl NectarApp {
         let Some(project) = &self.project else { return };
         self.generation += 1;
         let generated = Box::new(project.generate());
-        self.worker.send(Request::Layout { generation: self.generation, generated });
+        let check = Box::new(CheckInputs {
+            document: project.document.clone(),
+            layout: project.layout.clone(),
+            style: self.style.clone(),
+        });
+        self.worker.send(Request::Layout { generation: self.generation, generated, check });
         ctx.request_repaint();
     }
 
@@ -666,7 +672,17 @@ impl eframe::App for NectarApp {
             .frame(egui::Frame::new().fill(t.paper).inner_margin(egui::Margin::symmetric(16, 12)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    for (tab, label) in [(Tab::Block, "Bloc"), (Tab::Style, "Style")] {
+                    let count = self
+                        .rendered
+                        .as_ref()
+                        .map(|r| {
+                            r.issues.iter().filter(|i| i.severity > nectar_core::assistant::Severity::Info).count()
+                        })
+                        .unwrap_or(0);
+                    let check = if count > 0 { format!("Vérifier · {count}") } else { "Vérifier".to_string() };
+                    for (tab, label) in
+                        [(Tab::Block, "Bloc".to_string()), (Tab::Style, "Style".to_string()), (Tab::Check, check)]
+                    {
                         let selected = self.tab == tab;
                         let text = RichText::new(label.to_uppercase())
                             .font(FontId::new(11.5, theme::mono()))
@@ -684,6 +700,7 @@ impl eframe::App for NectarApp {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.tab {
                     Tab::Block => panels::block::show(self, ui),
                     Tab::Style => panels::style::show(self, ui),
+                    Tab::Check => panels::check::show(self, ui),
                 });
             });
 

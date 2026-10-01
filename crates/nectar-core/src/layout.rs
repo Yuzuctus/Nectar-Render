@@ -234,6 +234,10 @@ pub struct BlockOps {
     /// Ne jamais séparer ce bloc du suivant par une fin de page.
     #[serde(skip_serializing_if = "is_false")]
     pub keep_with_next: bool,
+    /// Garder le bloc d'un seul tenant (`Some(true)`) ou autoriser sa coupure
+    /// entre deux pages (`Some(false)`) ; `None` : règle automatique.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keep_together: Option<bool>,
     /// Pousser ce bloc (et la suite de la page) en bas de page.
     #[serde(skip_serializing_if = "is_false")]
     pub push_to_bottom: bool,
@@ -265,6 +269,9 @@ impl BlockOps {
         self.break_before |= other.break_before;
         self.break_after |= other.break_after;
         self.keep_with_next |= other.keep_with_next;
+        if other.keep_together.is_some() {
+            self.keep_together = other.keep_together;
+        }
         self.push_to_bottom |= other.push_to_bottom;
         self.hidden |= other.hidden;
         if other.space_before_mm.is_some() {

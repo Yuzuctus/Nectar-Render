@@ -14,17 +14,23 @@ expression: g.source
 )
 
 #nb("callout-951e226f")
+#block(sticky: false, breakable: false)[
 #callout("tip", title: [Astuce])[
 Corps.
 ]
+]
 
 #nb("table-8078f5d7")
+#block(sticky: false, breakable: false)[
 #table(
   columns: 2,
   align: (start, end),
   table.header([a], [b], ),
   [1], [2], 
 )
+]
 
 #nb("code-9f731f0f")
+#block(sticky: false, breakable: false)[
 #nectar-code("fn main() {}", lang: "rust", title: none, highlight: ())
+]

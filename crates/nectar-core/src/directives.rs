@@ -52,6 +52,8 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
             ("break-after" | "saut-apres" | "saut-après", None) => ops.break_after = true,
             ("keep-with-next" | "garder-avec-suivant", None) => ops.keep_with_next = true,
             ("push-to-bottom" | "bas-de-page", None) => ops.push_to_bottom = true,
+            ("keep-together" | "insecable" | "insécable", None) => ops.keep_together = Some(true),
+            ("allow-break" | "secable" | "sécable", None) => ops.keep_together = Some(false),
             ("hidden" | "masquer", None) => ops.hidden = true,
             ("space-before" | "espace-avant", v) => ops.space_before_mm = Some(number(v)?),
             ("page", Some(v)) if v.eq_ignore_ascii_case("default") || v.eq_ignore_ascii_case("défaut") => {

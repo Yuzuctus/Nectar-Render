@@ -69,8 +69,8 @@ pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
         ));
     }
     g.preamble(&doc.meta);
-    for block in &doc.blocks {
-        g.block(block);
+    for (index, block) in doc.blocks.iter().enumerate() {
+        g.block(block, doc.blocks.get(index + 1));
     }
     let (style_source, fonts) = crate::typst_style::style_module(style);
     let theme = crate::code_themes::get(&style.code.theme).unwrap_or(&crate::code_themes::THEMES[0]);
@@ -154,7 +154,7 @@ impl Gen<'_> {
         );
     }
 
-    fn block(&mut self, block: &Block) {
+    fn block(&mut self, block: &Block, next: Option<&Block>) {
         let ops = self.ops.get(&block.id).cloned().unwrap_or_default();
         // Numéro d'étiquette du titre, compté même s'il est masqué.
         let heading_label = matches!(block.node, Node::Heading { .. }).then(|| {
@@ -179,9 +179,25 @@ impl Gen<'_> {
         self.block_lines.push((block.id.clone(), self.line()));
         let _ = writeln!(self.out, "#nb({})", string(block.id.as_str()));
 
+        let p = &self.style.pagination;
+        // Une retouche de saut l'emporte toujours sur la règle automatique.
+        let next_breaks = next.is_some_and(|n| {
+            let starts_page = |id: &BlockId| self.ops.get(id).is_some_and(|o| o.break_before || o.page.is_some());
+            starts_page(&n.id)
+                || matches!(&n.node, Node::List(l) if l.items.first().and_then(|i| i.id.as_ref()).is_some_and(starts_page))
+        });
+        let sticky = ops.keep_with_next
+            || (p.keep_intro_with_next && !ops.break_after && !next_breaks && announces(&block.node, next));
+        let unbreakable = ops.keep_together.unwrap_or(p.keep_small_blocks && is_small(&block.node));
         let body = match &block.node {
             Node::List(list) => {
+                let start = self.out.len();
                 self.top_list(list, first_item_done);
+                let item_ops = list.items.iter().any(|i| i.id.as_ref().is_some_and(|id| self.ops.contains_key(id)));
+                if (sticky || unbreakable) && !item_ops {
+                    let inner = self.out.split_off(start);
+                    let _ = writeln!(self.out, "#block(sticky: {sticky}, breakable: {})[\n{}]", !unbreakable, inner);
+                }
                 None
             }
             Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
@@ -193,8 +209,8 @@ impl Gen<'_> {
             node => Some(self.node(node)),
         };
         if let Some(body) = body {
-            if ops.keep_with_next {
-                let _ = writeln!(self.out, "#block(sticky: true)[\n{body}\n]");
+            if sticky || unbreakable {
+                let _ = writeln!(self.out, "#block(sticky: {sticky}, breakable: {})[\n{body}\n]", !unbreakable);
             } else {
                 self.out.push_str(&body);
                 self.out.push('\n');
@@ -572,6 +588,38 @@ impl Gen<'_> {
             }
         }
         out
+    }
+}
+
+/// Une phrase qui annonce la suite (« Voici les étapes : ») et ce qui la suit.
+fn announces(node: &Node, next: Option<&Block>) -> bool {
+    let Node::Paragraph(content) = node else { return false };
+    let text = plain_text(content);
+    let announcing = text.trim_end().ends_with(':');
+    announcing
+        && next.is_some_and(|n| {
+            matches!(
+                n.node,
+                Node::List(_)
+                    | Node::Code { .. }
+                    | Node::Table(_)
+                    | Node::Figure(_)
+                    | Node::Diagram { .. }
+                    | Node::Math(_)
+                    | Node::Quote(_)
+                    | Node::Callout(_)
+            )
+        })
+}
+
+/// Un bloc assez court pour ne jamais être coupé entre deux pages.
+fn is_small(node: &Node) -> bool {
+    match node {
+        Node::List(list) => list.items.len() <= 6 && node_text(node).chars().count() <= 600,
+        Node::Code { text, .. } => text.lines().count() <= 15,
+        Node::Table(table) => table.rows.len() <= 10,
+        Node::Callout(_) | Node::Quote(_) => node_text(node).chars().count() <= 500,
+        _ => false,
     }
 }
 

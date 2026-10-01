@@ -21,6 +21,7 @@ fn main() -> eframe::Result {
             Some("--onglet") => {
                 launch.tab = match args.next().and_then(|a| a.into_string().ok()).as_deref() {
                     Some("style") => Some(app::Tab::Style),
+                    Some("verifier" | "vérifier") => Some(app::Tab::Check),
                     _ => Some(app::Tab::Block),
                 }
             }

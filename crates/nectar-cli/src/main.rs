@@ -37,6 +37,8 @@ enum Command {
         #[arg(long)]
         preset: Option<String>,
     },
+    /// Vérifie la mise en page : pages à moitié vides, images réduites…
+    Check { note: PathBuf },
     /// Liste les presets de style (intégrés et personnels).
     Presets,
     /// Choisit le preset de style d'une note (et efface ses réglages à la main).
@@ -62,6 +64,7 @@ fn main() -> Result<()> {
         Command::Export { note, output, png, ppi, system_fonts, preset } => {
             export(&note, output, png, ppi, system_fonts, preset)
         }
+        Command::Check { note } => check(&note),
         Command::Presets => {
             let store = nectar_core::PresetStore::load(nectar_core::style::default_user_dir());
             for preset in store.presets() {
@@ -142,6 +145,34 @@ fn export(
         compiled.page_count(),
         started.elapsed().as_millis()
     );
+    Ok(())
+}
+
+fn check(note: &Path) -> Result<()> {
+    let project = open(note)?;
+    let generated = project.generate();
+    let engine = Engine::new(FontSources::Bundled);
+    let missing = engine.missing_fonts(&generated.fonts);
+    let compiled = engine.compile(&generated)?;
+    let (style, _) = project.style();
+    let issues = nectar_typst::inspect(&compiled, &project.document, &project.layout, &style, &generated, &missing);
+    if issues.is_empty() {
+        println!("Rien à signaler : {} pages propres.", compiled.page_count());
+    }
+    for issue in issues {
+        let mark = match issue.severity {
+            nectar_core::assistant::Severity::Problem => "✗",
+            nectar_core::assistant::Severity::Warning => "!",
+            nectar_core::assistant::Severity::Info => "·",
+        };
+        println!("{mark} {}", issue.title);
+        if !issue.detail.is_empty() {
+            println!("    {}", issue.detail);
+        }
+        for fix in &issue.fixes {
+            println!("    → {} (nectar set … {})", fix.label, fix.block);
+        }
+    }
     Ok(())
 }
 

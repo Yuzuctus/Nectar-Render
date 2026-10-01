@@ -220,6 +220,52 @@ impl Compiled {
         Ok(typst_render::render(page, &options))
     }
 
+    /// Étendue réelle du contenu de chaque page, pied de page exclu (tout ce
+    /// qui commence dans la marge du bas).
+    pub fn page_metrics(&self, margin_bottom_pt: f64) -> Vec<nectar_core::assistant::PageMetrics> {
+        self.document
+            .pages()
+            .iter()
+            .map(|page| {
+                let size = page.frame.size();
+                let cutoff = size.y.to_pt() - margin_bottom_pt + 1.0;
+                let mut extent: Option<[f64; 4]> = None;
+                walk(&page.frame, typst::layout::Point::zero(), cutoff, &mut extent);
+                nectar_core::assistant::PageMetrics { width: size.x.to_pt(), height: size.y.to_pt(), content: extent }
+            })
+            .collect()
+    }
+
+    /// Remarques laissées par le template (`<nectar-issue>`), avec leur place.
+    pub fn template_notes(&self) -> Vec<nectar_core::assistant::TemplateNote> {
+        let introspector = self.document.introspector();
+        let label = Label::new(PicoStr::intern("nectar-issue")).expect("étiquette valide");
+        introspector
+            .query(&Selector::Label(label))
+            .iter()
+            .filter_map(|content| {
+                let meta = content.to_packed::<MetadataElem>()?;
+                let Value::Dict(dict) = &meta.value else { return None };
+                let kind = match dict.get("kind").ok()? {
+                    Value::Str(s) => s.to_string(),
+                    _ => return None,
+                };
+                let value = match dict.get("value").ok() {
+                    Some(Value::Float(f)) => *f,
+                    Some(Value::Int(i)) => *i as f64,
+                    _ => 0.0,
+                };
+                let position = introspector.position(content.location()?)?;
+                Some(nectar_core::assistant::TemplateNote {
+                    kind,
+                    page: position.page.get() - 1,
+                    y: position.point.y.to_pt(),
+                    value,
+                })
+            })
+            .collect()
+    }
+
     /// Position de chaque bloc marqué par `#nb(...)`, dans l'ordre du document.
     pub fn block_positions(&self) -> Vec<BlockPosition> {
         let introspector = self.document.introspector();
@@ -240,6 +286,70 @@ impl Compiled {
                 })
             })
             .collect()
+    }
+}
+
+/// L'assistant de mise en page sur un document compilé.
+pub fn inspect(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    layout: &nectar_core::Layout,
+    style: &nectar_core::Style,
+    generated: &Generated,
+    missing_fonts: &[String],
+) -> Vec<nectar_core::assistant::Issue> {
+    use nectar_core::assistant::{Inputs, Marker, analyse};
+    let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+    let pages = compiled.page_metrics(margin_bottom);
+    let markers: Vec<Marker> =
+        compiled.block_positions().into_iter().map(|p| Marker { id: p.id, page: p.page, y: p.y }).collect();
+    let notes = compiled.template_notes();
+    let ops = layout.resolve(document).ops;
+    let warnings: Vec<String> =
+        document.warnings.iter().chain(&generated.warnings).chain(&compiled.warnings).cloned().collect();
+    analyse(&Inputs {
+        document,
+        ops: &ops,
+        style,
+        pages: &pages,
+        markers: &markers,
+        notes: &notes,
+        warnings: &warnings,
+        missing_fonts,
+    })
+}
+
+/// Parcourt un cadre et agrandit l'étendue avec chaque élément visible
+/// commençant au-dessus de `cutoff`.
+fn walk(frame: &typst::layout::Frame, offset: typst::layout::Point, cutoff: f64, extent: &mut Option<[f64; 4]>) {
+    use typst::layout::FrameItem;
+    for (pos, item) in frame.items() {
+        let p = offset + *pos;
+        let (x, y) = (p.x.to_pt(), p.y.to_pt());
+        let rect = match item {
+            FrameItem::Group(group) => {
+                let shifted = typst::layout::Point::new(p.x + group.transform.tx, p.y + group.transform.ty);
+                walk(&group.frame, shifted, cutoff, extent);
+                continue;
+            }
+            FrameItem::Text(text) => {
+                let size = text.size.to_pt();
+                [x, y - size * 0.8, x + text.width().to_pt(), y + size * 0.25]
+            }
+            FrameItem::Shape(shape, _) => {
+                let bbox = shape.bbox(true);
+                [x + bbox.min.x.to_pt(), y + bbox.min.y.to_pt(), x + bbox.max.x.to_pt(), y + bbox.max.y.to_pt()]
+            }
+            FrameItem::Image(_, size, _) => [x, y, x + size.x.to_pt(), y + size.y.to_pt()],
+            _ => continue,
+        };
+        if rect[1] >= cutoff {
+            continue;
+        }
+        *extent = Some(match *extent {
+            None => rect,
+            Some(e) => [e[0].min(rect[0]), e[1].min(rect[1]), e[2].max(rect[2]), e[3].max(rect[3])],
+        });
     }
 }
 

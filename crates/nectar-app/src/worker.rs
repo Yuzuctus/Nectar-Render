@@ -19,10 +19,11 @@ use nectar_typst::{BlockPosition, Compiled, Engine, FontSources, PdfOptions};
 const CACHE_PAGES: usize = 24;
 
 pub enum Request {
-    /// Compiler une nouvelle source.
+    /// Compiler une nouvelle source (et la vérifier avec l'assistant).
     Layout {
         generation: u64,
         generated: Box<Generated>,
+        check: Box<CheckInputs>,
     },
     /// Rendre ces pages (indices) à cette résolution.
     Pages {
@@ -33,6 +34,13 @@ pub enum Request {
         path: PathBuf,
         ident: String,
     },
+}
+
+/// Ce que l'assistant de mise en page doit connaître de la note.
+pub struct CheckInputs {
+    pub document: nectar_core::Document,
+    pub layout: nectar_core::Layout,
+    pub style: nectar_core::Style,
 }
 
 pub enum Response {
@@ -64,6 +72,8 @@ pub struct Layouted {
     pub positions: Vec<BlockPosition>,
     pub warnings: Vec<String>,
     pub missing_fonts: Vec<String>,
+    /// Remarques de l'assistant de mise en page.
+    pub issues: Vec<nectar_core::assistant::Issue>,
     /// Erreur de compilation : la mise en page précédente reste affichée.
     pub error: Option<String>,
     pub millis: u128,
@@ -109,13 +119,13 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
         let mut exports = Vec::new();
         for request in pending {
             match request {
-                Request::Layout { generation, generated } => layout = Some((generation, generated)),
+                Request::Layout { generation, generated, check } => layout = Some((generation, generated, check)),
                 Request::Pages { pages: p, ppi } => pages = Some((p, ppi)),
                 Request::Export { path, ident } => exports.push((path, ident)),
             }
         }
 
-        if let Some((generation, generated)) = layout {
+        if let Some((generation, generated, check)) = layout {
             let started = Instant::now();
             let missing_fonts = engine.missing_fonts(&generated.fonts);
             let mut error = None;
@@ -137,6 +147,14 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         .collect(),
                     positions: compiled.block_positions(),
                     warnings: generated.warnings.iter().chain(&compiled.warnings).cloned().collect(),
+                    issues: nectar_typst::inspect(
+                        compiled,
+                        &check.document,
+                        &check.layout,
+                        &check.style,
+                        &generated,
+                        &missing_fonts,
+                    ),
                     missing_fonts,
                     error,
                     millis: started.elapsed().as_millis(),
@@ -146,6 +164,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                     pages: Vec::new(),
                     positions: Vec::new(),
                     warnings: generated.warnings.clone(),
+                    issues: Vec::new(),
                     missing_fonts,
                     error,
                     millis: started.elapsed().as_millis(),

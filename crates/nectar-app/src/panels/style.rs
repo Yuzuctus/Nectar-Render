@@ -118,6 +118,24 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
         });
     });
 
+    section(ui, "Placement automatique", false, |ui| {
+        ui.checkbox(
+            &mut s.pagination.keep_intro_with_next,
+            "Une phrase finissant par « : » reste avec ce qu'elle annonce",
+        );
+        ui.checkbox(
+            &mut s.pagination.keep_small_blocks,
+            "Ne jamais couper une liste courte, un code court, un petit tableau, un encadré",
+        );
+        ui.label(
+            RichText::new(
+                "Les titres restent toujours avec leur contenu. Une retouche de bloc l'emporte sur ces règles.",
+            )
+            .small()
+            .color(theme::tokens(ui.ctx()).faint),
+        );
+    });
+
     section(ui, "Titres", false, |ui| {
         grid(ui, "titres", |ui| {
             label(ui, "Police");

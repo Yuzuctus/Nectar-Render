@@ -4,6 +4,7 @@
 //! Ce crate ne dépend pas de Typst : il produit du texte, que `nectar-typst`
 //! compile.
 
+pub mod assistant;
 pub mod code_themes;
 pub mod codegen;
 pub mod directives;

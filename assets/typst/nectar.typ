@@ -60,9 +60,14 @@
       natural.width * scale * S.images.scale
     }
     w = calc.min(w, region.width)
+    let wanted = w
     if region.height < 10000pt {
       let max-h = region.height * max-height
       if w * ratio > max-h { w = max-h / ratio }
+    }
+    // Réduite pour tenir en hauteur : l'assistant le signalera.
+    if w < wanted * 0.9 {
+      [#metadata((kind: "shrunk", value: w / wanted)) <nectar-issue>]
     }
     img(width: w)
   })
@@ -105,7 +110,9 @@
       block(width: 100%, align(align-to, body(80%))),
     )
   } else {
-    align(align-to, body(100%))
+    // 85 % de la page au plus : la phrase qui annonce l'image et sa légende
+    // tiennent sur la même page qu'elle.
+    align(align-to, body(85%))
   }
 }
 

@@ -29,6 +29,7 @@ pub struct Style {
     pub footer: FooterStyle,
     pub cover: CoverStyle,
     pub diagrams: DiagramStyle,
+    pub pagination: PaginationStyle,
     /// Fond du `==surlignage==`.
     pub highlight: Color,
     /// Afficher les séparateurs `---`.
@@ -51,9 +52,27 @@ impl Default for Style {
             footer: FooterStyle::default(),
             cover: CoverStyle::default(),
             diagrams: DiagramStyle::default(),
+            pagination: PaginationStyle::default(),
             highlight: "#fff3a3".into(),
             rules: true,
         }
+    }
+}
+
+/// Règles de placement automatiques, avant toute retouche.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaginationStyle {
+    /// Une phrase qui finit par « : » reste sur la page de ce qu'elle annonce.
+    pub keep_intro_with_next: bool,
+    /// Les petits blocs (liste courte, code court, petit tableau, encadré)
+    /// ne sont jamais coupés entre deux pages.
+    pub keep_small_blocks: bool,
+}
+
+impl Default for PaginationStyle {
+    fn default() -> Self {
+        Self { keep_intro_with_next: true, keep_small_blocks: true }
     }
 }
 
