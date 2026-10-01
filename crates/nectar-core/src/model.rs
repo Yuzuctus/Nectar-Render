@@ -32,6 +32,8 @@ pub struct Document {
     pub blocks: Vec<Block>,
     /// Problèmes non bloquants rencontrés à la lecture (image introuvable…).
     pub warnings: Vec<String>,
+    /// Nom de la note (sans extension), pour reconnaître `[[Note#Titre]]`.
+    pub name: Option<String>,
 }
 
 impl Document {
@@ -149,6 +151,10 @@ pub enum Node {
     Code {
         lang: Option<String>,
         text: String,
+        /// Nom de fichier affiché dans l'onglet (` ```rust title="main.rs" `).
+        title: Option<String>,
+        /// Lignes à surligner, à partir de 1 (` ```rust {3-5} `).
+        highlight: Vec<u32>,
     },
     Quote(Vec<Node>),
     Callout(Callout),
@@ -227,6 +233,8 @@ pub struct Image {
     /// Largeur demandée en pixels (`![[img.png|400]]`).
     pub width_px: Option<u32>,
     pub height_px: Option<u32>,
+    /// Page d'un PDF inclus (`![[doc.pdf#page=3]]`).
+    pub page: Option<u32>,
 }
 
 /// Contenu en ligne.
@@ -240,6 +248,16 @@ pub enum Inline {
     Highlight(Vec<Inline>),
     Superscript(Vec<Inline>),
     Subscript(Vec<Inline>),
+    Underline(Vec<Inline>),
+    /// Touche de clavier `<kbd>Ctrl</kbd>`.
+    Kbd(String),
+    /// Balise HTML en ligne pas encore appariée (usage interne à la lecture).
+    Html(String),
+    /// Note incluse `![[note]]` au milieu d'un texte (affichée comme un lien).
+    Embed {
+        target: String,
+        label: String,
+    },
     Link {
         url: String,
         content: Vec<Inline>,
@@ -273,7 +291,11 @@ fn push_plain(inlines: &[Inline], out: &mut String) {
             | Inline::Highlight(c)
             | Inline::Superscript(c)
             | Inline::Subscript(c)
+            | Inline::Underline(c)
             | Inline::Link { content: c, .. } => push_plain(c, out),
+            Inline::Kbd(t) => out.push_str(t),
+            Inline::Embed { label, .. } => out.push_str(label),
+            Inline::Html(_) => {}
             Inline::WikiLink { label, .. } => out.push_str(label),
             Inline::Image(img) => out.push_str(&img.alt),
             Inline::Footnote(_) => {}

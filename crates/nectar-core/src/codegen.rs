@@ -49,6 +49,10 @@ pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
         ops: &resolution.ops,
         layout,
         style,
+        french: style.text.french_typography && doc.meta.lang.as_deref().unwrap_or("fr").starts_with("fr"),
+        headings: heading_slugs(doc),
+        heading_index: 0,
+        doc_name: doc.name.as_deref().map(str::to_lowercase),
         out: String::new(),
         assets: Vec::new(),
         asset_ids: HashMap::new(),
@@ -111,6 +115,12 @@ struct Gen<'a> {
     ops: &'a HashMap<BlockId, BlockOps>,
     layout: &'a Layout,
     style: &'a Style,
+    /// Typographie française active (langue `fr` et réglage du style).
+    french: bool,
+    /// Ancre (slug) de chaque titre de premier niveau → son numéro d'étiquette.
+    headings: HashMap<String, usize>,
+    heading_index: usize,
+    doc_name: Option<String>,
     out: String,
     assets: Vec<Asset>,
     asset_ids: HashMap<PathBuf, String>,
@@ -144,6 +154,11 @@ impl Gen<'_> {
 
     fn block(&mut self, block: &Block) {
         let ops = self.ops.get(&block.id).cloned().unwrap_or_default();
+        // Numéro d'étiquette du titre, compté même s'il est masqué.
+        let heading_label = matches!(block.node, Node::Heading { .. }).then(|| {
+            self.heading_index += 1;
+            self.heading_index - 1
+        });
         self.before(&ops);
         // Un saut demandé avant la première puce passe avant toute la liste,
         // pour que le marqueur de la liste atterrisse sur la bonne page.
@@ -168,6 +183,10 @@ impl Gen<'_> {
                 None
             }
             Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
+            node @ Node::Heading { .. } => {
+                // Étiquette pour les liens internes `[[#Titre]]`.
+                Some(format!("{} <nectar-h-{}>", self.node(node), heading_label.unwrap_or_default()))
+            }
             node => Some(self.node(node)),
         };
         if let Some(body) = body {
@@ -294,9 +313,11 @@ impl Gen<'_> {
                 let items: Vec<&ListItem> = list.items.iter().collect();
                 self.list_markup(list, &items, list.start)
             }
-            Node::Code { lang, text } => {
+            Node::Code { lang, text, title, highlight } => {
                 let lang = lang.as_deref().map(string).unwrap_or_else(|| "none".into());
-                format!("#raw(block: true, lang: {lang}, {})", string(text))
+                let title = title.as_deref().map(string).unwrap_or_else(|| "none".into());
+                let lines: Vec<String> = highlight.iter().map(u32::to_string).collect();
+                format!("#nectar-code({}, lang: {lang}, title: {title}, highlight: {})", string(text), array(&lines))
             }
             Node::Quote(children) => format!("#quote(block: true)[\n{}\n]", self.nodes(children)),
             Node::Callout(callout) => {
@@ -357,6 +378,9 @@ impl Gen<'_> {
         let caption =
             ops.and_then(|o| o.caption.clone()).or_else(|| Some(image.alt.clone())).filter(|c| !c.trim().is_empty());
         let mut args = vec![string(&vpath)];
+        if let Some(page) = image.page {
+            args.push(format!("page: {page}"));
+        }
         if !image.alt.is_empty() {
             args.push(format!("alt: {}", string(&image.alt)));
         }
@@ -426,7 +450,15 @@ impl Gen<'_> {
         let mut out = String::new();
         for inline in inlines {
             match inline {
-                Inline::Text(text) => out.push_str(&escape(text)),
+                Inline::Text(text) => {
+                    let text = if self.french {
+                        let after_word = out.chars().last().is_some_and(|c| !c.is_whitespace());
+                        crate::typo::french(text, after_word)
+                    } else {
+                        text.clone()
+                    };
+                    out.push_str(&escape(&text));
+                }
                 Inline::SoftBreak => out.push(' '),
                 Inline::LineBreak => out.push_str("#linebreak();"),
                 Inline::Code(code) => {
@@ -438,20 +470,33 @@ impl Gen<'_> {
                 Inline::Highlight(c) => wrap(&mut out, "highlight", &self.inlines(c)),
                 Inline::Superscript(c) => wrap(&mut out, "super", &self.inlines(c)),
                 Inline::Subscript(c) => wrap(&mut out, "sub", &self.inlines(c)),
+                Inline::Underline(c) => wrap(&mut out, "underline", &self.inlines(c)),
+                Inline::Kbd(key) => {
+                    let _ = write!(out, "#kbd({});", string(key));
+                }
+                Inline::Html(_) => {}
                 Inline::Link { url, content } => {
                     let label = self.inlines(content);
                     if is_external(url) {
                         let _ = write!(out, "#link({})[{label}];", string(url));
+                    } else if let Some(index) = self.internal(url) {
+                        let _ = write!(out, "#link(<nectar-h-{index}>)[{label}];");
                     } else {
                         out.push_str(&label);
                     }
                 }
-                Inline::WikiLink { label, .. } => wrap(&mut out, "wikilink", &escape(label)),
+                Inline::WikiLink { target, label } | Inline::Embed { target, label } => match self.internal(target) {
+                    Some(index) => {
+                        let _ = write!(out, "#link(<nectar-h-{index}>)[#wikilink[{}]];", escape(label));
+                    }
+                    None => wrap(&mut out, "wikilink", &escape(label)),
+                },
                 Inline::Image(image) => match &image.path {
                     Some(path) => {
                         let vpath = self.asset(path);
                         let width = image.width_px.map(|w| format!(", width-px: {w}")).unwrap_or_default();
-                        let _ = write!(out, "#box(nectar-image({}{width}, inline: true));", string(&vpath));
+                        let page = image.page.map(|p| format!(", page: {p}")).unwrap_or_default();
+                        let _ = write!(out, "#box(nectar-image({}{width}{page}, inline: true));", string(&vpath));
                     }
                     None => {
                         let _ = write!(out, "#missing-image({}, inline: true);", string(&image.target));
@@ -470,6 +515,33 @@ impl Gen<'_> {
         }
         out
     }
+}
+
+impl Gen<'_> {
+    /// Un lien vers un titre de cette note : `#titre`, `[[#Titre]]`,
+    /// `[[Cette note#Titre]]`.
+    fn internal(&self, target: &str) -> Option<usize> {
+        let (note, section) = target.split_once('#')?;
+        let note = note.trim().trim_end_matches(".md").to_lowercase();
+        if !note.is_empty() && self.doc_name.as_deref() != Some(note.as_str()) {
+            return None;
+        }
+        let wanted = crate::ids::slug(&crate::vault::percent_decode(section));
+        self.headings.get(&wanted).copied()
+    }
+}
+
+/// Ancres des titres de premier niveau, dans l'ordre (la première gagne).
+fn heading_slugs(doc: &Document) -> HashMap<String, usize> {
+    let mut map = HashMap::new();
+    let headings = doc.blocks.iter().filter_map(|b| match &b.node {
+        Node::Heading { content, .. } => Some(crate::ids::slug(&plain_text(content))),
+        _ => None,
+    });
+    for (index, slug) in headings.enumerate() {
+        map.entry(slug).or_insert(index);
+    }
+    map
 }
 
 fn wrap(out: &mut String, func: &str, body: &str) {
@@ -665,6 +737,20 @@ mod tests {
         let page = g.source.find("#set page(paper: \"a3\"").unwrap();
         let heading = g.source.find("Titre]").unwrap();
         assert!(page < heading, "{}", g.source);
+    }
+
+    #[test]
+    fn internal_links_point_to_headings() {
+        let mut doc = parse(
+            "# Début\n\nVoir [[#Fin]], [ici](#fin) et [[Note#Début|là]], pas [[Autre#Fin]].\n\n## Fin\n",
+            &ParseOptions::default(),
+        );
+        doc.name = Some("Note".into());
+        let g = generate(&doc, &Layout::default(), &Style::default());
+        assert!(g.source.contains("<nectar-h-0>") && g.source.contains("<nectar-h-1>"));
+        assert_eq!(g.source.matches("#link(<nectar-h-1>)").count(), 2, "{}", g.source);
+        assert_eq!(g.source.matches("#link(<nectar-h-0>)").count(), 1);
+        assert_eq!(g.source.matches("#link(").count(), 3, "[[Autre#Fin]] reste un simple libellé");
     }
 
     #[test]

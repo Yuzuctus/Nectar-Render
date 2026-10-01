@@ -8,11 +8,13 @@ pub mod code_themes;
 pub mod codegen;
 pub mod directives;
 pub mod frontmatter;
+mod html;
 pub mod ids;
 pub mod layout;
 pub mod model;
 pub mod parse;
 pub mod style;
+pub mod typo;
 mod typst_style;
 pub mod vault;
 
@@ -69,8 +71,9 @@ impl Project {
         let text = std::fs::read_to_string(&self.note)
             .map_err(|source| ProjectError::Read { path: self.note.clone(), source })?;
         let note_dir = self.note.parent().map(Path::to_path_buf).unwrap_or_default();
-        let options = ParseOptions { vault: Some(&self.vault), note_dir: Some(&note_dir) };
+        let options = ParseOptions { vault: Some(&self.vault), note_dir: Some(&note_dir), depth: 0 };
         self.document = parse(&text, &options);
+        self.document.name = self.note.file_stem().map(|s| s.to_string_lossy().into_owned());
         // Les retouches suivent le texte : on recale leurs ancres et on les
         // réenregistre si besoin.
         if self.layout.heal(&self.document) && self.layout_path.exists() {

@@ -27,4 +27,4 @@ Corps.
 )
 
 #nb("code-9f731f0f")
-#raw(block: true, lang: "rust", "fn main() {}")
+#nectar-code("fn main() {}", lang: "rust", title: none, highlight: ())

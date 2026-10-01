@@ -31,20 +31,23 @@
   max-height: 100%,
   scale: 0.75,
   inline: false,
+  page: none,
 ) = {
+  // `page` ne vaut que pour un PDF inclus.
+  let img(..args) = if page == none { image(src, alt: alt, ..args) } else { image(src, alt: alt, page: page, ..args) }
   if inline {
     return if width-px != none {
-      image(src, alt: alt, width: width-px * px)
+      img(width: width-px * px)
     } else if height-px != none {
-      image(src, alt: alt, height: height-px * px)
+      img(height: height-px * px)
     } else {
-      image(src, alt: alt, height: 1.2em)
+      img(height: 1.2em)
     }
   }
   layout(region => {
-    let natural = measure(image(src))
+    let natural = measure(img())
     if natural.width == 0pt or natural.height == 0pt {
-      return image(src, alt: alt, width: 100%)
+      return img(width: 100%)
     }
     let ratio = natural.height / natural.width
     let w = if width-ratio != none {
@@ -61,7 +64,7 @@
       let max-h = region.height * max-height
       if w * ratio > max-h { w = max-h / ratio }
     }
-    image(src, alt: alt, width: w)
+    img(width: w)
   })
 }
 
@@ -76,10 +79,12 @@
   align-to: center,
   placement: "inline",
   scale: 0.75,
+  page: none,
 ) = {
   let sized(max-height) = nectar-image(
     src,
     alt: alt,
+    page: page,
     width-ratio: width-ratio,
     width-px: width-px,
     height-px: height-px,
@@ -89,7 +94,7 @@
   let body(max-height) = if caption == none { sized(max-height) } else { figure(sized(max-height), caption: caption) }
   if placement == "full-page" {
     pagebreak(weak: true)
-    let big = nectar-image(src, alt: alt, width-ratio: 1.0, max-height: if caption == none { 100% } else { 90% })
+    let big = nectar-image(src, alt: alt, page: page, width-ratio: 1.0, max-height: if caption == none { 100% } else { 90% })
     align(center + horizon, if caption == none { big } else { figure(big, caption: caption) })
     pagebreak(weak: true)
   } else if placement == "top" or placement == "bottom" {
@@ -120,6 +125,16 @@
 }
 
 #let wikilink(body) = text(fill: col(S.links.wikilink_color), body)
+
+/// Touche de clavier : petite étiquette encadrée.
+#let kbd(key) = box(
+  inset: (x: 3pt, y: 0pt),
+  outset: (y: 2pt),
+  radius: 2.5pt,
+  stroke: 0.6pt + col(S.table.border_color),
+  fill: col(S.code.inline_background),
+  text(..face(S.code.font), size: 0.82em, key),
+)
 
 #let task(done) = {
   let ink = col(S.text.color)
@@ -200,13 +215,19 @@
   dockerfile: "Dockerfile", ini: "INI", txt: "Texte", text: "Texte",
 )
 
-#let code-block(it) = {
+/// Bloc de code façon éditeur : bandeau (onglet ou fenêtre), numéros de
+/// ligne dans une gouttière, lignes surlignées. Chaque ligne est une rangée de
+/// grille : une ligne trop longue repart à la ligne alignée sur le code, pas
+/// sous les numéros.
+#let nectar-code(source, lang: none, title: none, highlight: ()) = {
   let C = S.code
   let T = code-theme
   let fg = rgb(T.foreground)
-  let lines = it.lines.len()
-  let digits = str(lines).len()
-  let label = if it.lang == none or it.lang == "" { none } else { lang-names.at(lower(it.lang), default: it.lang) }
+  let lang-label = if lang == none or lang == "" { none } else { lang-names.at(lower(lang), default: lang) }
+  let label = if title != none { title } else { lang-label }
+  let lines = source.split("\n")
+  let digits = str(lines.len()).len()
+  let hl-fill = if T.dark { rgb(255, 255, 255, 18) } else { rgb(255, 213, 0, 45) }
 
   let header = if C.header == "tab" and label != none {
     block(width: 100%, fill: rgb(T.header), spacing: 0pt, {
@@ -232,6 +253,31 @@
     })
   }
 
+  let body = {
+    set text(..face(C.font), size: pt(C.size_pt), fill: fg)
+    set par(justify: false, first-line-indent: 0pt, leading: (C.line_height - 0.75) * 1em)
+    let leading = (C.line_height - 0.75) * 1em
+    show raw.where(block: true): it => {
+      let rows = it.lines.map(line => {
+        // Le caractère invisible garde la hauteur des lignes vides.
+        let code = [#sym.zws#line.body]
+        if C.line_numbers {
+          (align(right, text(fill: rgb(T.gutter), str(line.number))), code)
+        } else {
+          (code,)
+        }
+      })
+      grid(
+        columns: if C.line_numbers { (digits * 0.62em, 1fr) } else { (1fr,) },
+        column-gutter: 1.1em,
+        inset: (x: 0pt, y: leading / 2),
+        fill: (_, y) => if (y + 1) in highlight { hl-fill },
+        ..rows.flatten(),
+      )
+    }
+    raw(source, block: true, lang: lang)
+  }
+
   block(
     width: 100%,
     fill: rgb(T.background),
@@ -243,18 +289,7 @@
     below: 1.2em,
     {
       header
-      block(width: 100%, inset: (x: 13pt, y: 10pt), spacing: 0pt, {
-        set text(fill: fg)
-        set par(justify: false, leading: (C.line_height - 0.75) * 1em)
-        show raw.line: line => {
-          if C.line_numbers {
-            box(width: digits * 0.62em, align(right, text(fill: rgb(T.gutter), str(line.number))))
-            h(1.1em)
-          }
-          line.body
-        }
-        it
-      })
+      block(width: 100%, inset: (x: 13pt, y: 10pt - 0.2em), spacing: 0pt, body)
     },
   )
 }
@@ -324,6 +359,14 @@
     first-line-indent: (amount: T.first_line_indent_em * 1em, all: false),
   )
   set highlight(fill: col(S.highlight), extent: 1pt)
+  // Lignes isolées (veuves, orphelines) : fortement pénalisées.
+  set text(costs: (widow: if T.avoid_widows { 1000% } else { 100% }, orphan: if T.avoid_widows { 1000% } else { 100% }))
+  show math.equation: set text(font: (T.math_font, "New Computer Modern Math"))
+  // Guillemets français avec espaces fines insécables.
+  show: body => if T.french_typography and lang.starts-with("fr") {
+    set smartquote(quotes: (double: ("«\u{202F}", "\u{202F}»"), single: ("‹\u{202F}", "\u{202F}›")))
+    body
+  } else { body }
   show link: set text(fill: col(S.links.color))
   show link: it => if S.links.underline { underline(offset: 2pt, it) } else { it }
   set list(marker: ([•], [◦], [▪]), indent: 0.4em, body-indent: 0.55em)
@@ -362,7 +405,6 @@
     radius: 2pt,
     text(fill: col(S.code.inline_color), size: pt(T.size_pt) * 0.9, it),
   )
-  show raw.where(block: true): code-block
 
   // Citations.
   let Q = S.quote

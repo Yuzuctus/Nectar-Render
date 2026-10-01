@@ -12,6 +12,7 @@ use comrak::nodes::{ListType, NodeValue, TableAlignment};
 use comrak::{Arena, Options};
 
 use crate::directives::{self, DirectiveLine};
+use crate::html;
 use crate::ids::{IdAllocator, excerpt};
 use crate::layout::BlockOps;
 use crate::model::*;
@@ -28,7 +29,12 @@ pub struct ParseOptions<'a> {
     pub vault: Option<&'a Vault>,
     /// Dossier de la note, pour les chemins relatifs.
     pub note_dir: Option<&'a Path>,
+    /// Profondeur d'inclusion (`![[note]]` dans une note incluse…).
+    pub depth: u8,
 }
+
+/// Au-delà, une inclusion est refusée (boucle probable).
+const MAX_DEPTH: u8 = 4;
 
 /// Lit une note.
 pub fn parse(markdown: &str, options: &ParseOptions<'_>) -> Document {
@@ -52,14 +58,25 @@ pub fn parse(markdown: &str, options: &ParseOptions<'_>) -> Document {
                 continue;
             }
             NodeValue::FootnoteDefinition(_) => continue,
-            NodeValue::HtmlBlock(html) => {
-                match directives::parse_html(&html.literal) {
-                    DirectiveLine::Ops(ops) => pending.get_or_insert_with(BlockOps::default).merge(&ops),
-                    DirectiveLine::Invalid(message) => cx.warn(line, message),
-                    DirectiveLine::None => {}
+            NodeValue::HtmlBlock(html) => match directives::parse_html(&html.literal) {
+                DirectiveLine::Ops(ops) => {
+                    pending.get_or_insert_with(BlockOps::default).merge(&ops);
+                    continue;
                 }
-                continue;
-            }
+                DirectiveLine::Invalid(message) => {
+                    cx.warn(line, message);
+                    continue;
+                }
+                DirectiveLine::None => match cx.html_block(&html.literal, line) {
+                    Some((node, ops)) => {
+                        if let Some(ops) = ops {
+                            pending.get_or_insert_with(BlockOps::default).merge(&ops);
+                        }
+                        node
+                    }
+                    None => continue,
+                },
+            },
             NodeValue::Paragraph if is_legacy_pagebreak(child) => {
                 pending.get_or_insert_with(BlockOps::default).break_before = true;
                 continue;
@@ -70,20 +87,102 @@ pub fn parse(markdown: &str, options: &ParseOptions<'_>) -> Document {
             },
         };
 
-        let text = node_text(&node);
-        let id = ids.allocate(node.kind(), &text);
-        let mut node = node;
-        if let Node::List(list) = &mut node {
-            for item in &mut list.items {
-                let item_text = item.children.iter().map(node_text).collect::<Vec<_>>().join(" ");
-                item.id = Some(ids.allocate(BlockKind::ListItem, &item_text));
+        // `![[note]]` seul dans son paragraphe : la note est incluse ici.
+        if let Node::Paragraph(content) = &node
+            && let Some(target) = single_embed(content)
+        {
+            let included = cx.transclude(&target, line);
+            let mut first = true;
+            for block in included {
+                let ops = if first { pending.take().or(block.inline_ops) } else { block.inline_ops };
+                first = false;
+                push_block(&mut doc, &mut ids, block.node, line, ops);
             }
+            continue;
         }
-        doc.blocks.push(Block { id, line, excerpt: excerpt(&text, EXCERPT_CHARS), node, inline_ops: pending.take() });
+        push_block(&mut doc, &mut ids, node, line, pending.take());
     }
 
     doc.warnings = cx.warnings;
     doc
+}
+
+/// Ajoute un bloc au document en lui donnant ses ids (et ceux de ses puces).
+fn push_block(doc: &mut Document, ids: &mut IdAllocator, mut node: Node, line: usize, ops: Option<BlockOps>) {
+    let text = node_text(&node);
+    let id = ids.allocate(node.kind(), &text);
+    if let Node::List(list) = &mut node {
+        for item in &mut list.items {
+            let item_text = item.children.iter().map(node_text).collect::<Vec<_>>().join(" ");
+            item.id = Some(ids.allocate(BlockKind::ListItem, &item_text));
+        }
+    }
+    doc.blocks.push(Block { id, line, excerpt: excerpt(&text, EXCERPT_CHARS), node, inline_ops: ops });
+}
+
+/// Le paragraphe ne contient qu'une inclusion de note.
+fn single_embed(content: &[Inline]) -> Option<String> {
+    let meaningful: Vec<&Inline> = content
+        .iter()
+        .filter(|i| !matches!(i, Inline::SoftBreak | Inline::LineBreak))
+        .filter(|i| !matches!(i, Inline::Text(t) if t.trim().is_empty()))
+        .collect();
+    match meaningful.as_slice() {
+        [Inline::Embed { target, .. }] => Some(target.clone()),
+        _ => None,
+    }
+}
+
+/// Lignes à surligner : `{1,3-5}` ou `hl_lines="1 3-5"`.
+fn parse_ranges(spec: &str) -> Vec<u32> {
+    let mut lines = Vec::new();
+    for part in spec.split([',', ' ']).filter(|p| !p.is_empty()) {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                if let (Ok(a), Ok(b)) = (a.trim().parse::<u32>(), b.trim().parse::<u32>()) {
+                    lines.extend(a.min(b)..=a.max(b).min(a.min(b) + 10_000));
+                }
+            }
+            None => lines.extend(part.trim().parse::<u32>().ok()),
+        }
+    }
+    lines.sort_unstable();
+    lines.dedup();
+    lines
+}
+
+/// Chaîne d'info d'un bloc de code : langage, titre, lignes surlignées.
+/// Formats compris : ` ```rust title="main.rs" {3-5} `, ` ```rust:main.rs `,
+/// ` ```python hl_lines="1 3" `.
+fn code_info(info: &str) -> (Option<String>, Option<String>, Vec<u32>) {
+    let info = info.trim();
+    let (head, rest) = info.split_once(char::is_whitespace).unwrap_or((info, ""));
+    let (lang, mut title) = match head.split_once(':') {
+        Some((lang, file)) if !file.is_empty() => (lang.to_string(), Some(file.to_string())),
+        _ => (head.to_string(), None),
+    };
+    let lang = (!lang.is_empty() && !lang.starts_with('{')).then_some(lang);
+    let mut highlight = Vec::new();
+    let mut rest = format!("{} {rest}", if head.starts_with('{') { head } else { "" });
+    while let (Some(open), Some(close)) = (rest.find('{'), rest.find('}')) {
+        if close < open {
+            break;
+        }
+        highlight.extend(parse_ranges(&rest[open + 1..close]));
+        rest.replace_range(open..=close, " ");
+    }
+    for key in ["title", "file", "filename", "hl_lines"] {
+        if let Some(value) = html::attr(&format!(" {rest}"), key) {
+            if key == "hl_lines" {
+                highlight.extend(parse_ranges(&value));
+            } else {
+                title = Some(value);
+            }
+        }
+    }
+    highlight.sort_unstable();
+    highlight.dedup();
+    (lang, title, highlight)
 }
 
 fn comrak_options() -> Options<'static> {
@@ -255,22 +354,17 @@ impl Cx<'_> {
             NodeValue::Heading(h) => Some(Node::Heading { level: h.level, content: self.inlines(node) }),
             NodeValue::List(list) => Some(Node::List(self.list(node, list))),
             NodeValue::CodeBlock(code) => {
-                let lang = code.info.split_whitespace().next().map(str::to_string);
+                let (lang, title, highlight) = code_info(&code.info);
                 let mut text = code.literal;
                 if text.ends_with('\n') {
                     text.pop();
                 }
-                Some(Node::Code { lang, text })
+                Some(Node::Code { lang, text, title, highlight })
             }
             NodeValue::BlockQuote | NodeValue::MultilineBlockQuote(_) => Some(self.quote(node)),
             NodeValue::Table(table) => Some(self.table(node, &table.alignments)),
             NodeValue::ThematicBreak => Some(Node::Rule),
-            NodeValue::HtmlBlock(html) => {
-                if !html.literal.trim_start().starts_with("<!--") {
-                    self.warn(line, "bloc HTML ignoré");
-                }
-                None
-            }
+            NodeValue::HtmlBlock(html) => self.html_block(&html.literal, line).map(|(node, _)| node),
             NodeValue::FootnoteDefinition(_) | NodeValue::FrontMatter(_) => None,
             other => {
                 self.warn(line, format!("élément non géré ({other:?})"));
@@ -389,7 +483,8 @@ impl Cx<'_> {
                         }
                         self.embed(&mut out, &link.url, &label, line);
                     } else {
-                        let label = if label.is_empty() { wikilink_label(&link.url) } else { label };
+                        let label =
+                            if label.is_empty() || label == link.url { wikilink_label(&link.url) } else { label };
                         out.push(Inline::WikiLink { target: link.url.clone(), label });
                     }
                 }
@@ -399,16 +494,71 @@ impl Cx<'_> {
                     None => self.warn(line, format!("note de bas de page « {} » introuvable", r.name)),
                 },
                 NodeValue::HtmlInline(html) => {
-                    let tag = html.trim().to_ascii_lowercase();
-                    if tag.starts_with("<br") {
+                    let tag = html.trim().to_string();
+                    let lower = tag.to_ascii_lowercase();
+                    if lower.starts_with("<br") {
                         out.push(Inline::LineBreak);
+                    } else if lower.starts_with("<img") {
+                        match html::attr(&tag, "src") {
+                            Some(src) => {
+                                let width = html::attr(&tag, "width").and_then(|w| html::pixels(&w));
+                                let height = html::attr(&tag, "height").and_then(|h| html::pixels(&h));
+                                let alt = html::attr(&tag, "alt").unwrap_or_default();
+                                out.push(Inline::Image(self.image(&src, alt, width, height, line)));
+                            }
+                            None => self.warn(line, "balise <img> sans src"),
+                        }
+                    } else if !lower.starts_with("<!--") {
+                        out.push(Inline::Html(tag));
                     }
                 }
                 NodeValue::Raw(raw) => push_text(&mut out, &raw),
                 other => self.warn(line, format!("élément en ligne non géré ({other:?})")),
             }
         }
-        out
+        html::fold(out)
+    }
+
+    /// Bloc HTML : images (`<img>`, centrées ou non) et texte simplifié.
+    fn html_block(&mut self, literal: &str, line: usize) -> Option<(Node, Option<BlockOps>)> {
+        let trimmed = literal.trim();
+        if trimmed.is_empty() || trimmed.starts_with("<!--") {
+            return None;
+        }
+        let centered = html::centered(trimmed);
+        let images: Vec<Image> = html::tags(trimmed, "img")
+            .into_iter()
+            .filter_map(|tag| {
+                let src = html::attr(&tag, "src")?;
+                let width = html::attr(&tag, "width").and_then(|w| html::pixels(&w));
+                let height = html::attr(&tag, "height").and_then(|h| html::pixels(&h));
+                let alt = html::attr(&tag, "alt").unwrap_or_default();
+                Some(self.image(&src, alt, width, height, line))
+            })
+            .collect();
+        let text = html::strip(trimmed);
+        let ops = centered.then(|| BlockOps {
+            image: Some(crate::layout::ImageOps { align: Some(crate::layout::HAlign::Center), ..Default::default() }),
+            ..Default::default()
+        });
+        match (images.len(), text.trim().is_empty()) {
+            (1, true) => Some((Node::Figure(images.into_iter().next().expect("une image")), ops)),
+            (0, true) => None,
+            _ => {
+                let mut content: Vec<Inline> = Vec::new();
+                if !text.trim().is_empty() {
+                    content.push(Inline::Text(text.trim().to_string()));
+                    self.warn(line, "bloc HTML simplifié en texte");
+                }
+                for image in images {
+                    if !content.is_empty() {
+                        content.push(Inline::Text(" ".into()));
+                    }
+                    content.push(Inline::Image(image));
+                }
+                Some((Node::Paragraph(content), None))
+            }
+        }
     }
 
     /// `![[cible|alias]]` : une image, ou une note incluse (pas encore gérée).
@@ -418,10 +568,66 @@ impl Cx<'_> {
             let alt = if alias.is_empty() || width.is_some() { String::new() } else { alt };
             out.push(Inline::Image(self.image(target, alt, width, height, line)));
         } else {
-            self.warn(line, format!("l'inclusion de note « {target} » n'est pas encore gérée"));
             let label = if alias.is_empty() { wikilink_label(target) } else { alias.to_string() };
-            out.push(Inline::WikiLink { target: target.to_string(), label });
+            out.push(Inline::Embed { target: target.to_string(), label });
         }
+    }
+
+    /// Les blocs d'une note incluse (`![[note]]`, `![[note#Titre]]`).
+    fn transclude(&mut self, target: &str, line: usize) -> Vec<Block> {
+        if self.options.depth >= MAX_DEPTH {
+            self.warn(line, format!("inclusion trop profonde ignorée : {target}"));
+            return Vec::new();
+        }
+        let (name, section) = match target.split_once('#') {
+            Some((name, section)) => (name, Some(section)),
+            None => (target, None),
+        };
+        let file = if Path::new(name).extension().is_some() { name.to_string() } else { format!("{name}.md") };
+        let vault_here;
+        let vault = match self.options.vault {
+            Some(vault) => vault,
+            None => {
+                vault_here = Vault::at(self.options.note_dir.unwrap_or(Path::new(".")));
+                &vault_here
+            }
+        };
+        let dir = self.options.note_dir.unwrap_or(vault.root());
+        let Some(path) = vault.resolve(&file, dir) else {
+            self.warn(line, format!("note incluse introuvable : {name}"));
+            return Vec::new();
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            self.warn(line, format!("note incluse illisible : {}", path.display()));
+            return Vec::new();
+        };
+        let sub_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let options = ParseOptions { vault: Some(vault), note_dir: Some(&sub_dir), depth: self.options.depth + 1 };
+        let mut included = parse(&text, &options);
+        self.warnings.extend(included.warnings.drain(..).map(|w| format!("{name} : {w}")));
+        let Some(section) = section else { return included.blocks };
+        if section.starts_with('^') {
+            self.warn(line, format!("inclusion d'un bloc ^id non gérée : {target}"));
+            return Vec::new();
+        }
+        let wanted = crate::ids::slug(section);
+        let start = included.blocks.iter().position(
+            |b| matches!(&b.node, Node::Heading { content, .. } if crate::ids::slug(&plain_text(content)) == wanted),
+        );
+        let Some(start) = start else {
+            self.warn(line, format!("section « {section} » introuvable dans {name}"));
+            return Vec::new();
+        };
+        let level = match &included.blocks[start].node {
+            Node::Heading { level, .. } => *level,
+            _ => 1,
+        };
+        let end = included.blocks[start + 1..]
+            .iter()
+            .position(|b| matches!(&b.node, Node::Heading { level: l, .. } if *l <= level))
+            .map(|i| start + 1 + i)
+            .unwrap_or(included.blocks.len());
+        included.blocks.drain(start..end).collect()
     }
 
     fn image(&mut self, target: &str, alt: String, width: Option<u32>, height: Option<u32>, line: usize) -> Image {
@@ -438,7 +644,8 @@ impl Cx<'_> {
                 self.warn(line, format!("image introuvable : {target}"));
             }
         }
-        Image { target: target.to_string(), path, alt, width_px: width, height_px: height }
+        let page = target.split_once("#page=").and_then(|(_, p)| p.trim().parse().ok());
+        Image { target: target.to_string(), path, alt, width_px: width, height_px: height, page }
     }
 }
 
@@ -487,6 +694,7 @@ fn is_image(target: &str) -> bool {
 }
 
 fn wikilink_label(target: &str) -> String {
+    let target = target.trim_start_matches('#');
     let name = target.rsplit('/').next().unwrap_or(target);
     let name = name.strip_suffix(".md").unwrap_or(name);
     name.replace('#', " › ")
@@ -593,6 +801,49 @@ mod tests {
         assert_eq!(doc.meta.author.as_deref(), Some("A, B"));
         let Node::Paragraph(content) = &doc.blocks[0].node else { panic!() };
         assert_eq!(content.iter().filter(|i| matches!(i, Inline::Footnote(_))).count(), 2);
+    }
+
+    #[test]
+    fn code_info_strings() {
+        assert_eq!(
+            code_info("rust title=\"src/main.rs\" {2,4-5}"),
+            (Some("rust".into()), Some("src/main.rs".into()), vec![2, 4, 5])
+        );
+        assert_eq!(code_info("python:outils.py"), (Some("python".into()), Some("outils.py".into()), vec![]));
+        assert_eq!(code_info("py hl_lines=\"1 3\""), (Some("py".into()), None, vec![1, 3]));
+        assert_eq!(code_info(""), (None, None, vec![]));
+    }
+
+    #[test]
+    fn note_sections_are_included() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("Autre.md"), "# A\n\nintro\n\n## B\n\ndedans\n\n## C\n\ndehors\n").unwrap();
+        let options = ParseOptions { note_dir: Some(dir.path()), ..Default::default() };
+        let doc = parse("Avant\n\n![[Autre#B]]\n\nAprès [[#B]] ![[Autre]] en ligne.\n", &options);
+        let texts: Vec<String> = doc.blocks.iter().map(|b| node_text(&b.node)).collect();
+        assert_eq!(texts[..3], ["Avant", "B", "dedans"]);
+        assert!(texts[3].starts_with("Après B"), "{texts:?}");
+        assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    }
+
+    #[test]
+    fn common_html() {
+        let doc = p(
+            "Du <u>souligné</u>, <sup>2</sup>, <mark>marqué</mark>, <kbd>Ctrl</kbd> et <b><i>gras</i></b>.\n\n<p align=\"center\"><img src=\"x.png\" width=\"300\"></p>\n\nTexte <img src='y.png' width=50> fin.\n",
+        );
+        let Node::Paragraph(c) = &doc.blocks[0].node else { panic!() };
+        assert!(c.iter().any(|i| matches!(i, Inline::Underline(_))));
+        assert!(c.iter().any(|i| matches!(i, Inline::Superscript(_))));
+        assert!(c.iter().any(|i| matches!(i, Inline::Highlight(_))));
+        assert!(c.iter().any(|i| matches!(i, Inline::Kbd(k) if k == "Ctrl")));
+        assert!(c.iter().any(|i| matches!(i, Inline::Strong(inner) if matches!(inner[0], Inline::Emph(_)))));
+        assert!(!c.iter().any(|i| matches!(i, Inline::Html(_))));
+        let Node::Figure(img) = &doc.blocks[1].node else { panic!("{:?}", doc.blocks[1].node) };
+        assert_eq!((img.target.as_str(), img.width_px), ("x.png", Some(300)));
+        let ops = doc.blocks[1].inline_ops.as_ref().unwrap();
+        assert_eq!(ops.image.as_ref().unwrap().align, Some(crate::layout::HAlign::Center));
+        let Node::Paragraph(c) = &doc.blocks[2].node else { panic!() };
+        assert!(c.iter().any(|i| matches!(i, Inline::Image(img) if img.width_px == Some(50))));
     }
 
     #[test]

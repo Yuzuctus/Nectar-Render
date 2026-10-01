@@ -91,6 +91,12 @@ pub struct TextStyle {
     pub paragraph_spacing_em: f32,
     /// Retrait de première ligne, en em (0 = aucun).
     pub first_line_indent_em: f32,
+    /// Espaces insécables françaises (devant `; : ! ?`, dans « »).
+    pub french_typography: bool,
+    /// Éviter les lignes isolées en haut ou en bas de page (veuves, orphelines).
+    pub avoid_widows: bool,
+    /// Police des formules (police mathématique OpenType).
+    pub math_font: String,
 }
 
 impl Default for TextStyle {
@@ -104,6 +110,9 @@ impl Default for TextStyle {
             hyphenate: true,
             paragraph_spacing_em: 0.9,
             first_line_indent_em: 0.0,
+            french_typography: true,
+            avoid_widows: true,
+            math_font: "New Computer Modern Math".into(),
         }
     }
 }

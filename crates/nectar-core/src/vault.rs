@@ -120,7 +120,7 @@ fn clean_target(target: &str) -> Option<String> {
     Some(percent_decode(target))
 }
 
-fn percent_decode(input: &str) -> String {
+pub(crate) fn percent_decode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

@@ -96,6 +96,25 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
             label(ui, "Césure");
             ui.checkbox(&mut s.text.hyphenate, "Couper les mots en fin de ligne");
             ui.end_row();
+            label(ui, "Typographie");
+            ui.checkbox(&mut s.text.french_typography, "Espaces insécables françaises");
+            ui.end_row();
+            label(ui, "Lignes isolées");
+            ui.checkbox(&mut s.text.avoid_widows, "Éviter en haut et en bas de page");
+            ui.end_row();
+            label(ui, "Formules");
+            choice(
+                ui,
+                "police-maths",
+                &mut s.text.math_font,
+                &[
+                    ("New Computer Modern Math".to_string(), "Computer Modern (LaTeX)"),
+                    ("Cambria Math".to_string(), "Cambria Math (Windows)"),
+                    ("STIX Two Math".to_string(), "STIX Two"),
+                    ("Libertinus Math".to_string(), "Libertinus"),
+                ],
+            );
+            ui.end_row();
         });
     });
 

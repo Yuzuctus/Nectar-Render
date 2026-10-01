@@ -31,6 +31,20 @@ fn fnv1a(text: &str) -> u32 {
     hash
 }
 
+/// Ancre d'un titre, à la manière d'Obsidian et de GitHub : minuscules,
+/// lettres et chiffres gardés, le reste devient des tirets.
+pub fn slug(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.trim().trim_start_matches('#').chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            out.push(c);
+        } else if !out.ends_with('-') && !out.is_empty() {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').to_string()
+}
+
 /// Début de texte lisible, utilisé comme indice pour l'ancrage approximatif.
 pub fn excerpt(text: &str, max_chars: usize) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
