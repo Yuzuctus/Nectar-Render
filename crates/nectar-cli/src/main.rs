@@ -87,7 +87,7 @@ fn main() -> Result<()> {
         Command::Unset { note, block } => unset(&note, &block),
         Command::Typst { note } => {
             let project = open(&note)?;
-            let engine = Engine::new(FontSources::Bundled);
+            let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());
             print!("{}", lay_out(&project, &engine).0.source);
             Ok(())
         }
@@ -124,7 +124,8 @@ fn export(
     if let Some(preset) = preset {
         project.layout.style.preset = preset;
     }
-    let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled });
+    let engine = Engine::new(if system_fonts { FontSources::WithSystem } else { FontSources::Bundled })
+        .with_cache_dir(nectar_core::style::default_cache_dir());
     let (generated, compiled) = lay_out(&project, &engine);
     for warning in &generated.warnings {
         eprintln!("avertissement : {warning}");
@@ -161,7 +162,7 @@ fn export(
 
 fn check(note: &Path) -> Result<()> {
     let project = open(note)?;
-    let engine = Engine::new(FontSources::Bundled);
+    let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());
     let (generated, compiled) = lay_out(&project, &engine);
     let missing = engine.missing_fonts(&generated.fonts);
     let compiled = compiled?;
@@ -189,7 +190,7 @@ fn check(note: &Path) -> Result<()> {
 
 fn blocks(note: &Path) -> Result<()> {
     let project = open(note)?;
-    let engine = Engine::new(FontSources::Bundled);
+    let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());
     let (positions, sizes) = match lay_out(&project, &engine).1 {
         Ok(compiled) => {
             let sizes: Vec<(f64, f64)> = (0..compiled.page_count()).filter_map(|i| compiled.page_size(i)).collect();

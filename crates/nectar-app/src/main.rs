@@ -3,6 +3,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod journal;
 mod pages;
 mod panels;
 mod theme;
@@ -13,6 +14,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    journal::install_panic_hook();
     let mut launch = app::Launch::default();
     let mut args = std::env::args_os().skip(1);
     while let Some(arg) = args.next() {

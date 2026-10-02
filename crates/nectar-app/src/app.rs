@@ -74,6 +74,8 @@ pub struct NectarApp {
     shown: HashMap<usize, (egui::Vec2, egui::TextureHandle)>,
     /// Déplacement à la souris qui attend sa nouvelle mise en page.
     pub ghost: Option<pages::Ghost>,
+    /// Relecture de la note prévue (moment, tentatives).
+    reload_due: Option<(Instant, u32)>,
     /// Retouches ancrées sur la note, recalculées à chaque changement.
     pub resolved: HashMap<BlockId, nectar_core::BlockOps>,
     /// Images de pages reçues du moteur, envoyées à la carte graphique peu à
@@ -84,6 +86,8 @@ pub struct NectarApp {
 impl NectarApp {
     pub fn new(cc: &eframe::CreationContext<'_>, launch: Launch) -> Self {
         theme::install(&cc.egui_ctx);
+        // Ctrl + / Ctrl − zooment les pages, pas toute l'interface.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         if let Some(preference) = launch.theme {
             cc.egui_ctx.set_theme(preference);
         }
@@ -120,6 +124,7 @@ impl NectarApp {
                 .unwrap_or_default(),
             shown: HashMap::new(),
             ghost: None,
+            reload_due: None,
             resolved: HashMap::new(),
             uploads: std::collections::VecDeque::new(),
         };
@@ -135,7 +140,12 @@ impl NectarApp {
     pub fn open(&mut self, note: &Path, ctx: &egui::Context) {
         self.flush();
         match Project::open(note) {
-            Ok(project) => {
+            Ok(mut project) => {
+                for notice in std::mem::take(&mut project.notices) {
+                    crate::journal::write(&notice);
+                    self.notify(notice, true);
+                }
+                self.reload_due = None;
                 self.watch(&project, ctx);
                 self.recents.retain(|p| p != &project.note);
                 self.recents.insert(0, project.note.clone());
@@ -240,7 +250,10 @@ impl NectarApp {
         if project.layout == before {
             return;
         }
-        let gesture = self.last_edit.is_some_and(|t| t.elapsed() < Duration::from_millis(700));
+        // Un geste continu (glisser, curseur, saisie, Alt + flèches) ne fait
+        // qu'une étape d'annulation ; deux clics distincts en font deux.
+        let continuous = ctx.input(|i| i.pointer.any_down() || i.modifiers.alt) || ctx.egui_wants_keyboard_input();
+        let gesture = continuous && self.last_edit.is_some_and(|t| t.elapsed() < Duration::from_millis(700));
         if !gesture || self.undo.is_empty() {
             self.undo.push(before);
         }
@@ -431,7 +444,20 @@ impl NectarApp {
     // ---------------------------------------------------------- événements
 
     fn poll(&mut self, ctx: &egui::Context) {
-        while let Ok(response) = self.worker.rx.try_recv() {
+        loop {
+            let response = match self.worker.rx.try_recv() {
+                Ok(response) => response,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                // Le moteur s'est arrêté : on en relance un, sans perdre la note.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.worker = Worker::spawn(ctx.clone());
+                    self.textures.clear();
+                    self.requested.clear();
+                    self.notify("Le moteur a redémarré", true);
+                    self.regenerate(ctx);
+                    break;
+                }
+            };
             match response {
                 Response::Ready { families } => self.families = families,
                 Response::Laid(laid) => {
@@ -446,11 +472,25 @@ impl NectarApp {
                 Response::Images(images) => self.uploads.extend(images),
                 Response::Exported(Ok(path)) => self.notify(format!("PDF exporté : {}", path.display()), false),
                 Response::Exported(Err(e)) => self.notify(format!("Export impossible : {e}"), true),
+                Response::Failed(message) => {
+                    // La mise en page précédente reste affichée ; l'attente s'arrête.
+                    if let Some(rendered) = &mut self.rendered {
+                        rendered.generation = self.generation;
+                    }
+                    self.requested.clear();
+                    crate::journal::write(&format!("erreur du moteur : {message}"));
+                    self.notify(format!("Erreur du moteur, retouche non appliquée : {}", first_line(&message)), true);
+                }
             }
         }
         // Envoi des images à la carte graphique : au plus ~10 ms par image affichée.
         let started = Instant::now();
+        let target = self.ppi(ctx);
         while let Some(page) = self.uploads.pop_front() {
+            // Un aperçu rapide ne remplace jamais une image déjà nette.
+            if self.textures.get(&page.hash).is_some_and(|(ppi, _)| *ppi > page.ppi && (*ppi - target).abs() < 0.5) {
+                continue;
+            }
             let texture = ctx.load_texture(
                 format!("page-{:x}", page.hash),
                 egui::ImageData::Color(page.image),
@@ -465,12 +505,30 @@ impl NectarApp {
             ctx.request_repaint();
         }
         let changes: Vec<Changed> = self.watcher.as_ref().map(|(_, rx)| rx.try_iter().collect()).unwrap_or_default();
-        if changes.contains(&Changed::Note)
-            && let Some(project) = &mut self.project
-        {
-            match project.reload() {
-                Ok(()) => self.regenerate(ctx),
-                Err(e) => self.notify(format!("Relecture impossible : {e}"), true),
+        // La note a changé : on attend qu'Obsidian ait fini de l'écrire
+        // (plusieurs enregistrements rapprochés n'en font qu'un).
+        if changes.contains(&Changed::Note) {
+            self.reload_due = Some((Instant::now() + Duration::from_millis(250), 0));
+        }
+        if let Some((due, attempts)) = self.reload_due {
+            if Instant::now() < due {
+                ctx.request_repaint_after(due - Instant::now());
+            } else if let Some(project) = &mut self.project {
+                // Quelques tentatives si la note paraît tronquée, puis on la prend telle quelle.
+                match project.reload_checked(attempts >= 6) {
+                    Ok(()) => {
+                        self.reload_due = None;
+                        self.regenerate(ctx);
+                    }
+                    Err(nectar_core::ProjectError::Incomplete) => {
+                        self.reload_due = Some((Instant::now() + Duration::from_millis(200), attempts + 1));
+                        ctx.request_repaint_after(Duration::from_millis(200));
+                    }
+                    Err(e) => {
+                        self.reload_due = None;
+                        self.notify(format!("Relecture impossible : {e}"), true);
+                    }
+                }
             }
         }
         // Retouches modifiées hors de l'atelier (à la main, autre fenêtre).
@@ -572,6 +630,11 @@ impl NectarApp {
         }
         if pressed(Modifiers::COMMAND, Key::Z) {
             self.undo(ctx);
+        }
+        // Ctrl + molette : zoom.
+        let zoom_delta = ctx.input(|i| i.zoom_delta());
+        if (zoom_delta - 1.0).abs() > 0.001 && self.project.is_some() {
+            self.set_zoom(ctx, self.zoom * zoom_delta);
         }
         if pressed(Modifiers::COMMAND, Key::Plus) || pressed(Modifiers::COMMAND, Key::Equals) {
             self.step_zoom(ctx, 1);
@@ -877,6 +940,9 @@ impl NectarApp {
                 .map(|p| p.hash)
                 .collect();
             self.textures.retain(|hash, _| keep.contains(hash));
+            // Les images de secours aussi : seulement autour de la vue.
+            let range = first.saturating_sub(6)..=last + 6;
+            self.shown.retain(|index, _| range.contains(index));
         }
     }
 }

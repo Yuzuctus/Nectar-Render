@@ -63,12 +63,9 @@ impl Layout {
 
     pub fn save(&self, path: &Path) -> Result<(), LayoutError> {
         let io = |source| LayoutError::Io { path: path.display().to_string(), source };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(io)?;
-        }
         let mut text = serde_json::to_string_pretty(self).expect("les retouches se sérialisent toujours");
         text.push('\n');
-        std::fs::write(path, text).map_err(io)
+        crate::write_atomically(path, text.as_bytes()).map_err(io)
     }
 
     /// Les retouches d'un bloc, créées au besoin (pour l'interface).

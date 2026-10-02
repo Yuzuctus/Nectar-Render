@@ -14,8 +14,11 @@ use std::time::Instant;
 use eframe::egui;
 use nectar_typst::{BlockPosition, Compiled, Engine, FontSources, PdfOptions};
 
-/// Images de pages gardées en mémoire par le moteur.
-const CACHE_PAGES: usize = 24;
+/// Une page rendue : largeur, hauteur, pixels RGBA.
+type Rgba = (u32, u32, Vec<u8>);
+
+/// Mémoire des images de pages gardées par le moteur (environ 20 pages A4 nettes).
+const CACHE_BYTES: usize = 200 * 1024 * 1024;
 
 pub enum Request {
     /// Mettre en page la note retouchée (et la vérifier avec l'assistant).
@@ -50,6 +53,8 @@ pub enum Response {
     Laid(Box<Layouted>),
     Images(Vec<PageImage>),
     Exported(Result<PathBuf, String>),
+    /// Le moteur a rencontré une erreur interne (il continue de tourner).
+    Failed(String),
 }
 
 /// Une page mise en page, sans son image.
@@ -102,7 +107,7 @@ impl Worker {
 }
 
 fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Response>) {
-    let engine = Engine::new(FontSources::WithSystem);
+    let engine = Engine::new(FontSources::WithSystem).with_cache_dir(nectar_core::style::default_cache_dir());
     let _ = responses.send(Response::Ready { families: engine.font_families() });
     ctx.request_repaint();
 
@@ -123,117 +128,168 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
         while let Ok(more) = requests.try_recv() {
             pending.push(more);
         }
-        let mut layout = None;
-        let mut pages = None;
-        let mut exports = Vec::new();
-        for request in pending {
-            match request {
-                Request::Layout { generation, check } => layout = Some((generation, check)),
-                Request::Pages { pages: p, ppi } => pages = Some((p, ppi)),
-                Request::Export { path, ident, pdf_a } => exports.push((path, ident, pdf_a)),
-            }
-        }
-
-        if let Some((generation, check)) = layout {
-            let started = Instant::now();
-            let laid = nectar_typst::lay_out(&engine, &check.document, &check.layout, &check.style);
-            let generated = laid.generated;
-            let missing_fonts = engine.missing_fonts(&generated.fonts);
-            let mut error = None;
-            match laid.compiled {
-                Ok(compiled) => current = Some(compiled),
-                Err(e) => error = Some(e.to_string()),
-            }
-            let laid = match &current {
-                Some(compiled) => Layouted {
-                    generation,
-                    pages: (0..compiled.page_count())
-                        .map(|i| {
-                            let (w, h) = compiled.page_size(i).unwrap_or((595.0, 842.0));
-                            PageInfo {
-                                hash: compiled.page_hash(i).unwrap_or_default(),
-                                size_pt: egui::vec2(w as f32, h as f32),
-                            }
-                        })
-                        .collect(),
-                    positions: compiled.block_positions(),
-                    boxes: compiled.block_boxes(f64::from(check.style.page.margin_bottom_mm) * 72.0 / 25.4),
-                    warnings: generated.warnings.iter().chain(&compiled.warnings).cloned().collect(),
-                    issues: nectar_typst::inspect(
-                        compiled,
-                        &check.document,
-                        &check.layout,
-                        &check.style,
-                        &generated,
-                        &missing_fonts,
-                    ),
-                    missing_fonts,
-                    error,
-                    millis: started.elapsed().as_millis(),
-                },
-                None => Layouted {
-                    generation,
-                    pages: Vec::new(),
-                    positions: Vec::new(),
-                    boxes: Vec::new(),
-                    warnings: generated.warnings.clone(),
-                    issues: Vec::new(),
-                    missing_fonts,
-                    error,
-                    millis: started.elapsed().as_millis(),
-                },
-            };
-            let _ = responses.send(Response::Laid(Box::new(laid)));
-            ctx.request_repaint();
-        }
-
-        if let (Some((indices, ppi)), Some(compiled)) = (pages, &current) {
-            for index in indices {
-                // Une retouche ou un défilement arrivé entre-temps passe avant
-                // les pages qui restent (elles seraient périmées).
-                if let Ok(newer) = requests.try_recv() {
-                    let export = matches!(newer, Request::Export { .. });
-                    backlog.push(newer);
-                    if !export {
-                        break;
-                    }
+        // Une erreur interne du moteur (bogue de Typst, image corrompue…) ne
+        // doit jamais l'arrêter : on la signale et on continue.
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut layout = None;
+            let mut pages = None;
+            let mut exports = Vec::new();
+            for request in pending {
+                match request {
+                    Request::Layout { generation, check } => layout = Some((generation, check)),
+                    Request::Pages { pages: p, ppi } => pages = Some((p, ppi)),
+                    Request::Export { path, ident, pdf_a } => exports.push((path, ident, pdf_a)),
                 }
-                let Some(hash) = compiled.page_hash(index) else { continue };
-                let cached = cache.iter().position(|c| c.hash == hash && c.ppi == ppi);
-                let image = match cached {
-                    Some(i) => {
-                        let entry = cache.remove(i).expect("présent");
-                        let image = entry.image.clone();
-                        cache.push_back(entry);
-                        image
-                    }
-                    None => {
-                        let Ok((w, h, rgba)) = compiled.rgba(index, ppi) else { continue };
-                        let image =
-                            Arc::new(egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], &rgba));
-                        cache.push_back(PageImage { hash, ppi, image: image.clone() });
-                        while cache.len() > CACHE_PAGES {
-                            cache.pop_front();
-                        }
-                        image
-                    }
+            }
+
+            if let Some((generation, check)) = layout {
+                let started = Instant::now();
+                let laid = nectar_typst::lay_out(&engine, &check.document, &check.layout, &check.style);
+                let generated = laid.generated;
+                let missing_fonts = engine.missing_fonts(&generated.fonts);
+                let mut error = None;
+                match laid.compiled {
+                    Ok(compiled) => current = Some(compiled),
+                    Err(e) => error = Some(e.to_string()),
+                }
+                let laid = match &current {
+                    Some(compiled) => Layouted {
+                        generation,
+                        pages: (0..compiled.page_count())
+                            .map(|i| {
+                                let (w, h) = compiled.page_size(i).unwrap_or((595.0, 842.0));
+                                PageInfo {
+                                    hash: compiled.page_hash(i).unwrap_or_default(),
+                                    size_pt: egui::vec2(w as f32, h as f32),
+                                }
+                            })
+                            .collect(),
+                        positions: compiled.block_positions(),
+                        boxes: compiled.block_boxes(f64::from(check.style.page.margin_bottom_mm) * 72.0 / 25.4),
+                        warnings: generated.warnings.iter().chain(&compiled.warnings).cloned().collect(),
+                        issues: nectar_typst::inspect(
+                            compiled,
+                            &check.document,
+                            &check.layout,
+                            &check.style,
+                            &generated,
+                            &missing_fonts,
+                        ),
+                        missing_fonts,
+                        error,
+                        millis: started.elapsed().as_millis(),
+                    },
+                    None => Layouted {
+                        generation,
+                        pages: Vec::new(),
+                        positions: Vec::new(),
+                        boxes: Vec::new(),
+                        warnings: generated.warnings.clone(),
+                        issues: Vec::new(),
+                        missing_fonts,
+                        error,
+                        millis: started.elapsed().as_millis(),
+                    },
                 };
-                // Chaque page dès qu'elle est prête.
-                let _ = responses.send(Response::Images(vec![PageImage { hash, ppi, image }]));
+                let _ = responses.send(Response::Laid(Box::new(laid)));
                 ctx.request_repaint();
             }
-        }
 
-        for (path, ident, pdf_a) in exports {
-            let result = match &current {
-                Some(compiled) => compiled
-                    .pdf(&PdfOptions { ident: Some(ident), pdf_a })
-                    .map_err(|e| e.to_string())
-                    .and_then(|pdf| std::fs::write(&path, pdf).map_err(|e| e.to_string()))
-                    .map(|()| path),
-                None => Err("rien à exporter : le document n'a pas encore été mis en page".into()),
-            };
-            let _ = responses.send(Response::Exported(result));
+            if let (Some((indices, ppi)), Some(compiled)) = (pages, &current) {
+                let send = |image: PageImage| {
+                    let _ = responses.send(Response::Images(vec![image]));
+                    ctx.request_repaint();
+                };
+                // Déjà prêtes : envoyées tout de suite.
+                let mut todo: Vec<(usize, u128)> = Vec::new();
+                for index in indices {
+                    let Some(hash) = compiled.page_hash(index) else { continue };
+                    match cache.iter().position(|c| c.hash == hash && c.ppi == ppi) {
+                        Some(i) => {
+                            let entry = cache.remove(i).expect("présent");
+                            send(PageImage { hash, ppi, image: entry.image.clone() });
+                            cache.push_back(entry);
+                        }
+                        None => todo.push((index, hash)),
+                    }
+                }
+                // Une page jamais vue s'affiche d'abord en basse résolution (quelques
+                // millisecondes), puis nette ; plusieurs pages se rendent à la fois.
+                let quick_ppi = (ppi * 0.35).max(24.0);
+                let unseen: Vec<(usize, u128)> =
+                    todo.iter().filter(|(_, hash)| !cache.iter().any(|c| c.hash == *hash)).copied().collect();
+                let mut passes = Vec::new();
+                if quick_ppi < ppi * 0.8 && !unseen.is_empty() {
+                    passes.push((unseen, quick_ppi, false));
+                }
+                passes.push((todo, ppi, true));
+                let workers =
+                    std::thread::available_parallelism().map(|n| n.get().saturating_sub(1)).unwrap_or(1).clamp(1, 4);
+                'passes: for (list, pass_ppi, keep) in passes {
+                    for chunk in list.chunks(workers) {
+                        // Une retouche ou un défilement arrivé entre-temps passe avant
+                        // les pages qui restent (elles seraient périmées).
+                        if let Ok(newer) = requests.try_recv() {
+                            let export = matches!(newer, Request::Export { .. });
+                            backlog.push(newer);
+                            if !export {
+                                break 'passes;
+                            }
+                        }
+                        let rendered: Vec<(u128, Option<Rgba>)> = std::thread::scope(|scope| {
+                            let handles: Vec<_> = chunk
+                                .iter()
+                                .map(|&(index, hash)| scope.spawn(move || (hash, compiled.rgba(index, pass_ppi).ok())))
+                                .collect();
+                            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+                        });
+                        for (hash, result) in rendered {
+                            let Some((w, h, rgba)) = result else { continue };
+                            let image =
+                                Arc::new(egui::ColorImage::from_rgba_premultiplied([w as usize, h as usize], &rgba));
+                            if keep {
+                                cache.push_back(PageImage { hash, ppi: pass_ppi, image: image.clone() });
+                                // Mémoire bornée : on oublie les plus anciennes.
+                                while cache.len() > 1
+                                    && cache.iter().map(|c| c.image.pixels.len() * 4).sum::<usize>() > CACHE_BYTES
+                                {
+                                    cache.pop_front();
+                                }
+                            }
+                            send(PageImage { hash, ppi: pass_ppi, image });
+                        }
+                    }
+                }
+            }
+
+            for (path, ident, pdf_a) in exports {
+                let result = match &current {
+                    Some(compiled) => compiled
+                        .pdf(&PdfOptions { ident: Some(ident), pdf_a })
+                        .map_err(|e| e.to_string())
+                        .and_then(|pdf| {
+                            std::fs::write(&path, pdf).map_err(|e| match e.kind() {
+                                std::io::ErrorKind::PermissionDenied => format!(
+                                    "{} est peut-être ouvert dans un autre programme : ferme-le et réessaie",
+                                    path.display()
+                                ),
+                                _ => e.to_string(),
+                            })
+                        })
+                        .map(|()| path),
+                    None => Err("rien à exporter : le document n'a pas encore été mis en page".into()),
+                };
+                let _ = responses.send(Response::Exported(result));
+                ctx.request_repaint();
+            }
+        }));
+        if let Err(panic) = outcome {
+            let message = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
+                .unwrap_or_else(|| "erreur inconnue".into());
+            let _ = responses.send(Response::Failed(message));
             ctx.request_repaint();
         }
     }

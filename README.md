@@ -123,6 +123,12 @@ packaging/       installateur Windows (Inno Setup)
 
 Un tag `vX.Y.Z` publie l'installateur, la version portable et le plugin.
 
+## Dépannage
+
+- **Journal** : les erreurs du moteur et les plantages sont notés, datés, dans `%LOCALAPPDATA%\Nectar Render\journal.txt` (à joindre à un signalement).
+- **Photos** : réduites une seule fois puis gardées dans `%LOCALAPPDATA%\Nectar Render\photos` (400 Mo au plus, élagué tout seul) ; on peut vider ce dossier sans risque.
+- **Retouches** : écrites sans jamais laisser de fichier à moitié écrit ; un fichier de retouches illisible est mis de côté (`….json.illisible`) et la note s'ouvre quand même.
+
 ## Licences
 
 Code : PolyForm Noncommercial 1.0.0 (`LICENSE`). Polices :

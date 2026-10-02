@@ -598,7 +598,7 @@ impl PresetStore {
         let mut layer = serde_json::to_value(style).expect("style sérialisable");
         layer["label"] = Value::String(label.to_string());
         let path = dir.join(format!("{id}.json"));
-        std::fs::write(&path, serde_json::to_string_pretty(&layer).expect("json") + "\n")?;
+        crate::write_atomically(&path, (serde_json::to_string_pretty(&layer).expect("json") + "\n").as_bytes())?;
         *self = Self::load(Some(dir));
         Ok(id)
     }
@@ -710,6 +710,15 @@ fn slug(label: &str) -> String {
 }
 
 /// Dossier des presets personnels sous Windows : `%APPDATA%\Nectar Render\presets`.
+/// Dossier du cache des photos réduites (`%LOCALAPPDATA%\Nectar Render\photos`).
+pub fn default_cache_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".cache")))
+        .map(|base| base.join("Nectar Render").join("photos"))
+}
+
 pub fn default_user_dir() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .map(PathBuf::from)

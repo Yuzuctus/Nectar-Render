@@ -9,7 +9,7 @@ mod world;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use nectar_core::{BlockId, Generated};
 use typst::diag::{Severity, SourceDiagnostic, Warned};
@@ -74,7 +74,7 @@ pub enum EngineError {
 pub struct Engine {
     library: Arc<LazyHash<Library>>,
     fonts: Arc<FontStore>,
-    images: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, Bytes)>>>,
+    images: Arc<images::ImageCache>,
 }
 
 impl Engine {
@@ -97,8 +97,22 @@ impl Engine {
         }
     }
 
+    /// Garde aussi les photos réduites dans ce dossier, d'une session à l'autre.
+    pub fn with_cache_dir(mut self, dir: Option<PathBuf>) -> Self {
+        self.images = Arc::new(images::ImageCache::with_disk(dir));
+        self
+    }
+
     /// Compile une source générée.
     pub fn compile(&self, generated: &Generated) -> Result<Compiled, EngineError> {
+        // Les photos à réduire se préparent en parallèle, avant Typst.
+        let photos: Vec<(PathBuf, u32)> = generated
+            .assets
+            .iter()
+            .filter(|a| a.data.is_none())
+            .filter_map(|a| a.max_px.map(|max| (a.path.clone(), max)))
+            .collect();
+        self.images.prepare(&photos);
         let mut texts: Vec<(&str, &str)> = vec![("/nectar/nectar.typ", TEMPLATE)];
         texts.extend_from_slice(MITEX);
         texts.extend(generated.files.iter().map(|(path, text)| (path.as_str(), text.as_str())));

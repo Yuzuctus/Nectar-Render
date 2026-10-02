@@ -18,6 +18,8 @@ typst-render.workspace = true
 typst-kit = { workspace = true, features = ["embedded-fonts", "scan-fonts"] }
 tiny-skia = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+fast_image_resize = { version = "5", features = ["image"] }
+jpeg-encoder = { version = "0.6", features = ["simd"] }
 
 [dev-dependencies]
 tempfile.workspace = true

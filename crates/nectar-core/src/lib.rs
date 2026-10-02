@@ -38,6 +38,25 @@ pub struct Project {
     /// D'où viennent les retouches (`.nectar/…json`).
     pub layout_path: PathBuf,
     pub presets: PresetStore,
+    /// Ce qu'il faut signaler à l'ouverture (retouches illisibles mises de côté…).
+    pub notices: Vec<String>,
+    /// Longueur de la note à la dernière lecture.
+    text_len: usize,
+}
+
+/// Écrit un fichier sans jamais laisser une version à moitié écrite : le
+/// contenu va d'abord dans un fichier voisin, qui remplace ensuite l'ancien.
+pub fn write_atomically(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = PathBuf::from(temp);
+    std::fs::write(&temp, data)?;
+    std::fs::rename(&temp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+    })
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +65,10 @@ pub enum ProjectError {
     Read { path: PathBuf, source: std::io::Error },
     #[error(transparent)]
     Layout(#[from] layout::LayoutError),
+    /// La note semble en cours d'écriture (vide ou tronquée) : à relire un
+    /// peu plus tard.
+    #[error("la note est en cours d'enregistrement")]
+    Incomplete,
 }
 
 impl Project {
@@ -53,10 +76,34 @@ impl Project {
     pub fn open(note: &Path) -> Result<Self, ProjectError> {
         let vault = Vault::discover(note);
         let layout_path = vault.layout_path(note);
-        let layout = Layout::load(&layout_path)?;
+        let mut notices = Vec::new();
+        let layout = match Layout::load(&layout_path) {
+            Ok(layout) => layout,
+            // Retouches illisibles (fichier abîmé) : mises de côté, la note s'ouvre quand même.
+            Err(layout::LayoutError::Json { .. }) => {
+                let mut aside = layout_path.as_os_str().to_owned();
+                aside.push(".illisible");
+                let aside = PathBuf::from(aside);
+                let _ = std::fs::rename(&layout_path, &aside);
+                notices.push(format!(
+                    "Les retouches de cette note étaient illisibles : elles ont été mises de côté dans {}",
+                    aside.display()
+                ));
+                Layout::default()
+            }
+            Err(e) => return Err(e.into()),
+        };
         let presets = PresetStore::load(style::default_user_dir());
-        let mut project =
-            Self { note: note.to_path_buf(), vault, document: Document::default(), layout, layout_path, presets };
+        let mut project = Self {
+            note: note.to_path_buf(),
+            vault,
+            document: Document::default(),
+            layout,
+            layout_path,
+            presets,
+            notices,
+            text_len: 0,
+        };
         project.reload()?;
         Ok(project)
     }
@@ -70,8 +117,20 @@ impl Project {
 
     /// Relit la note (après une modification dans Obsidian).
     pub fn reload(&mut self) -> Result<(), ProjectError> {
+        self.reload_checked(true)
+    }
+
+    /// Relit la note ; sans `force`, une note qui semble à moitié écrite
+    /// (vide, ou soudain deux fois plus courte) n'est pas prise : les
+    /// retouches ne doivent jamais se recaler sur une version tronquée.
+    pub fn reload_checked(&mut self, force: bool) -> Result<(), ProjectError> {
         let text = std::fs::read_to_string(&self.note)
             .map_err(|source| ProjectError::Read { path: self.note.clone(), source })?;
+        let before = self.document.blocks.len();
+        if !force && before > 0 && (text.trim().is_empty() || text.len() * 2 < self.text_len) {
+            return Err(ProjectError::Incomplete);
+        }
+        self.text_len = text.len();
         let note_dir = self.note.parent().map(Path::to_path_buf).unwrap_or_default();
         let options = ParseOptions { vault: Some(&self.vault), note_dir: Some(&note_dir), depth: 0 };
         self.document = parse(&text, &options);

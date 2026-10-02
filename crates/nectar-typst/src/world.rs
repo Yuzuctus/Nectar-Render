@@ -7,8 +7,7 @@
 //! | `/assets/…`        | images de la note, lues sur le disque     |
 
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Datetime, Duration};
@@ -34,14 +33,14 @@ pub(crate) struct NectarWorld {
     /// Images de la note : chemin virtuel → fichier réel ou contenu en mémoire.
     assets: HashMap<FileId, nectar_core::Asset>,
     /// Images déjà lues, partagées entre compilations.
-    cache: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, Bytes)>>>,
+    cache: Arc<crate::images::ImageCache>,
 }
 
 impl NectarWorld {
     pub(crate) fn new(
         library: Arc<LazyHash<Library>>,
         fonts: Arc<FontStore>,
-        cache: Arc<Mutex<HashMap<PathBuf, (std::time::SystemTime, Bytes)>>>,
+        cache: Arc<crate::images::ImageCache>,
         main_source: String,
         texts: &[(&str, &str)],
         binaries: &[(&str, &'static [u8])],
@@ -68,21 +67,7 @@ impl NectarWorld {
         if let Some(data) = &asset.data {
             return Ok(Bytes::from_string(data.as_str().to_owned()));
         }
-        let path = &asset.path;
-        let modified = std::fs::metadata(path).and_then(|m| m.modified()).map_err(|e| FileError::from_io(e, path))?;
-        let mut cache = self.cache.lock().expect("cache d'images");
-        if let Some((stamp, bytes)) = cache.get(path)
-            && *stamp == modified
-        {
-            return Ok(bytes.clone());
-        }
-        let raw = std::fs::read(path).map_err(|e| FileError::from_io(e, path))?;
-        let bytes = Bytes::new(match asset.max_px {
-            Some(max) => crate::images::downscale(raw, max),
-            None => raw,
-        });
-        cache.insert(path.clone(), (modified, bytes.clone()));
-        Ok(bytes)
+        self.cache.get(&asset.path, asset.max_px).map_err(|e| FileError::from_io(e, &asset.path))
     }
 }
 
