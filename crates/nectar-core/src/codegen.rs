@@ -80,6 +80,9 @@ pub struct Tuning {
     /// Tableaux qui dépassaient la marge : texte plus petit et adresses
     /// coupables après un point.
     pub squeeze: HashSet<BlockId>,
+    /// Tableaux qui dépassaient encore : Typst répartit lui-même la largeur
+    /// entre les colonnes, avec la vraie police.
+    pub fluid: HashSet<BlockId>,
 }
 
 impl Tuning {
@@ -186,7 +189,9 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         }
         let mut start = index;
         // Un saut de page avant un titre ne gêne pas : la page paysage en ouvre une.
-        let lead = |b: &Block| leads_freely(g.ops.get(&b.id)) && !g.returns.contains(&b.id);
+        // Mais un saut demandé sur le bloc lui-même le sépare de ce qui précède.
+        let separated = g.ops.get(&block.id).is_some_and(|o| o.break_before);
+        let lead = |b: &Block| !separated && leads_freely(g.ops.get(&b.id)) && !g.returns.contains(&b.id);
         if start > 0 && announces(&emitted[start - 1].node, Some(block)) && lead(emitted[start - 1]) {
             start -= 1;
         }
@@ -365,7 +370,14 @@ impl Gen<'_> {
             let _ = writeln!(self.out, "#set page({})", page_args(&self.persistent, self.style));
             self.current = self.persistent.clone();
         }
+        let opens_page = self.lands(block);
+        if opens_page {
+            self.page_fresh = true;
+        }
         self.before(&ops);
+        if opens_page && !self.open_landscape {
+            self.page_fresh = false;
+        }
         // Un saut demandé avant la première puce passe avant toute la liste,
         // pour que le marqueur de la liste atterrisse sur la bonne page.
         let mut first_item_done = false;
@@ -515,10 +527,12 @@ impl Gen<'_> {
             }
             None => {}
         }
-        if ops.hidden {
+        // Un bloc qui ouvre sa propre page (paysage), ou le premier d'une page
+        // paysage : un saut ou un espace avant lui n'aurait que du blanc.
+        if ops.hidden || self.page_fresh {
             return;
         }
-        if ops.break_before && !self.page_fresh {
+        if ops.break_before {
             self.out.push_str("#pagebreak(weak: true)\n");
         }
         if let Some(mm) = ops.space_before_mm {
@@ -672,7 +686,7 @@ impl Gen<'_> {
                 let width = crate::auto::text_width_pt(&self.current, self.style);
                 let fit = crate::auto::fit_table(table, width, self.style);
                 overflow = fit.overflow;
-                auto_widths(&fit, columns)
+                if self.tuning.fluid.contains(id) { columns.to_string() } else { auto_widths(&fit, columns) }
             }
         };
         let mut out = format!(

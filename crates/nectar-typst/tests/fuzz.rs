@@ -2,8 +2,10 @@
 //! promesses (pas de page blanche, rien hors des marges, légende avec son
 //! image, retouches respectées, même résultat d'un calcul à l'autre).
 //!
-//! `FUZZ_N=300 cargo test -p nectar-typst --test fuzz -- --nocapture` pour
-//! un long passage ; `FUZZ_SEED=…` pour rejouer une note.
+//! `FUZZ_N=300 cargo test --profile essai -p nectar-typst --test fuzz --
+//! --nocapture` pour un long passage ; `FUZZ_OFFSET=…` pour d'autres notes ;
+//! `FUZZ_SEED=…` pour rejouer une note (`FUZZ_PNG=1` : ses pages et sa
+//! source dans le dossier temporaire).
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -303,7 +305,9 @@ fn verify(seed: u64, engine: &Engine, dir: &Path, report: &mut Report) {
     manual_style.pagination.lonely_landscape = false;
     if let Ok(plain) = lay_out(engine, &doc, &layout, &manual_style).compiled {
         let landscapes = laid.tuning.landscape.len();
-        report.check(compiled.page_count() <= plain.page_count() + landscapes, || {
+        // Une page paysage coûte au plus deux pages : la sienne, et la page
+        // d'avant qu'elle interrompt.
+        report.check(compiled.page_count() <= plain.page_count() + 2 * landscapes, || {
             tag(&format!(
                 "{} pages avec le placement automatique, {} sans ({landscapes} pages paysage)",
                 compiled.page_count(),
@@ -371,7 +375,15 @@ fn verify(seed: u64, engine: &Engine, dir: &Path, report: &mut Report) {
         if !directive.ops.break_before || directive.ops.hidden {
             continue;
         }
-        let id = &directive.anchor.id;
+        let mut id = &directive.anchor.id;
+        // Un saut avant la première puce passe avant toute la liste.
+        for block in &doc.blocks {
+            if let Node::List(list) = &block.node
+                && list.items.first().and_then(|i| i.id.as_ref()) == Some(id)
+            {
+                id = &block.id;
+            }
+        }
         // Le saut remonte devant les titres qui précèdent le bloc.
         let index = doc.blocks.iter().position(|b| &b.id == id);
         let mut target = id;
@@ -416,6 +428,12 @@ fn verify(seed: u64, engine: &Engine, dir: &Path, report: &mut Report) {
         if issue.severity == nectar_core::assistant::Severity::Problem {
             report.failures.push(tag(&format!("assistant : {}", issue.title)));
         }
+        // Le placement automatique fait lui-même ce que l'assistant proposerait.
+        if issue.title.starts_with("Schéma à lire en grand")
+            && issue.block.as_ref().is_some_and(|b| nectar_core::auto::allowed(resolved.get(b)))
+        {
+            report.failures.push(tag(&format!("assistant propose encore : {}", issue.title)));
+        }
         let kind: String = issue.title.chars().filter(|c| !c.is_ascii_digit()).collect();
         *report.remarks.entry(kind).or_default() += 1;
     }
@@ -445,7 +463,10 @@ fn random_notes_keep_their_promises() {
     let count: u64 = std::env::var("FUZZ_N").ok().and_then(|n| n.parse().ok()).unwrap_or(6);
     let seeds: Vec<u64> = match std::env::var("FUZZ_SEED").ok().and_then(|s| s.parse().ok()) {
         Some(seed) => vec![seed],
-        None => (1..=count).map(|i| i * 7919 + 13).collect(),
+        None => {
+            let offset: u64 = std::env::var("FUZZ_OFFSET").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+            (1..=count).map(|i| i * 7919 + 13 + offset).collect()
+        }
     };
     let mut report = Report { failures: Vec::new(), remarks: Default::default(), pages: 0, millis: 0 };
     let notes = seeds.len();

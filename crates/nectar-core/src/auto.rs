@@ -294,7 +294,12 @@ pub fn table_page(table: &Table, page: &PageSpec, style: &Style, larger: bool) -
     // la page tournée, ou un papier plus grand, leur laisse la place.
     // Un petit tableau est plutôt resserré sur place (voir la génération) :
     // une page paysage pour trois lignes laisserait deux pages à moitié vides.
-    if here.overflow && table.rows.len() >= 6 {
+    let pages = |table_fit: &TableFit, page: &PageSpec| {
+        (table_height_pt(table, table_fit, style) / body_height_pt(page, style)).ceil()
+    };
+    // (Un long tableau qui prendrait plus de pages en paysage est lui aussi
+    // resserré sur place.)
+    if here.overflow && table.rows.len() >= 6 && pages(&there, &turned_page) <= pages(&here, page) {
         if !there.overflow {
             return TablePage::Landscape;
         }
@@ -323,7 +328,15 @@ pub fn table_page(table: &Table, page: &PageSpec, style: &Style, larger: bool) -
     }
     // (Trop haut même en paysage : le papier plus grand se décide sur
     // pièces, une fois les pages composées.)
-    if columns >= 5 && !there.overflow && here.lines >= there.lines * 1.4 && here.lines - there.lines >= 6.0 {
+    // Beaucoup moins de lignes en paysage, sans y prendre plus de pages (une
+    // page paysage est plus large mais moins haute : un long tableau peut y
+    // perdre).
+    if columns >= 5
+        && !there.overflow
+        && here.lines >= there.lines * 1.4
+        && here.lines - there.lines >= 6.0
+        && pages(&there, &turned_page) <= pages(&here, page)
+    {
         return TablePage::Landscape;
     }
     TablePage::Inline

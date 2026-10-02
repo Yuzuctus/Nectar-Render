@@ -443,19 +443,24 @@ pub struct LaidOut {
 
 /// Met en page un document avec le placement automatique.
 ///
-/// Avant tout : les tableaux trop larges pour une page portrait passent en
-/// paysage. Puis on compose et on relit les pages, autant de fois que
-/// nécessaire (chaque recomposition est incrémentale) :
-/// 1. les schémas larges et détaillés passent en paysage ;
-/// 2. un bloc gardé d'un seul tenant par la seule règle automatique, qui
-///    laisse une page à moitié vide, est autorisé à se couper ;
+/// Avant tout : les tableaux nettement trop larges pour une page portrait
+/// passent en paysage (sur estimation, vérifiée ensuite). Puis on compose et
+/// on relit les pages, autant de fois que nécessaire (chaque recomposition
+/// est incrémentale ; `NECTAR_TRACE=1` détaille les étapes) :
+/// 0. le format revient après les pages au format propre ;
+/// 1. les schémas larges et détaillés passent en paysage ; un tableau qui
+///    dépasse la marge est resserré, puis réparti par Typst, puis tourné ;
+/// 2. un bloc gardé d'un seul tenant qui laisse une page à moitié vide est
+///    autorisé à se couper ; un grand tableau sur plusieurs pages essaie le
+///    paysage puis l'A3 paysage, et garde le format qui prend le moins de
+///    pages ; un tableau qui déborde de quelques lignes est resserré ;
 /// 3. une image un peu trop haute pour la place restante est réduite juste
-///    assez pour y tenir (jamais en dessous de 55 % de sa taille) ;
-/// 4. une dernière page de quelques lignes est résorbée en resserrant un peu
-///    l'espace entre les paragraphes ;
+///    assez (jamais sous 55 %) ; une légende ne reste pas seule en haut de
+///    page ; une image horizontale seule sur sa page passe en paysage ;
+/// 4. une dernière page de quelques lignes est résorbée ;
 /// 5. une page paysage qui laisserait la page d'avant à moitié vide est
 ///    repoussée après le texte qui la suit ;
-/// 6. après une page au format propre, le format du document revient.
+/// 6. et 7. : vérifications finales (retours de format, légendes).
 ///
 /// Une retouche manuelle n'est jamais remise en cause, et un bloc « tel
 /// quel » n'est jamais touché.
@@ -506,6 +511,33 @@ pub fn lay_out(
     };
     let free = |id: &BlockId| nectar_core::auto::allowed(ops.get(id));
 
+    // 0. Pages au format propre : on calcule d'abord où le format revient,
+    // pour que les étapes suivantes voient chaque page à son vrai format
+    // (vérifié de nouveau en fin de calcul, étape 6).
+    let owners: Vec<&BlockId> = ops
+        .iter()
+        .filter(|(_, o)| matches!(o.page, Some(PageChange::Set(_))) && !o.page_onward && !o.hidden)
+        .map(|(id, _)| id)
+        .collect();
+    let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+    for _ in 0..3 {
+        if owners.is_empty() {
+            break;
+        }
+        let Ok(current) = &compiled else { break };
+        let positions = current.block_positions();
+        let boxes = current.block_boxes(margin_bottom);
+        let wanted: HashSet<BlockId> =
+            owners.iter().filter_map(|owner| return_point(&positions, &boxes, document, &ops, owner)).collect();
+        if wanted == tuning.returns {
+            break;
+        }
+        let previous = std::mem::replace(&mut tuning.returns, wanted);
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            tuning.returns = previous;
+            break;
+        }
+    }
     if trace {
         eprintln!("[{:>5} ms, {} compositions] 1. Schémas larges", started.elapsed().as_millis(), passes.get());
     }
@@ -537,20 +569,25 @@ pub fn lay_out(
     // 1 bis. Tableau qui dépasse réellement la marge (police plus large que
     // prévu, adresses collées) : resserré, puis mis en paysage s'il dépasse
     // encore.
-    for _ in 0..3 {
+    for _ in 0..4 {
         let Ok(current) = &compiled else { break };
         let wide = overflowing_tables(current, document, style, &ops);
+        // Par ordre : resserré ; puis colonnes réparties par Typst ; puis
+        // page paysage.
         let fresh: Vec<BlockId> = wide.iter().filter(|id| !tuning.squeeze.contains(*id)).cloned().collect();
+        let squeezed: Vec<BlockId> =
+            wide.iter().filter(|id| tuning.squeeze.contains(*id) && !tuning.fluid.contains(*id)).cloned().collect();
         let stubborn: Vec<BlockId> = wide
             .iter()
-            .filter(|id| tuning.squeeze.contains(*id) && !tuning.landscape.contains(*id) && rules.auto_landscape)
+            .filter(|id| tuning.fluid.contains(*id) && !tuning.landscape.contains(*id) && rules.auto_landscape)
             .cloned()
             .collect();
-        if fresh.is_empty() && stubborn.is_empty() {
+        if fresh.is_empty() && squeezed.is_empty() && stubborn.is_empty() {
             break;
         }
         let previous = tuning.clone();
         tuning.squeeze.extend(fresh);
+        tuning.fluid.extend(squeezed);
         tuning.landscape.extend(stubborn);
         if !retry(&tuning, &mut generated, &mut compiled) {
             tuning = previous;
@@ -630,8 +667,30 @@ pub fn lay_out(
             let count =
                 |c: &Result<Compiled, EngineError>| c.as_ref().map(|c| parts(c, &table).len()).unwrap_or(usize::MAX);
             let before_count = count(&compiled);
-            eprintln!("DBG 1ter {table} before {before_count}");
             let before = tuning.clone();
+            // Déjà en paysage d'office (sur estimation) : une page A3 paysage
+            // s'il y tient en entier ; sinon on vérifie qu'en portrait il ne
+            // prendrait pas moins de pages.
+            if tuning.landscape.contains(&table) && !tuning.paper.contains_key(&table) {
+                if rules.larger_paper
+                    && let Some(paper) = nectar_core::auto::larger_paper(&layout.page.paper)
+                {
+                    let mut larger = before.clone();
+                    larger.paper.insert(table.clone(), paper.to_string());
+                    if retry(&larger, &mut generated, &mut compiled) && one_page(&compiled, &table) {
+                        tuning = larger;
+                        continue;
+                    }
+                }
+                let mut portrait = before.clone();
+                portrait.landscape.remove(&table);
+                if !(retry(&portrait, &mut generated, &mut compiled) && count(&compiled) < before_count) {
+                    portrait = before;
+                    retry(&portrait, &mut generated, &mut compiled);
+                }
+                tuning = portrait;
+                continue;
+            }
             let mut kept = false;
             // Sur une page paysage : gardée si le tableau y tient, ou s'il y
             // prend nettement moins de pages.
@@ -641,7 +700,6 @@ pub fn lay_out(
                 if retry(&tuning, &mut generated, &mut compiled) {
                     kept = one_page(&compiled, &table);
                     turned = Some((tuning.clone(), count(&compiled)));
-                    eprintln!("DBG turned {:?} kept {kept}", turned.as_ref().map(|t| t.1));
                 }
             }
             // Sur un papier plus grand : seulement s'il y tient en entier.
@@ -877,12 +935,6 @@ pub fn lay_out(
     // format ouvre une page) : ce qu'elle contient ne dépend pas des retours
     // placés plus haut. Tous les retours se calculent donc sur une même mise
     // en page ; un second tour vérifie que rien n'a bougé.
-    let owners: Vec<&BlockId> = ops
-        .iter()
-        .filter(|(_, o)| matches!(o.page, Some(PageChange::Set(_))) && !o.page_onward && !o.hidden)
-        .map(|(id, _)| id)
-        .collect();
-    let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
     for _ in 0..3 {
         if owners.is_empty() {
             break;
@@ -1056,7 +1108,9 @@ fn lonely_figures(
         }
         // Ce qui l'accompagne : titres et phrase d'annonce avant, légendes après.
         let mut start = index;
+        let separated = ops.get(id).is_some_and(|o| o.break_before);
         while start > 0
+            && !separated
             && leads_into(&blocks[start - 1], &blocks[start])
             && nectar_core::codegen::leads_freely(ops.get(&blocks[start - 1].id))
         {
