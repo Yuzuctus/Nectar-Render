@@ -58,6 +58,57 @@ pub struct Tuning {
     /// Blocs devant lesquels le format revient, après une page au format
     /// propre (« cette page seulement »).
     pub returns: HashSet<BlockId>,
+    /// Schémas et tableaux larges mis d'office sur une page paysage.
+    pub landscape: HashSet<BlockId>,
+    /// Images réduites pour tenir dans la place restante : hauteur maximale
+    /// en points.
+    pub fit: HashMap<BlockId, f32>,
+    /// Espacement entre paragraphes multiplié par ce facteur (< 1), pour
+    /// éviter une dernière page presque vide.
+    pub tighten: Option<f32>,
+    /// Pourcentage de taille gardé par chaque image de `fit` (pour l'affichage).
+    pub fit_percent: HashMap<BlockId, u8>,
+    /// Tableaux un peu resserrés (texte et cellules) pour ne pas déborder de
+    /// quelques lignes sur une page de plus.
+    pub compact: HashSet<BlockId>,
+}
+
+impl Tuning {
+    /// Le bloc va-t-il sur sa propre page paysage (retouche ou décision automatique) ?
+    pub fn is_landscape(&self, ops: Option<&BlockOps>, id: &BlockId) -> bool {
+        self.landscape.contains(id)
+            || ops.and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape)
+    }
+
+    /// Les décisions automatiques, pour l'atelier.
+    pub fn choices(&self, doc: &Document) -> Vec<crate::auto::Choice> {
+        use crate::auto::{Choice, ChoiceKind};
+        let mut out = Vec::new();
+        for block in &doc.blocks {
+            let id = &block.id;
+            if self.landscape.contains(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Landscape });
+            }
+            if self.deferred.iter().any(|(f, _)| f == id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Deferred });
+            }
+            if self.relaxed.contains(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Split });
+            }
+            if self.compact.contains(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Compacted });
+            }
+            if let Some(percent) = self.fit_percent.get(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Fitted(*percent) });
+            }
+        }
+        if self.tighten.is_some()
+            && let Some(first) = doc.blocks.first()
+        {
+            out.push(Choice { block: first.id.clone(), kind: ChoiceKind::Tightened });
+        }
+        out
+    }
 }
 
 /// Produit la source Typst d'un document retouché.
@@ -69,11 +120,21 @@ pub fn generate(doc: &Document, layout: &Layout, style: &Style) -> Generated {
 pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &Tuning) -> Generated {
     let mut resolution = layout.resolve(doc);
     hoist_over_headings(doc, &mut resolution.ops);
+    let mut style_owned;
+    let mut style = style;
+    if let Some(factor) = tuning.tighten {
+        style_owned = style.clone();
+        style_owned.text.paragraph_spacing_em *= factor;
+        style = &style_owned;
+    }
     let mut g = Gen {
         ops: &resolution.ops,
         relaxed: &tuning.relaxed,
         returns: &tuning.returns,
+        tuning,
+        open_landscape: false,
         persistent: layout.page.clone(),
+        current: layout.page.clone(),
         layout,
         style,
         french: style.text.french_typography && doc.meta.lang.as_deref().unwrap_or("fr").starts_with("fr"),
@@ -96,8 +157,32 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
     g.preamble(&doc.meta);
     let deferred: HashSet<&BlockId> = tuning.deferred.iter().map(|(figure, _)| figure).collect();
     let emitted: Vec<&Block> = doc.blocks.iter().filter(|b| !deferred.contains(&b.id)).collect();
+    // Un schéma ou un tableau mis en paysage emporte sur sa page la phrase
+    // qui l'annonce et les titres qui le précèdent directement.
+    let mut opens: HashSet<usize> = HashSet::new();
     for (index, block) in emitted.iter().enumerate() {
-        g.block(block, emitted.get(index + 1).copied());
+        if !g.lands(block) {
+            continue;
+        }
+        let mut start = index;
+        let plain = |b: &Block| g.ops.get(&b.id).is_none_or(|o| o.is_empty()) && !g.returns.contains(&b.id);
+        if start > 0 && announces(&emitted[start - 1].node, Some(block)) && plain(emitted[start - 1]) {
+            start -= 1;
+        }
+        while start > 0 && matches!(emitted[start - 1].node, Node::Heading { .. }) && plain(emitted[start - 1]) {
+            start -= 1;
+        }
+        if start < index {
+            opens.insert(start);
+        }
+    }
+    for (index, block) in emitted.iter().enumerate() {
+        let next = emitted.get(index + 1).copied();
+        if opens.contains(&index) && !g.open_landscape {
+            g.out.push_str("#page(flipped: true)[\n");
+            g.open_landscape = true;
+        }
+        g.block(block, next);
         // Les pages paysage repoussées ici, dans l'ordre du document.
         for figure in doc.blocks.iter().filter(|b| tuning.deferred.iter().any(|(f, a)| *f == b.id && *a == block.id)) {
             g.block(figure, None);
@@ -154,8 +239,13 @@ struct Gen<'a> {
     ops: &'a HashMap<BlockId, BlockOps>,
     relaxed: &'a HashSet<BlockId>,
     returns: &'a HashSet<BlockId>,
+    tuning: &'a Tuning,
+    /// Une page paysage est ouverte par la phrase qui annonce son contenu.
+    open_landscape: bool,
     /// Le format en vigueur hors des pages au format propre.
     persistent: PageSpec,
+    /// Le format de la page en cours (pour la largeur des tableaux).
+    current: PageSpec,
     layout: &'a Layout,
     style: &'a Style,
     /// Typographie française active (langue `fr` et réglage du style).
@@ -205,6 +295,7 @@ impl Gen<'_> {
         // Fin d'une page au format propre : on revient au format courant.
         if self.returns.contains(&block.id) && ops.page.is_none() {
             let _ = writeln!(self.out, "#set page({})", page_args(&self.persistent, self.style));
+            self.current = self.persistent.clone();
         }
         self.before(&ops);
         // Un saut demandé avant la première puce passe avant toute la liste,
@@ -221,20 +312,31 @@ impl Gen<'_> {
         if ops.hidden {
             return;
         }
-        // Image sur sa propre page paysage : le marqueur va dans la page.
-        if ops.image.as_ref().is_some_and(|i| i.placement == Placement::Landscape)
-            && let Some(body) = match &block.node {
-                Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
-                Node::Diagram { lang, source } => Some(self.diagram(lang, source, ops.image.as_ref())),
+        // Schéma ou tableau sur sa propre page paysage : le marqueur va dans la page.
+        if self.lands(block) {
+            let turned = crate::auto::flipped(&self.current);
+            let page = std::mem::replace(&mut self.current, turned);
+            let image = Some(crate::layout::ImageOps {
+                placement: Placement::Landscape,
+                ..ops.image.clone().unwrap_or_default()
+            });
+            let body = match &block.node {
+                Node::Figure(img) => Some(self.figure(&block.id, img, image.as_ref())),
+                Node::Diagram { lang, source } => Some(self.diagram(&block.id, lang, source, image.as_ref())),
+                Node::Table(table) => Some(self.table(&block.id, table, ops.table.as_ref())),
                 _ => None,
+            };
+            self.current = page;
+            if let Some(body) = body {
+                if !std::mem::take(&mut self.open_landscape) {
+                    self.out.push_str("#page(flipped: true)[\n");
+                }
+                self.block_lines.push((block.id.clone(), self.line()));
+                let _ = writeln!(self.out, "#nb({})\n{body}\n]", string(block.id.as_str()));
+                self.after(&ops);
+                self.out.push('\n');
+                return;
             }
-        {
-            self.out.push_str("#page(flipped: true)[\n");
-            self.block_lines.push((block.id.clone(), self.line()));
-            let _ = writeln!(self.out, "#nb({})\n{body}\n]", string(block.id.as_str()));
-            self.after(&ops);
-            self.out.push('\n');
-            return;
         }
         self.block_lines.push((block.id.clone(), self.line()));
         let _ = writeln!(self.out, "#nb({})", string(block.id.as_str()));
@@ -264,9 +366,9 @@ impl Gen<'_> {
                 }
                 None
             }
-            Node::Table(table) => Some(self.table(table, ops.table.as_ref())),
-            Node::Figure(image) => Some(self.figure(image, ops.image.as_ref())),
-            Node::Diagram { lang, source } => Some(self.diagram(lang, source, ops.image.as_ref())),
+            Node::Table(table) => Some(self.table(&block.id, table, ops.table.as_ref())),
+            Node::Figure(image) => Some(self.figure(&block.id, image, ops.image.as_ref())),
+            Node::Diagram { lang, source } => Some(self.diagram(&block.id, lang, source, ops.image.as_ref())),
             node @ Node::Heading { .. } => {
                 // Étiquette pour les liens internes `[[#Titre]]`.
                 Some(format!("{} <nectar-h-{}>", self.node(node), heading_label.unwrap_or_default()))
@@ -284,11 +386,20 @@ impl Gen<'_> {
         self.out.push('\n');
     }
 
+    /// Le bloc va-t-il sur sa propre page paysage ?
+    fn lands(&self, block: &Block) -> bool {
+        let ops = self.ops.get(&block.id);
+        matches!(block.node, Node::Figure(_) | Node::Diagram { .. } | Node::Table(_))
+            && ops.is_none_or(|o| !o.hidden)
+            && self.tuning.is_landscape(ops, &block.id)
+    }
+
     /// Ce qui se place avant un bloc : format de page, saut, espace.
     fn before(&mut self, ops: &BlockOps) {
         match &ops.page {
             Some(PageChange::Set(spec)) => {
                 let _ = writeln!(self.out, "#set page({})", page_args(spec, self.style));
+                self.current = spec.clone();
                 if ops.page_onward {
                     self.persistent = spec.clone();
                 }
@@ -296,6 +407,7 @@ impl Gen<'_> {
             Some(PageChange::Default(_)) => {
                 let _ = writeln!(self.out, "#set page({})", page_args(&self.layout.page, self.style));
                 self.persistent = self.layout.page.clone();
+                self.current = self.layout.page.clone();
             }
             None => {}
         }
@@ -395,8 +507,8 @@ impl Gen<'_> {
                 format!("#heading(level: {level})[{}]", self.inlines(content))
             }
             Node::Paragraph(content) => self.inlines(content),
-            Node::Figure(image) => self.figure(image, None),
-            Node::Diagram { lang, source } => self.diagram(lang, source, None),
+            Node::Figure(image) => self.figure(&BlockId(String::new()), image, None),
+            Node::Diagram { lang, source } => self.diagram(&BlockId(String::new()), lang, source, None),
             Node::List(list) => {
                 let items: Vec<&ListItem> = list.items.iter().collect();
                 self.list_markup(list, &items, list.start)
@@ -415,7 +527,7 @@ impl Gen<'_> {
                 };
                 format!("#callout({}, title: {title})[\n{}\n]", string(&callout.kind), self.nodes(&callout.body))
             }
-            Node::Table(table) => self.table(table, None),
+            Node::Table(table) => self.table(&BlockId(String::new()), table, None),
             Node::Math(latex) => self.math(latex, true),
             Node::Rule => "#nectar-rule()".into(),
         }
@@ -425,7 +537,7 @@ impl Gen<'_> {
         nodes.iter().map(|n| self.node(n)).collect::<Vec<_>>().join("\n\n")
     }
 
-    fn table(&mut self, table: &Table, ops: Option<&crate::layout::TableOps>) -> String {
+    fn table(&mut self, id: &BlockId, table: &Table, ops: Option<&crate::layout::TableOps>) -> String {
         let columns = table.align.len().max(table.header.len()).max(1);
         let align: Vec<&str> = (0..columns)
             .map(|i| {
@@ -451,7 +563,10 @@ impl Gen<'_> {
                     })
                     .collect::<Vec<_>>(),
             ),
-            None => auto_widths(table, columns),
+            None => {
+                let width = crate::auto::text_width_pt(&self.current, self.style);
+                auto_widths(&crate::auto::fit_table(table, width, self.style), columns)
+            }
         };
         let mut out = format!(
             "#table(\n  columns: {widths},\n  align: {},\n",
@@ -474,11 +589,19 @@ impl Gen<'_> {
             out.push('\n');
         }
         out.push(')');
+        if self.tuning.compact.contains(id) {
+            let p = &self.style.table;
+            out = format!(
+                "#[\n#set text(size: 0.92em)\n#set table(inset: (x: {}pt, y: {}pt))\n{out}\n]",
+                num(p.cell_padding_x_pt * 0.7),
+                num(p.cell_padding_y_pt * 0.55)
+            );
+        }
         out
     }
 
     /// Diagramme Mermaid dessiné en SVG, puis placé comme une image.
-    fn diagram(&mut self, lang: &str, source: &str, ops: Option<&crate::layout::ImageOps>) -> String {
+    fn diagram(&mut self, id: &BlockId, lang: &str, source: &str, ops: Option<&crate::layout::ImageOps>) -> String {
         let d = &self.style.diagrams;
         let mut theme = mermaid_svg::Theme::by_name(&d.theme).unwrap_or_else(mermaid_svg::Theme::neutral);
         if d.document_font {
@@ -496,7 +619,7 @@ impl Gen<'_> {
                     page: None,
                     svg: Some(std::sync::Arc::new(svg)),
                 };
-                let mut figure = self.figure(&image, ops);
+                let mut figure = self.figure(id, &image, ops);
                 // Un diagramme se lit à sa taille naturelle (et non à 75 %).
                 figure.insert_str(figure.len() - 1, &format!(", scale: {}", num(d.scale)));
                 figure
@@ -513,7 +636,7 @@ impl Gen<'_> {
         }
     }
 
-    fn figure(&mut self, image: &Image, ops: Option<&crate::layout::ImageOps>) -> String {
+    fn figure(&mut self, id: &BlockId, image: &Image, ops: Option<&crate::layout::ImageOps>) -> String {
         let vpath = match (&image.path, &image.svg) {
             (_, Some(svg)) => self.memory_asset(svg),
             (Some(path), None) => self.asset(path),
@@ -541,6 +664,9 @@ impl Gen<'_> {
         if let Some(px) = image.height_px {
             args.push(format!("height-px: {px}"));
         }
+        if let Some(height) = self.tuning.fit.get(id) {
+            args.push(format!("fit-height: {}pt", num(*height)));
+        }
         if let Some(align) = ops.and_then(|o| o.align) {
             let align = match align {
                 HAlign::Left => "left",
@@ -562,6 +688,9 @@ impl Gen<'_> {
         }
         if is_pdf(path) {
             args.push("scale: 1.0".into());
+        }
+        if image.svg.is_none() && is_photo(path) {
+            args.push("photo: true".into());
         }
         format!("#nectar-figure({})", args.join(", "))
     }
@@ -681,37 +810,15 @@ impl Gen<'_> {
     }
 }
 
-/// Largeurs automatiques des colonnes d'un tableau : une colonne aux contenus
-/// courts (adresses, nombres, dates) garde sa largeur naturelle et ne passe
-/// jamais à la ligne ; les colonnes de texte se partagent le reste selon la
-/// longueur de leur contenu.
-fn auto_widths(table: &Table, columns: usize) -> String {
-    const SHORT: usize = 24;
-    let mut longest = vec![0usize; columns];
-    let mut total = vec![0usize; columns];
-    let rows = std::iter::once(&table.header).chain(&table.rows).filter(|r| !r.is_empty());
-    let mut count = 0usize;
-    for row in rows {
-        count += 1;
-        for (i, cell) in row.iter().enumerate().take(columns) {
-            let length = plain_text(cell).chars().count();
-            longest[i] = longest[i].max(length);
-            total[i] += length;
-        }
-    }
-    if longest.iter().all(|l| *l <= SHORT) {
-        // Tout est court : chaque colonne à sa largeur naturelle.
-        return columns.to_string();
-    }
-    let widths: Vec<String> = (0..columns)
-        .map(|i| {
-            if longest[i] <= SHORT {
-                "auto".to_string()
-            } else {
-                let average = total[i] as f32 / count.max(1) as f32;
-                format!("{}fr", num((average / 12.0).clamp(1.0, 4.0)))
-            }
-        })
+/// Largeurs des colonnes d'un tableau (voir [`crate::auto::fit_table`]) :
+/// une colonne qui garde sa largeur naturelle reste `auto` (elle ne passe
+/// jamais à la ligne) ; les colonnes de texte se partagent le reste.
+fn auto_widths(fit: &crate::auto::TableFit, columns: usize) -> String {
+    let Some(widths) = &fit.widths else { return columns.to_string() };
+    let widths: Vec<String> = widths
+        .iter()
+        .zip(&fit.natural)
+        .map(|(w, natural)| if w < natural { format!("{}fr", num((w / 10.0).max(0.1))) } else { "auto".to_string() })
         .collect();
     array(&widths)
 }
@@ -768,6 +875,12 @@ fn wrap_block(body: &str, sticky: bool, unbreakable: bool, style: Option<&crate:
         inner = format!("#pad(left: {}mm)[\n{inner}\n]", num(mm));
     }
     format!("#block({})[\n{inner}\n]\n", args.join(", "))
+}
+
+/// Le bloc `block` mène à `next` : c'est un titre, ou une phrase qui
+/// l'annonce (« Voici le schéma : »). Une page paysage les emporte ensemble.
+pub fn leads_into(block: &Block, next: &Block) -> bool {
+    matches!(block.node, Node::Heading { .. }) || announces(&block.node, Some(next))
 }
 
 /// Une phrase qui annonce la suite (« Voici les étapes : ») et ce qui la suit.
@@ -835,6 +948,13 @@ fn wrap(out: &mut String, func: &str, body: &str) {
 
 fn is_external(url: &str) -> bool {
     url.contains("://") || url.starts_with("mailto:")
+}
+
+/// Une image en pixels (photo, capture d'écran), et non un dessin.
+fn is_photo(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp"))
 }
 
 fn is_pdf(path: &Path) -> bool {
@@ -1065,7 +1185,8 @@ mod tests {
              | Windows 11 (VM, windows 11 famille) | `192.168.107.11` | Passerelle et administration du switch |\n",
             |_, _| {},
         );
-        assert!(g.source.contains("columns: (1.833fr, auto, 1.75fr)"), "{}", g.source);
+        // L'adresse garde sa largeur naturelle ; les deux textes se partagent le reste.
+        assert!(g.source.contains("columns: (3.224fr, auto, 3.224fr)"), "{}", g.source);
         let g = gen_with("| a | b |\n|---|---|\n| 1 | 2 |\n", |_, _| {});
         assert!(g.source.contains("columns: 2,"), "tout est court : largeurs naturelles");
     }

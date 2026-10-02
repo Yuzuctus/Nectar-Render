@@ -5,8 +5,10 @@
 //! compile.
 
 pub mod assistant;
+pub mod auto;
 pub mod code_themes;
 pub mod codegen;
+pub mod connect;
 pub mod directives;
 pub mod excalidraw;
 pub mod frontmatter;

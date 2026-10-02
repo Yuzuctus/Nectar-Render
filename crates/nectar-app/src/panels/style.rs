@@ -213,9 +213,22 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
             &mut s.pagination.keep_small_blocks,
             "Ne jamais couper une liste courte, un code court, un petit tableau, un encadré",
         );
+        ui.checkbox(&mut s.pagination.auto_landscape, "Tableaux et schémas trop larges : page paysage automatique")
+            .on_hover_text("Le texte reprend ensuite en portrait. Une image verticale reste toujours en portrait.");
+        ui.checkbox(&mut s.pagination.fit_images, "Réduire un peu une image plutôt que laisser un trou en bas de page")
+            .on_hover_text("Jamais en dessous de 55 % de sa taille.");
+        ui.checkbox(
+            &mut s.pagination.avoid_short_last_page,
+            "Resserrer un peu les paragraphes si la dernière page n'a que quelques lignes",
+        );
+        ui.horizontal(|ui| {
+            ui.label("Photo verticale : au plus");
+            crate::panels::widgets::number(ui, &mut s.images.portrait_max_percent, 30.0..=100.0, 1.0, " %");
+            ui.label("de la hauteur de page");
+        });
         ui.label(
             RichText::new(
-                "Les titres restent toujours avec leur contenu. Une retouche de bloc l'emporte sur ces règles.",
+                "Les titres restent toujours avec leur contenu. Une retouche de bloc l'emporte sur ces règles ; « Laisser ce bloc tel quel » les refuse pour un bloc.",
             )
             .small()
             .color(theme::tokens(ui.ctx()).faint),

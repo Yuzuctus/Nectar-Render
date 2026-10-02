@@ -32,16 +32,22 @@
 
 - Les titres restent avec leur contenu ; une phrase qui finit par « : » reste avec ce qu'elle annonce.
 - Liste courte, code court, petit tableau, encadré : jamais coupés entre deux pages.
-- Lignes isolées (veuves, orphelines) évitées ; images limitées à 85 % de la page pour garder leur annonce et leur légende.
-- Tableaux : les colonnes courtes (adresses, nombres, dates) gardent leur largeur et ne passent pas à la ligne ; les colonnes de texte se partagent le reste.
-- **Second passage** : Nectar relit les pages produites. Un bloc gardé d'un seul tenant qui laisserait une demi-page vide est autorisé à se couper (le tableau répète son en-tête).
-- **Schémas en grand** : un schéma large et détaillé est repéré et peut passer, en un clic, sur une page paysage. Le texte qui suit remplit d'abord la page en cours, puis vient la page paysage, sans quitter la section.
-- Une retouche l'emporte toujours sur ces règles.
+- Lignes isolées (veuves, orphelines) évitées ; images limitées à 85 % de la page pour garder leur annonce et leur légende ; une photo ou une capture verticale à 60 % (réglable), un schéma vertical garde sa taille.
+- Tableaux : chaque colonne garde sa largeur naturelle si tout tient ; sinon les colonnes les plus longues passent à la ligne en premier, sans jamais couper un mot ni sortir de la marge.
+
+Puis Nectar relit les pages produites et corrige ce qui gâche le PDF, sans qu'on le lui demande :
+
+- **Tableaux trop larges** (5 colonnes ou plus, qui déborderaient ou passeraient beaucoup à la ligne) : sur une page paysage, avec leur titre et leur phrase d'annonce ; le texte reprend ensuite en portrait.
+- **Schémas larges et détaillés** (Mermaid, Excalidraw, image nommée « schéma », « architecture », « topologie »…) : page paysage. Une capture d'écran ou une image verticale reste toujours en portrait.
+- **Pas de trou en bas de page** : une image un peu trop haute pour la place restante est réduite juste assez (jamais sous 55 %) ; un bloc gardé d'un seul tenant est autorisé à se couper (le tableau répète son en-tête) ; un tableau qui déborde de 2 ou 3 lignes est un peu resserré ; une page paysage qui laisserait la page d'avant à moitié vide passe après le texte qui la suit, sans quitter la section.
+- **Dernière page de quelques lignes** : l'espace entre paragraphes se resserre un peu pour la supprimer.
+
+Ces décisions ne sont pas écrites dans les retouches : elles sont recalculées à chaque mise en page, listées par `nectar check` et dans l'atelier (« Fait automatiquement »). Pour en refuser une : « Laisser ce bloc tel quel » (retouche `tel-quel`) ; pour toutes, Style → Placement automatique. Une retouche l'emporte toujours sur ces règles.
 
 **Assistant** (`Vérifier` dans l'atelier, `nectar check` en ligne de commande) : il relit les pages réelles et signale :
 
 - une page à moitié vide, avec le bloc responsable ;
-- un schéma à lire en grand (« Mettre les N schémas en paysage » d'un coup) ;
+- un schéma à lire en grand, si le placement automatique est coupé (« Mettre les N schémas en paysage » d'un coup) ;
 - un titre isolé, un contenu qui dépasse la marge, une image réduite pour tenir ;
 - une dernière page presque vide ;
 - une image ou une note introuvable, une formule non convertie, une police absente.
@@ -91,7 +97,11 @@ Une retouche faite dans l'atelier remplace celle écrite dans la note. `<!-- pag
 
 `nectar mcp` est un serveur [MCP](https://modelcontextprotocol.io) : une IA (Claude Desktop, Claude Code…) peut lire une note, voir ses pages, la vérifier, la retoucher, régler son style et exporter le PDF. Les retouches vont dans le même fichier que celles de l'atelier : s'il est ouvert, il les montre aussitôt.
 
-Configuration (Claude Desktop, `claude_desktop_config.json`) :
+**Il faut le brancher une fois** : une IA ne découvre pas seule ses outils.
+
+- **Claude Desktop** : dans l'atelier, Aide → « Connecter à Claude Desktop » (ou `nectar mcp install`), puis quitter complètement Claude Desktop et le rouvrir. Nectar est ajouté à ses réglages sans toucher aux autres outils (copie de l'ancien fichier en `.bak`).
+- **Claude Code** : une fois, dans un terminal (la commande exacte est dans l'Aide de l'atelier, bouton « Copier ») : `claude mcp add nectar-render --scope user -- "<chemin>\nectar.exe" mcp`.
+- **Autre client MCP** : la même chose à la main, dans ses réglages :
 
 ```json
 {
@@ -104,7 +114,7 @@ Configuration (Claude Desktop, `claude_desktop_config.json`) :
 }
 ```
 
-Avec Claude Code : `claude mcp add nectar-render -- "<chemin>\nectar.exe" mcp`.
+`check_layout` liste aussi ce que le placement automatique a déjà décidé : l'IA ne retouche que ce qui reste à revoir.
 
 | Outil | Ce qu'il fait |
 |---|---|
@@ -122,13 +132,14 @@ Exemple de demande : « Mets en page mon compte rendu `C:\Coffre\TP réseau.md` 
 
 ```text
 nectar export <note.md> [-o sortie.pdf] [--png dossier] [--system-fonts] [--preset magazine]
-nectar check <note.md>                   # l'assistant de mise en page
+nectar check <note.md>                   # décisions automatiques, défauts restants, temps de calcul
 nectar blocks <note.md>                  # ids, types, lignes et pages des blocs
 nectar set <note.md> <id> <retouches>    # ex. : nectar set note.md li-8f4c06da saut-avant
 nectar unset <note.md> <id>
 nectar presets | nectar use-preset <note.md> <preset>
 nectar typst <note.md>                   # la source Typst générée
 nectar mcp                               # serveur MCP pour les IA
+nectar mcp install                       # le brancher à Claude Desktop (+ commande pour Claude Code)
 ```
 
 Le coffre `examples/coffre-demo` montre les cas d'origine : saut entre la phrase d'introduction et la première puce, image suivie d'une page vide, grand schéma sur une page A3 paysage au milieu d'un A4. Il contient aussi un dessin Excalidraw et un diagramme Mermaid.

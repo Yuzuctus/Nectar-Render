@@ -385,14 +385,33 @@ pub fn inspect(
     generated: &Generated,
     missing_fonts: &[String],
 ) -> Vec<nectar_core::assistant::Issue> {
+    inspect_tuned(compiled, document, layout, style, generated, missing_fonts, &nectar_core::Tuning::default())
+}
+
+/// [`inspect`] d'une mise en page faite par [`lay_out`] : les décisions
+/// automatiques comptent comme voulues (une page paysage choisie d'office
+/// n'est pas signalée comme un trou).
+pub fn inspect_tuned(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    layout: &nectar_core::Layout,
+    style: &nectar_core::Style,
+    generated: &Generated,
+    missing_fonts: &[String],
+    tuning: &nectar_core::Tuning,
+) -> Vec<nectar_core::assistant::Issue> {
     use nectar_core::assistant::{Inputs, Marker, analyse};
+    use nectar_core::layout::{ImageOps, Placement};
     let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
     let pages = compiled.page_metrics(margin_bottom);
     let markers: Vec<Marker> =
         compiled.block_positions().into_iter().map(|p| Marker { id: p.id, page: p.page, y: p.y }).collect();
     let notes = compiled.template_notes();
     let figures = compiled.figures();
-    let ops = layout.resolve(document).ops;
+    let mut ops = layout.resolve(document).ops;
+    for id in &tuning.landscape {
+        ops.entry(id.clone()).or_default().image.get_or_insert_with(ImageOps::default).placement = Placement::Landscape;
+    }
     let warnings: Vec<String> =
         document.warnings.iter().chain(&generated.warnings).chain(&compiled.warnings).cloned().collect();
     analyse(&Inputs {
@@ -414,15 +433,30 @@ pub struct LaidOut {
     pub compiled: Result<Compiled, EngineError>,
     /// Blocs que le second passage a autorisés à se couper.
     pub relaxed: Vec<BlockId>,
+    /// Toutes les décisions du placement automatique.
+    pub tuning: nectar_core::Tuning,
+    /// Les mêmes, lisibles, bloc par bloc.
+    pub choices: Vec<nectar_core::auto::Choice>,
 }
 
-/// Met en page un document avec le placement automatique en deux temps.
+/// Met en page un document avec le placement automatique.
 ///
-/// Premier passage : les règles (petits blocs d'un seul tenant, annonces
-/// gardées avec la suite…). Puis on relit les pages : si un bloc gardé d'un
-/// seul tenant par la seule règle automatique laisse une page à moitié vide,
-/// il est autorisé à se couper (un tableau répète alors son en-tête) et on
-/// recompose. Une retouche manuelle n'est jamais remise en cause.
+/// Avant tout : les tableaux trop larges pour une page portrait passent en
+/// paysage. Puis on compose et on relit les pages, autant de fois que
+/// nécessaire (chaque recomposition est incrémentale) :
+/// 1. les schémas larges et détaillés passent en paysage ;
+/// 2. un bloc gardé d'un seul tenant par la seule règle automatique, qui
+///    laisse une page à moitié vide, est autorisé à se couper ;
+/// 3. une image un peu trop haute pour la place restante est réduite juste
+///    assez pour y tenir (jamais en dessous de 55 % de sa taille) ;
+/// 4. une dernière page de quelques lignes est résorbée en resserrant un peu
+///    l'espace entre les paragraphes ;
+/// 5. une page paysage qui laisserait la page d'avant à moitié vide est
+///    repoussée après le texte qui la suit ;
+/// 6. après une page au format propre, le format du document revient.
+///
+/// Une retouche manuelle n'est jamais remise en cause, et un bloc « tel
+/// quel » n'est jamais touché.
 pub fn lay_out(
     engine: &Engine,
     document: &nectar_core::Document,
@@ -431,62 +465,186 @@ pub fn lay_out(
 ) -> LaidOut {
     use nectar_core::assistant::FixAction;
     use nectar_core::layout::{PageChange, Placement};
+    let ops = layout.resolve(document).ops;
+    let rules = &style.pagination;
     let mut tuning = nectar_core::Tuning::default();
+    if rules.auto_landscape {
+        tuning.landscape.extend(nectar_core::auto::wide_tables(document, &ops, &layout.page, style));
+    }
     let mut generated = nectar_core::generate_tuned(document, layout, style, &tuning);
     let mut compiled = engine.compile(&generated);
-    let ops = layout.resolve(document).ops;
+    // Recompose avec de nouveaux réglages ; garde l'ancienne mise en page si
+    // la nouvelle échoue (et rend alors `false`).
+    let retry =
+        |tuning: &nectar_core::Tuning, generated: &mut Generated, compiled: &mut Result<Compiled, EngineError>| {
+            let attempt = nectar_core::generate_tuned(document, layout, style, tuning);
+            match engine.compile(&attempt) {
+                Ok(better) => {
+                    *compiled = Ok(better);
+                    *generated = attempt;
+                    true
+                }
+                Err(_) => false,
+            }
+        };
+    let fixes = |compiled: &Compiled, generated: &Generated, tuning: &nectar_core::Tuning| {
+        inspect_tuned(compiled, document, layout, style, generated, &[], tuning)
+            .into_iter()
+            .flat_map(|issue| issue.fixes.into_iter().map(move |fix| (issue.page, fix)))
+            .collect::<Vec<_>>()
+    };
+    let free = |id: &BlockId| nectar_core::auto::allowed(ops.get(id));
+
+    // 1. Schémas larges : en paysage d'office.
+    if rules.auto_landscape
+        && let Ok(current) = &compiled
+    {
+        let wide: Vec<BlockId> = fixes(current, &generated, &tuning)
+            .into_iter()
+            .filter(|(_, fix)| fix.action == FixAction::ImagePlacement(Placement::Landscape) && free(&fix.block))
+            .map(|(_, fix)| fix.block)
+            .collect();
+        if !wide.is_empty() {
+            let before = tuning.landscape.clone();
+            tuning.landscape.extend(wide);
+            if !retry(&tuning, &mut generated, &mut compiled) {
+                tuning.landscape = before;
+            }
+        }
+    }
+
+    // 2. Blocs insécables qui laissent un trou : coupés.
     for _ in 0..3 {
         let Ok(current) = &compiled else { break };
-        let holes: Vec<BlockId> = inspect(current, document, layout, style, &generated, &[])
+        let holes: Vec<BlockId> = fixes(current, &generated, &tuning)
             .into_iter()
-            .flat_map(|issue| issue.fixes)
+            .map(|(_, fix)| fix)
             .filter(|fix| fix.action == FixAction::KeepTogether(false))
             .map(|fix| fix.block)
-            .filter(|id| ops.get(id).is_none_or(|o| o.keep_together.is_none()) && !tuning.relaxed.contains(id))
+            .filter(|id| {
+                ops.get(id).is_none_or(|o| o.keep_together.is_none() && !o.manual) && !tuning.relaxed.contains(id)
+            })
             .collect();
         if holes.is_empty() {
             break;
         }
         tuning.relaxed.extend(holes);
-        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
-        match engine.compile(&retry) {
-            Ok(better) => {
-                compiled = Ok(better);
-                generated = retry;
-            }
-            Err(_) => break,
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            break;
         }
     }
-    // Pages paysage : si la page d'avant reste à moitié vide, le texte qui
-    // suit vient la remplir et la page paysage arrive juste après.
+
+    // 2 bis. Tableaux qui débordent de quelques lignes : resserrés.
+    if let Ok(current) = &compiled {
+        let spills = spilling_tables(current, document, style, &ops);
+        if !spills.is_empty() {
+            let previous = tuning.clone();
+            tuning.compact.extend(spills.iter().map(|(id, _)| id.clone()));
+            if retry(&tuning, &mut generated, &mut compiled) {
+                // Un tableau qui déborde encore ne gagne rien à être resserré.
+                let pages = |c: &Compiled, id: &BlockId| {
+                    c.block_boxes(f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4)
+                        .iter()
+                        .filter(|b| &b.id == id)
+                        .count()
+                };
+                let useless: Vec<BlockId> = match &compiled {
+                    Ok(c) => {
+                        spills.iter().filter(|(id, count)| pages(c, id) >= *count).map(|(id, _)| id.clone()).collect()
+                    }
+                    Err(_) => Vec::new(),
+                };
+                if !useless.is_empty() {
+                    for id in &useless {
+                        tuning.compact.remove(id);
+                    }
+                    retry(&tuning, &mut generated, &mut compiled);
+                }
+            } else {
+                tuning = previous;
+            }
+        }
+    }
+
+    // 3. Images un peu trop hautes : réduites juste assez.
+    if rules.fit_images {
+        let mut tried: HashSet<BlockId> = HashSet::new();
+        for _ in 0..16 {
+            let Ok(current) = &compiled else { break };
+            let candidate = fixes(current, &generated, &tuning).into_iter().find_map(|(page, fix)| {
+                let page = page?;
+                (matches!(fix.action, FixAction::ImageWidth(_))
+                    && free(&fix.block)
+                    && !tuning.is_landscape(ops.get(&fix.block), &fix.block)
+                    && !tried.contains(&fix.block))
+                .then_some((page, fix.block))
+            });
+            let Some((page, figure)) = candidate else { break };
+            tried.insert(figure.clone());
+            let Some((height, ratio)) = fit_height(current, style, page, &figure) else { continue };
+            let previous = tuning.clone();
+            tuning.fit.insert(figure.clone(), height as f32);
+            tuning.fit_percent.insert(figure.clone(), (ratio * 100.0).round() as u8);
+            if !retry(&tuning, &mut generated, &mut compiled) {
+                tuning = previous;
+                continue;
+            }
+            // L'estimation a pu être un peu juste : l'image doit être remontée.
+            let landed = compiled.as_ref().ok().and_then(|c| c.block_positions().into_iter().find(|p| p.id == figure));
+            if landed.is_none_or(|p| p.page != page) {
+                tuning = previous;
+                retry(&tuning, &mut generated, &mut compiled);
+            }
+        }
+    }
+
+    // 4. Dernière page de quelques lignes : espacements resserrés.
+    if rules.avoid_short_last_page
+        && let Ok(current) = &compiled
+        && short_last_page(current, document, &ops, style)
+    {
+        let count = current.page_count();
+        for factor in [0.8, 0.6] {
+            let mut attempt = tuning.clone();
+            attempt.tighten = Some(factor);
+            let mut g = generated.clone();
+            let mut c: Result<Compiled, EngineError> = Err(EngineError::NoSuchPage(0));
+            if retry(&attempt, &mut g, &mut c) && c.as_ref().is_ok_and(|c| c.page_count() < count) {
+                tuning = attempt;
+                generated = g;
+                compiled = c;
+                break;
+            }
+        }
+    }
+
+    // 5. Pages paysage : si la page d'avant reste à moitié vide, le texte qui
+    // suit vient la remplir et la page paysage arrive juste après. De la
+    // dernière à la première : une image plus loin, déjà repoussée, laisse
+    // son texte disponible pour les précédentes. Une image qui suit son titre
+    // ou la phrase qui l'annonce reste avec eux.
     let landscapes: Vec<BlockId> = document
         .blocks
         .iter()
-        .filter(|b| ops.get(&b.id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape))
-        .map(|b| b.id.clone())
+        .enumerate()
+        .filter(|(_, b)| {
+            matches!(b.node, nectar_core::model::Node::Figure(_) | nectar_core::model::Node::Diagram { .. })
+        })
+        .filter(|(_, b)| tuning.is_landscape(ops.get(&b.id), &b.id))
+        .filter(|(i, b)| *i == 0 || !nectar_core::codegen::leads_into(&document.blocks[i - 1], b))
+        .map(|(_, b)| b.id.clone())
         .collect();
-    // De la dernière à la première : une image plus loin, déjà repoussée,
-    // laisse son texte disponible pour les précédentes.
-    // De la dernière à la première : une image plus loin, déjà repoussée,
-    // laisse son texte disponible pour les précédentes. Une recomposition
-    // par image repoussée (elles sont rarement nombreuses).
     for figure in landscapes.iter().rev().take(10) {
         let Ok(current) = &compiled else { break };
         let moved: Vec<&BlockId> = tuning.deferred.iter().map(|(f, _)| f).collect();
         let Some(after) = defer_point(current, document, style, figure, &moved) else { continue };
         tuning.deferred.push((figure.clone(), after));
-        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
-        match engine.compile(&retry) {
-            Ok(better) => {
-                compiled = Ok(better);
-                generated = retry;
-            }
-            Err(_) => {
-                tuning.deferred.pop();
-            }
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            tuning.deferred.pop();
         }
     }
-    // Pages au format propre (« cette page seulement ») : le format revient
+
+    // 6. Pages au format propre (« cette page seulement ») : le format revient
     // devant le premier bloc qui commence après elles.
     //
     // Une page au format propre commence toujours à son bloc (le changement de
@@ -512,21 +670,92 @@ pub fn lay_out(
             break;
         }
         let previous = std::mem::replace(&mut tuning.returns, wanted);
-        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
-        match engine.compile(&retry) {
-            Ok(better) => {
-                compiled = Ok(better);
-                generated = retry;
-            }
-            Err(_) => {
-                tuning.returns = previous;
-                break;
-            }
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            tuning.returns = previous;
+            break;
         }
     }
-    let mut relaxed: Vec<BlockId> = tuning.relaxed.into_iter().collect();
+    let mut relaxed: Vec<BlockId> = tuning.relaxed.iter().cloned().collect();
     relaxed.sort();
-    LaidOut { generated, compiled, relaxed }
+    let choices = tuning.choices(document);
+    LaidOut { generated, compiled, relaxed, tuning, choices }
+}
+
+/// Hauteur à donner à l'image `figure`, rejetée en tête de la page
+/// `page + 1`, pour qu'elle tienne au bas de la page `page` avec ce qui la
+/// précède en tête de page (titre, phrase d'annonce) et sa légende ; et le
+/// rapport de réduction. `None` si elle devrait trop rétrécir.
+fn fit_height(compiled: &Compiled, style: &nectar_core::Style, page: usize, figure: &BlockId) -> Option<(f64, f64)> {
+    let mm = 72.0 / 25.4;
+    let (top, bottom) = (f64::from(style.page.margin_top_mm) * mm, f64::from(style.page.margin_bottom_mm) * mm);
+    let metrics = compiled.page_metrics(bottom);
+    let here = metrics.get(page)?;
+    let content_bottom = here.content.map(|c| c[3]).unwrap_or(top);
+    let gap = f64::from(style.text.size_pt) * f64::from(1.0 + style.text.paragraph_spacing_em) + 6.0;
+    let room = here.height - bottom - content_bottom - gap;
+    let image = compiled.figures().into_iter().find(|f| &f.id == figure && f.page == page + 1)?;
+    let stack_bottom =
+        compiled.block_boxes(bottom).into_iter().find(|b| &b.id == figure && b.page == page + 1).map(|b| b.rect[3])?;
+    let stack = stack_bottom - top;
+    let height = image.height - (stack - room) - 4.0;
+    let ratio = height / image.height;
+    ((0.55..1.0).contains(&ratio) && height >= 90.0).then_some((height, ratio))
+}
+
+/// Tableaux dont la dernière page ne porte que quelques lignes : (id,
+/// nombre de pages occupées).
+fn spilling_tables(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    style: &nectar_core::Style,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+) -> Vec<(BlockId, usize)> {
+    let mm = 72.0 / 25.4;
+    let (top, bottom) = (f64::from(style.page.margin_top_mm) * mm, f64::from(style.page.margin_bottom_mm) * mm);
+    let boxes = compiled.block_boxes(bottom);
+    document
+        .blocks
+        .iter()
+        .filter(|b| matches!(b.node, nectar_core::model::Node::Table(_)) && nectar_core::auto::allowed(ops.get(&b.id)))
+        .filter_map(|b| {
+            let parts: Vec<&BlockBox> = boxes.iter().filter(|x| x.id == b.id).collect();
+            let last = parts.last()?;
+            let height = compiled.page_size(last.page)?.1 - top - bottom;
+            (parts.len() >= 2 && last.rect[3] - last.rect[1] < height * 0.2).then(|| (b.id.clone(), parts.len()))
+        })
+        .collect()
+}
+
+/// La dernière page n'a que quelques lignes, sans saut voulu devant elles.
+fn short_last_page(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+    style: &nectar_core::Style,
+) -> bool {
+    let mm = 72.0 / 25.4;
+    let (top, bottom) = (f64::from(style.page.margin_top_mm) * mm, f64::from(style.page.margin_bottom_mm) * mm);
+    let metrics = compiled.page_metrics(bottom);
+    let (Some(last), true) = (metrics.last(), metrics.len() > 1) else { return false };
+    let Some([_, _, _, content_bottom]) = last.content else { return false };
+    let fill = (content_bottom - top) / (last.height - top - bottom);
+    let page = metrics.len() - 1;
+    let positions = compiled.block_positions();
+    let first = positions.iter().find(|p| p.page == page);
+    let wanted = first.is_some_and(|p| {
+        ops.get(&p.id).is_some_and(|o| o.break_before || o.page.is_some())
+            || document
+                .blocks
+                .iter()
+                .position(|b| b.id == p.id)
+                .is_some_and(|i| i > 0 && ops.get(&document.blocks[i - 1].id).is_some_and(|o| o.break_after))
+    });
+    // La page d'avant doit être pleine : sinon c'est un saut, pas un débordement.
+    let previous_full = metrics
+        .get(page - 1)
+        .and_then(|m| m.content)
+        .is_some_and(|c| (c[3] - top) / (metrics[page - 1].height - top - bottom) > 0.85);
+    fill < 0.15 && !wanted && previous_full && metrics[page - 1].width == last.width
 }
 
 /// Le bloc de premier niveau devant lequel revenir au format courant, après

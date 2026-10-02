@@ -60,8 +60,18 @@ enum Command {
     /// Affiche la source Typst générée.
     Typst { note: PathBuf },
     /// Serveur MCP (sur l'entrée et la sortie standard) : une IA peut lire,
-    /// vérifier, retoucher et exporter les notes.
-    Mcp,
+    /// vérifier, retoucher et exporter les notes. `nectar mcp install` le
+    /// branche à Claude Desktop.
+    Mcp {
+        #[command(subcommand)]
+        action: Option<McpAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum McpAction {
+    /// Branche Nectar à Claude Desktop (et donne la commande pour Claude Code).
+    Install,
 }
 
 fn main() -> Result<()> {
@@ -90,7 +100,8 @@ fn main() -> Result<()> {
         Command::Blocks { note } => blocks(&note),
         Command::Set { note, block, ops } => set(&note, &block, &ops.join(",")),
         Command::Unset { note, block } => unset(&note, &block),
-        Command::Mcp => mcp::serve(),
+        Command::Mcp { action: None } => mcp::serve(),
+        Command::Mcp { action: Some(McpAction::Install) } => mcp_install(),
         Command::Typst { note } => {
             let project = open(&note)?;
             let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());
@@ -107,6 +118,25 @@ fn lay_out(project: &Project, engine: &Engine) -> (nectar_core::Generated, Resul
     let mut generated = laid.generated;
     generated.warnings.extend(warning);
     (generated, laid.compiled.map_err(Into::into))
+}
+
+fn mcp_install() -> Result<()> {
+    let nectar = std::env::current_exe().context("chemin de nectar introuvable")?;
+    match nectar_core::connect::connect_claude_desktop(&nectar) {
+        Ok(files) => {
+            for file in files {
+                println!("✓ Claude Desktop : Nectar ajouté à {}", file.display());
+            }
+            println!("  Quittez complètement Claude Desktop (icône près de l'horloge → Quitter) puis rouvrez-le.");
+        }
+        Err(error) => println!("✗ Claude Desktop : {error}"),
+    }
+    println!();
+    println!("Claude Code : lancez une fois cette commande dans un terminal :");
+    println!("  {}", nectar_core::connect::claude_code_command(&nectar));
+    println!();
+    println!("Ensuite, demandez par exemple : « Mets en page ma note C:\\…\\TP WIFI.md et exporte le PDF ».");
+    Ok(())
 }
 
 fn open(note: &Path) -> Result<Project> {
@@ -169,13 +199,39 @@ fn export(
 fn check(note: &Path) -> Result<()> {
     let project = open(note)?;
     let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());
-    let (generated, compiled) = lay_out(&project, &engine);
+    let (style, warning) = project.style();
+    let started = std::time::Instant::now();
+    let laid = nectar_typst::lay_out(&engine, &project.document, &project.layout, &style);
+    let millis = started.elapsed().as_millis();
+    let mut generated = laid.generated;
+    generated.warnings.extend(warning);
     let missing = engine.missing_fonts(&generated.fonts);
-    let compiled = compiled?;
-    let (style, _) = project.style();
-    let issues = nectar_typst::inspect(&compiled, &project.document, &project.layout, &style, &generated, &missing);
+    let compiled = laid.compiled?;
+    let issues = nectar_typst::inspect_tuned(
+        &compiled,
+        &project.document,
+        &project.layout,
+        &style,
+        &generated,
+        &missing,
+        &laid.tuning,
+    );
+    println!("{} pages, mises en page en {millis} ms.", compiled.page_count());
+    if !laid.choices.is_empty() {
+        println!("Décidé automatiquement (« nectar set … tel-quel » pour refuser) :");
+        let anchors = project.document.anchors();
+        for choice in &laid.choices {
+            let excerpt = anchors.iter().find(|a| a.id == &choice.block).map(|a| a.excerpt).unwrap_or("");
+            println!(
+                "  ✓ {} — {} « {} »",
+                choice.describe(),
+                choice.block,
+                excerpt.chars().take(50).collect::<String>()
+            );
+        }
+    }
     if issues.is_empty() {
-        println!("Rien à signaler : {} pages propres.", compiled.page_count());
+        println!("Rien à signaler : les pages sont propres.");
     }
     for issue in issues {
         let mark = match issue.severity {

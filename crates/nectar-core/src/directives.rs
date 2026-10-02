@@ -55,6 +55,7 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
             ("keep-together" | "insecable" | "insécable", None) => ops.keep_together = Some(true),
             ("allow-break" | "secable" | "sécable", None) => ops.keep_together = Some(false),
             ("hidden" | "masquer", None) => ops.hidden = true,
+            ("as-is" | "tel-quel" | "manuel" | "manual", None) => ops.manual = true,
             ("space-before" | "espace-avant", v) => ops.space_before_mm = Some(number(v)?),
             ("page", Some(v)) if v.eq_ignore_ascii_case("default") || v.eq_ignore_ascii_case("défaut") => {
                 ops.page = Some(PageChange::Default(DefaultPage::Default));

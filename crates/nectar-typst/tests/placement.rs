@@ -1,5 +1,6 @@
 //! Le placement automatique en deux temps.
 
+use nectar_core::auto::ChoiceKind;
 use nectar_core::{Layout, ParseOptions, Style, parse};
 use nectar_typst::{Engine, FontSources, lay_out};
 
@@ -79,20 +80,15 @@ fn wide_schema_is_detected_then_laid_on_a_landscape_page() {
     let engine = Engine::new(FontSources::Bundled);
     let style = Style::default();
 
-    // Premier temps : l'assistant propose la page paysage.
-    let laid = lay_out(&engine, &doc, &Layout::default(), &style);
-    let compiled = laid.compiled.unwrap();
-    let issues = nectar_typst::inspect(&compiled, &doc, &Layout::default(), &style, &laid.generated, &[]);
-    let issue = issues.iter().find(|i| i.title.starts_with("Schéma à lire en grand")).expect("schéma repéré");
-    assert_eq!(issue.fixes[0].action, nectar_core::assistant::FixAction::ImagePlacement(Placement::Landscape));
-
-    // Une fois appliquée : l'image a sa page paysage, le texte qui la suit
-    // remplit d'abord la page d'avant, et la section suivante reste après.
-    let mut layout = Layout::default();
     let figure = doc.anchors().into_iter().find(|a| a.id.as_str().starts_with("fig-")).unwrap();
     let figure_id = figure.id.clone();
-    layout.ops_mut(figure).image = Some(ImageOps { placement: Placement::Landscape, ..Default::default() });
-    let compiled = lay_out(&engine, &doc, &layout, &style).compiled.unwrap();
+
+    // Sans rien demander : la page paysage est choisie d'office, le texte
+    // qui suit l'image remplit d'abord la page d'avant, et la section
+    // suivante reste après.
+    let laid = lay_out(&engine, &doc, &Layout::default(), &style);
+    assert!(laid.choices.iter().any(|c| c.block == figure_id && c.kind == ChoiceKind::Landscape));
+    let compiled = laid.compiled.unwrap();
     let positions = compiled.block_positions();
     let page = |id: &nectar_core::BlockId| positions.iter().find(|p| &p.id == id).unwrap().page;
     let (w, h) = compiled.page_size(page(&figure_id)).unwrap();
@@ -103,6 +99,54 @@ fn wide_schema_is_detected_then_laid_on_a_landscape_page() {
     assert!(explanations[..5].iter().all(|p| *p == 0), "le texte reste en page 1 : {explanations:?}");
     let suite = doc.blocks.iter().find(|b| b.excerpt.starts_with("Suite")).unwrap();
     assert_eq!(page(&suite.id), 2, "la section suivante vient après le schéma");
+
+    // « Tel quel » : la personne refuse, l'image reste dans le texte.
+    let mut layout = Layout::default();
+    layout.ops_mut(figure).manual = true;
+    let compiled = lay_out(&engine, &doc, &layout, &style).compiled.unwrap();
+    assert!(compiled.page_size(0).is_some_and(|(w, h)| w < h));
+    assert_eq!(compiled.page_count(), 1);
+
+    // Placement automatique coupé dans le style : l'assistant le propose.
+    let mut manual_style = style.clone();
+    manual_style.pagination.auto_landscape = false;
+    let laid = lay_out(&engine, &doc, &Layout::default(), &manual_style);
+    let compiled = laid.compiled.unwrap();
+    let issues = nectar_typst::inspect(&compiled, &doc, &Layout::default(), &manual_style, &laid.generated, &[]);
+    let issue = issues.iter().find(|i| i.title.starts_with("Schéma à lire en grand")).expect("schéma repéré");
+    assert_eq!(issue.fixes[0].action, nectar_core::assistant::FixAction::ImagePlacement(Placement::Landscape));
+    let _ = ImageOps::default();
+}
+
+#[test]
+fn wide_tables_go_landscape_with_their_heading_and_fit_one_page() {
+    let mut text = String::from("# Rapport\n\nIntroduction courte.\n\n## Scan des réseaux\n\nRésultat du scan :\n\n");
+    text.push_str("| SSID | BSSID | Canal | Fréquence | Signal | Sécurité | Débit max | Observation |\n");
+    text.push_str("|---|---|---|---|---|---|---|---|\n");
+    for i in 0..12 {
+        text.push_str(&format!(
+            "| TP-WIFI-{i} | a4:2b:b0:{i:02x}:3c:9d | 6 | 2,412 GHz | -60 dBm | WPA2-PSK (AES) | 300 Mbit/s | Signal correct dans la salle, plus faible dans le couloir |\n"
+        ));
+    }
+    text.push_str("\nSuite du rapport.\n");
+    let doc = parse(&text, &ParseOptions::default());
+    let engine = Engine::new(FontSources::Bundled);
+    let laid = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+    let table = doc.blocks.iter().find(|b| b.id.as_str().starts_with("table-")).unwrap();
+    assert!(laid.choices.iter().any(|c| c.block == table.id && c.kind == ChoiceKind::Landscape));
+    let compiled = laid.compiled.unwrap();
+    let positions = compiled.block_positions();
+    let page = |prefix: &str| positions.iter().find(|p| p.id.as_str().starts_with(prefix)).unwrap().page;
+    let (w, h) = compiled.page_size(page("table-")).unwrap();
+    assert!(w > h, "tableau en paysage");
+    // Le titre de la section et la phrase d'annonce l'accompagnent.
+    let heading = doc.blocks.iter().find(|b| b.excerpt.starts_with("Scan")).unwrap();
+    assert_eq!(positions.iter().find(|p| p.id == heading.id).unwrap().page, page("table-"));
+    // Tout le tableau tient sur sa page, et le texte reprend en portrait.
+    let margin = f64::from(Style::default().page.margin_bottom_mm) * 72.0 / 25.4;
+    assert_eq!(compiled.block_boxes(margin).iter().filter(|b| b.id == table.id).count(), 1);
+    let last = compiled.page_size(compiled.page_count() - 1).unwrap();
+    assert!(last.0 < last.1);
 }
 
 #[test]
@@ -181,4 +225,66 @@ fn many_page_formats_each_stay_on_their_page() {
         let (w, h) = compiled.page_size(page).unwrap();
         assert_eq!(w > h, owner_pages.contains(&page), "page {} : {w}×{h}", page + 1);
     }
+}
+
+#[test]
+fn a_slightly_too_tall_image_is_shrunk_to_fill_the_page() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("vue.svg"),
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1000"><rect width="1200" height="1000" fill="#cde"/></svg>"##,
+    )
+    .unwrap();
+    let options = ParseOptions { note_dir: Some(dir.path()), ..Default::default() };
+    let engine = Engine::new(FontSources::Bundled);
+    let mut off = Style::default();
+    off.pagination.fit_images = false;
+    let paragraph = "Un paragraphe de texte ordinaire, assez long pour occuper deux lignes de la page en cours.\n\n";
+    let mut fitted_somewhere = false;
+    for n in 4..16 {
+        let text = format!("# Essai\n\n{}## Vue d'ensemble\n\n![[vue.svg]]\n\nFin.\n", paragraph.repeat(n));
+        let doc = parse(&text, &options);
+        let figure = doc.blocks.iter().find(|b| b.id.as_str().starts_with("fig-")).unwrap();
+        let page =
+            |c: &nectar_typst::Compiled| c.block_positions().into_iter().find(|p| p.id == figure.id).unwrap().page;
+        if page(&lay_out(&engine, &doc, &Layout::default(), &off).compiled.unwrap()) == 0 {
+            continue;
+        }
+        // Sans réduction, l'image part page suivante et laisse un trou.
+        let laid = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+        let fitted = laid.choices.iter().find_map(|c| match c.kind {
+            ChoiceKind::Fitted(percent) if c.block == figure.id => Some(percent),
+            _ => None,
+        });
+        let landed = page(laid.compiled.as_ref().unwrap());
+        match fitted {
+            // Réduite (jamais sous 55 %), elle tient sur la première page.
+            Some(percent) => {
+                assert!((55..100).contains(&percent));
+                assert_eq!(landed, 0, "{n} paragraphes");
+                fitted_somewhere = true;
+            }
+            None => assert_eq!(landed, 1),
+        }
+    }
+    assert!(fitted_somewhere);
+}
+
+#[test]
+fn a_last_page_of_a_few_lines_is_absorbed() {
+    let engine = Engine::new(FontSources::Bundled);
+    let mut off = Style::default();
+    off.pagination.avoid_short_last_page = false;
+    let paragraph = "Un paragraphe de texte ordinaire, assez long pour occuper deux lignes de la page en cours.\n\n";
+    // Le nombre de paragraphes qui déborde de quelques lignes sur une page 2.
+    let (doc, count) = (10..60)
+        .find_map(|n| {
+            let doc = parse(&format!("# Essai\n\n{}", paragraph.repeat(n)), &ParseOptions::default());
+            let compiled = lay_out(&engine, &doc, &Layout::default(), &off).compiled.unwrap();
+            (compiled.page_count() == 2).then_some((doc, n))
+        })
+        .expect("un débordement");
+    let laid = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+    assert_eq!(laid.compiled.unwrap().page_count(), 1, "{count} paragraphes : une seule page");
+    assert!(laid.choices.iter().any(|c| c.kind == ChoiceKind::Tightened));
 }

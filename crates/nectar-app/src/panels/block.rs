@@ -90,14 +90,57 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 
     let mut ops = current.clone();
 
+    // Ce que le placement automatique a fait de ce bloc, et comment le refuser.
+    let choices: Vec<nectar_core::auto::Choice> = app
+        .rendered
+        .as_ref()
+        .map(|r| r.choices.iter().filter(|c| c.block == id).cloned().collect())
+        .unwrap_or_default();
+    if !choices.is_empty() || ops.manual {
+        egui::Frame::new().fill(t.surface).stroke(egui::Stroke::new(1.0, t.rule)).inner_margin(8).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            if ops.manual {
+                ui.label(RichText::new("Tel quel").font(FontId::new(13.0, theme::strong())));
+                widgets::help(
+                    ui,
+                    "Le placement automatique ne touche pas à ce bloc (pas de page paysage, pas de réduction).",
+                );
+                if ui.button("Laisser Nectar décider à nouveau").clicked() {
+                    ops.manual = false;
+                }
+            } else {
+                ui.label(RichText::new("Fait automatiquement").font(FontId::new(13.0, theme::strong())));
+                for choice in &choices {
+                    widgets::help(ui, &format!("·  {}", choice.describe()));
+                }
+                let keep = ui
+                    .button("Laisser ce bloc tel quel")
+                    .on_hover_text("Annule ces décisions pour ce bloc ; les autres blocs ne changent pas.");
+                if keep.hovered() {
+                    crate::pages::hover_action(&ctx, &id, Quick::AsIs);
+                }
+                if keep.clicked() {
+                    ops.manual = true;
+                }
+            }
+        });
+        ui.add_space(8.0);
+    }
+
     // L'essentiel, à un clic, chaque option avec ce qu'elle fait.
     kicker(ui, "Où placer ce bloc ?");
     ui.add_space(4.0);
     for offer in &offers {
-        if offer.quick == Quick::Clear || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage)) {
+        if matches!(offer.quick, Quick::Clear | Quick::AsIs)
+            || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage))
+        {
             continue;
         }
-        if widgets::explained(ui, offer.active, offer.label, offer.hint) {
+        let response = widgets::explained(ui, offer.active, offer.label, offer.hint);
+        if response.hovered() {
+            crate::pages::hover_action(&ctx, &id, offer.quick);
+        }
+        if response.clicked() {
             actions::apply(&mut ops, offer.quick);
         }
     }

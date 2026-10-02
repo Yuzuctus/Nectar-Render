@@ -142,19 +142,21 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut egui::Ui, value: &mut T, options
 }
 
 /// Bouton à bascule : jaune quand il est actif.
-pub fn toggle(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
+fn toggle_response(ui: &mut egui::Ui, on: bool, label: &str) -> egui::Response {
     let t = theme::tokens(ui.ctx());
     let text = RichText::new(label).color(if on { t.accent_ink } else { t.ink });
     let text = if on { RichText::new(format!("✔ {label}")).color(t.accent_ink) } else { text };
-    ui.add(egui::Button::new(text).fill(if on { t.accent } else { t.raised })).on_hover_text(hint).clicked()
+    ui.add(egui::Button::new(text).fill(if on { t.accent } else { t.raised }))
 }
 
 /// Une option expliquée : le bouton, puis ce qu'elle fait en une phrase.
-pub fn explained(ui: &mut egui::Ui, on: bool, label: &str, explain: &str) -> bool {
-    let clicked = toggle(ui, on, label, explain);
+/// Rend le bouton (cliqué, survolé…).
+pub fn explained(ui: &mut egui::Ui, on: bool, label: &str, explain: &str) -> egui::Response {
+    // L'explication est écrite dessous : pas d'infobulle en plus.
+    let response = toggle_response(ui, on, label);
     help(ui, explain);
     ui.add_space(4.0);
-    clicked
+    response
 }
 
 /// Une case à cocher suivie de son explication.

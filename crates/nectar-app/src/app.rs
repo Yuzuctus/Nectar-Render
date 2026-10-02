@@ -69,6 +69,8 @@ pub struct NectarApp {
     show_warnings: bool,
     /// La fenêtre d'aide (F1).
     show_help: bool,
+    /// Résultat du dernier « Connecter à Claude Desktop ».
+    ai_status: Option<String>,
     /// Taille de l'interface (zoom de l'atelier, pas du PDF).
     ui_scale: f32,
     launch_select: Option<String>,
@@ -126,6 +128,7 @@ impl NectarApp {
             save_preset_dialog: None,
             show_warnings: false,
             show_help: false,
+            ai_status: None,
             ui_scale: cc.storage.and_then(|s| s.get_string(UI_SCALE)).and_then(|v| v.parse().ok()).unwrap_or(1.0),
             launch_select: launch.select,
             recents: cc
@@ -414,8 +417,9 @@ impl NectarApp {
         Some(if self.page_differs(page) { panels::page::format_of_size(size) } else { panels::page::Format::Document })
     }
 
-    /// Donne un format à une page. Une image posée seule sur une page
-    /// paysage porte ce format : elle revient dans le texte pour « Normal ».
+    /// Donne un format à une page. Un schéma ou un tableau posé seul sur une
+    /// page paysage (retouche ou décision automatique) porte ce format : il
+    /// revient dans le texte pour « Normal ».
     pub fn set_page_format(&mut self, ctx: &egui::Context, page: usize, format: &panels::page::Format) {
         use nectar_core::layout::Placement;
         let Some(rendered) = &self.rendered else { return };
@@ -425,12 +429,22 @@ impl NectarApp {
             .iter()
             .filter(|p| p.page == page)
             .map(|p| &p.id)
-            .find(|id| ops.get(*id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape))
+            .find(|id| {
+                ops.get(*id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape)
+                    || rendered
+                        .choices
+                        .iter()
+                        .any(|c| &c.block == *id && c.kind == nectar_core::auto::ChoiceKind::Landscape)
+            })
             .cloned();
         let differs = self.page_differs(page);
         if let Some(image) = landscape_image {
             let format = format.clone();
+            let auto =
+                !ops.get(&image).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape);
             self.edit_block(ctx, &image, move |ops| {
+                // Mis en paysage d'office : on refuse la décision automatique.
+                ops.manual |= auto;
                 if let Some(i) = &mut ops.image {
                     i.placement = Placement::Inline;
                 }
@@ -916,9 +930,66 @@ impl NectarApp {
                         }
                         ui.add_space(10.0);
                     }
+                    self.ai_section(ui);
                 });
             });
         self.show_help = open;
+    }
+
+    /// Brancher une IA : un clic pour Claude Desktop, une commande à copier
+    /// pour Claude Code.
+    fn ai_section(&mut self, ui: &mut egui::Ui) {
+        let t = theme::tokens(ui.ctx());
+        kicker(ui, "Avec une IA");
+        ui.add_space(2.0);
+        ui.label(
+            "Une IA (Claude Desktop, Claude Code…) peut mettre en page une note pour vous : formats de page, \
+             style, retouches, export. Il faut la brancher une seule fois.",
+        );
+        ui.add_space(4.0);
+        let Some(nectar) = nectar_core::connect::nectar_beside_current_exe() else {
+            ui.label(
+                RichText::new("nectar.exe est introuvable à côté de l'atelier : réinstallez Nectar Render.")
+                    .color(t.muted),
+            );
+            return;
+        };
+        let connected = nectar_core::connect::claude_desktop_connected(&nectar);
+        ui.horizontal(|ui| {
+            let label = if connected { "Rebrancher à Claude Desktop" } else { "Connecter à Claude Desktop" };
+            if ui.button(label).clicked() {
+                self.ai_status = Some(match nectar_core::connect::connect_claude_desktop(&nectar) {
+                    Ok(_) => "C'est fait. Quittez complètement Claude Desktop (icône près de l'horloge → Quitter), \
+                              puis rouvrez-le : Nectar apparaît dans ses outils."
+                        .into(),
+                    Err(error) => format!("Impossible : {error}"),
+                });
+            }
+            if connected {
+                ui.label(RichText::new("✔ déjà branché").color(t.muted));
+            }
+        });
+        if let Some(status) = &self.ai_status {
+            ui.label(RichText::new(status).small());
+        }
+        ui.add_space(6.0);
+        ui.label("Claude Code : lancer une fois cette commande dans un terminal.");
+        let command = nectar_core::connect::claude_code_command(&nectar);
+        ui.horizontal(|ui| {
+            ui.add(egui::Label::new(RichText::new(&command).monospace().small()).truncate());
+            if ui.small_button("Copier").clicked() {
+                ui.ctx().copy_text(command.clone());
+            }
+        });
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(
+                "Ensuite, demandez par exemple : « Mets en page ma note TP WIFI : style Académique, \
+                 aucune page à moitié vide, puis exporte le PDF ».",
+            )
+            .small()
+            .color(t.faint),
+        );
     }
 
     fn warnings_window(&mut self, ctx: &egui::Context) {
@@ -1036,6 +1107,26 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Ne pas couper :", "un tableau, une liste ou un code reste entier sur une page."),
             ("Poignée à droite d'une image :", "règle sa largeur."),
             ("Clic droit sur un bloc :", "les mêmes actions, en menu."),
+            (
+                "Survoler une action",
+                "(sans cliquer) : la zone qui va bouger est surlignée dans la page, avec ce qui va se passer.",
+            ),
+        ],
+    ),
+    (
+        "Ce que Nectar décide seul",
+        &[
+            (
+                "Tableaux et schémas trop larges :",
+                "sur une page paysage, avec leur titre ; le texte reprend en portrait.",
+            ),
+            ("Image un peu trop haute :", "légèrement réduite plutôt que de laisser un trou en bas de page."),
+            ("Tableau qui déborde de 2 ou 3 lignes :", "un peu resserré pour tenir sur sa page."),
+            ("Dernière page de quelques lignes :", "les paragraphes se resserrent un peu pour la supprimer."),
+            (
+                "Pour refuser :",
+                "sélectionner le bloc puis « Laisser ce bloc tel quel » ; tout couper : Style → Placement automatique.",
+            ),
         ],
     ),
     (
@@ -1046,7 +1137,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
                 "elle prend ce format, se remplit avec la suite, puis le document reprend le sien.",
             ),
             ("Et les pages suivantes :", "garde ce format jusqu'au prochain changement."),
-            ("Page paysage (image) :", "un schéma seul sur une page tournée, en grand."),
+            ("Page paysage :", "un schéma ou un tableau seul sur une page tournée, en grand."),
         ],
     ),
     (

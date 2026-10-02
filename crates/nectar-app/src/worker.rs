@@ -80,6 +80,8 @@ pub struct Layouted {
     pub issues: Vec<nectar_core::assistant::Issue>,
     /// Boîte réelle de chaque bloc, page par page.
     pub boxes: Vec<nectar_typst::BlockBox>,
+    /// Ce que le placement automatique a décidé.
+    pub choices: Vec<nectar_core::auto::Choice>,
     /// Erreur de compilation : la mise en page précédente reste affichée.
     pub error: Option<String>,
     pub millis: u128,
@@ -146,6 +148,8 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                 let started = Instant::now();
                 let laid = nectar_typst::lay_out(&engine, &check.document, &check.layout, &check.style);
                 let generated = laid.generated;
+                let tuning = laid.tuning;
+                let choices = laid.choices;
                 let missing_fonts = engine.missing_fonts(&generated.fonts);
                 let mut error = None;
                 match laid.compiled {
@@ -167,14 +171,16 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         positions: compiled.block_positions(),
                         boxes: compiled.block_boxes(f64::from(check.style.page.margin_bottom_mm) * 72.0 / 25.4),
                         warnings: generated.warnings.iter().chain(&compiled.warnings).cloned().collect(),
-                        issues: nectar_typst::inspect(
+                        issues: nectar_typst::inspect_tuned(
                             compiled,
                             &check.document,
                             &check.layout,
                             &check.style,
                             &generated,
                             &missing_fonts,
+                            &tuning,
                         ),
+                        choices,
                         missing_fonts,
                         error,
                         millis: started.elapsed().as_millis(),
@@ -186,6 +192,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         boxes: Vec::new(),
                         warnings: generated.warnings.clone(),
                         issues: Vec::new(),
+                        choices: Vec::new(),
                         missing_fonts,
                         error,
                         millis: started.elapsed().as_millis(),

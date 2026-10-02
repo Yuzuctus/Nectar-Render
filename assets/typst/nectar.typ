@@ -29,6 +29,8 @@
   width-px: none,
   height-px: none,
   max-height: 100%,
+  fit-height: none,
+  portrait-cap: false,
   scale: 0.75,
   inline: false,
   page: none,
@@ -60,6 +62,16 @@
       natural.width * scale * S.images.scale
     }
     w = calc.min(w, region.width)
+    // Une photo (ou capture) verticale sans taille imposée ne mange pas
+    // toute la page ; un schéma vertical, lui, garde la place d'être lu.
+    let explicit = width-ratio != none or width-px != none or height-px != none
+    if portrait-cap and not explicit and ratio > 1.15 and region.height < 10000pt {
+      let cap = region.height * S.images.portrait_max_percent / 100
+      if w * ratio > cap { w = cap / ratio }
+    }
+    // Réduite d'office par le placement automatique pour tenir dans la
+    // place restante : voulu, donc pas signalé.
+    if fit-height != none and w * ratio > fit-height { w = fit-height / ratio }
     let wanted = w
     if region.height < 10000pt {
       let max-h = region.height * max-height
@@ -85,6 +97,8 @@
   placement: "inline",
   scale: 0.75,
   page: none,
+  fit-height: none,
+  photo: false,
 ) = {
   let sized(max-height) = nectar-image(
     src,
@@ -94,6 +108,8 @@
     width-px: width-px,
     height-px: height-px,
     max-height: max-height,
+    fit-height: fit-height,
+    portrait-cap: photo and placement == "inline",
     scale: scale,
   )
   let body(max-height) = if caption == none { sized(max-height) } else { figure(sized(max-height), caption: caption) }

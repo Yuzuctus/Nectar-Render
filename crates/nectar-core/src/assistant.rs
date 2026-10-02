@@ -138,8 +138,13 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
             });
         }
 
-        // Page à moitié vide parce que le bloc suivant n'y tenait pas.
+        // Page à moitié vide parce que le bloc suivant n'y tenait pas (une
+        // page paysage ne porte que son schéma ou son tableau : rien à dire).
+        let landscape = on_page(page).any(|m| {
+            input.ops.get(&m.id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape)
+        });
         if page < last_page
+            && !landscape
             && on_page(page).next().is_some()
             && fill < 0.6
             && let Some(next) = first(page + 1)
@@ -354,7 +359,7 @@ fn wide_schema(input: &Inputs<'_>, figure: &FigureView) -> Option<Issue> {
         _ => (false, String::new()),
     };
     // Une image déjà retouchée : la personne a décidé de sa taille.
-    if !schema || input.ops.get(&figure.id).is_some_and(|o| o.image.is_some() || o.page.is_some()) {
+    if !schema || input.ops.get(&figure.id).is_some_and(|o| o.image.is_some() || o.page.is_some() || o.manual) {
         return None;
     }
     let page = input.pages.get(figure.page)?;

@@ -87,11 +87,26 @@ pub struct PaginationStyle {
     /// Les petits blocs (liste courte, code court, petit tableau, encadré)
     /// ne sont jamais coupés entre deux pages.
     pub keep_small_blocks: bool,
+    /// Les schémas et tableaux trop larges passent d'eux-mêmes sur une page
+    /// paysage (le texte reprend ensuite en portrait).
+    pub auto_landscape: bool,
+    /// Une image un peu trop haute pour la place restante est légèrement
+    /// réduite plutôt que de laisser un trou en bas de page.
+    pub fit_images: bool,
+    /// Les espacements se resserrent un peu si la dernière page n'a que
+    /// quelques lignes.
+    pub avoid_short_last_page: bool,
 }
 
 impl Default for PaginationStyle {
     fn default() -> Self {
-        Self { keep_intro_with_next: true, keep_small_blocks: true }
+        Self {
+            keep_intro_with_next: true,
+            keep_small_blocks: true,
+            auto_landscape: true,
+            fit_images: true,
+            avoid_short_last_page: true,
+        }
     }
 }
 
@@ -400,11 +415,15 @@ pub struct ImageStyle {
     pub caption_italic: bool,
     /// Numéroter les figures légendées.
     pub numbering: bool,
+    /// Hauteur maximale d'une photo verticale sans taille imposée, en
+    /// pourcentage de la hauteur de texte d'une page.
+    pub portrait_max_percent: f32,
 }
 
 impl Default for ImageStyle {
     fn default() -> Self {
         Self {
+            portrait_max_percent: 60.0,
             scale: 1.0,
             radius_pt: 0.0,
             caption_size_pt: 8.5,

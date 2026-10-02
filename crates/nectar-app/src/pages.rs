@@ -176,7 +176,11 @@ pub fn show(
                     };
                     for offer in actions::offers(app, &id) {
                         let label = if offer.active { format!("✔ {}", offer.label) } else { offer.label.to_string() };
-                        if ui.button(label).on_hover_text(offer.hint).clicked() {
+                        let button = ui.button(label).on_hover_text(offer.hint);
+                        if button.hovered() {
+                            hover_action(ui.ctx(), &id, offer.quick);
+                        }
+                        if button.clicked() {
                             action.quick = Some((id.clone(), offer.quick));
                             ui.close();
                         }
@@ -288,6 +292,33 @@ pub fn show(
             }
             if let Some(id) = &app.selected {
                 paint(id, t.marker.gamma_multiply(0.12), Stroke::new(2.0, t.identity));
+            }
+
+            // Aperçu de l'action survolée : ce qui va bouger, avant le clic.
+            if live.is_none()
+                && let Some((id, quick)) = hovered_action(ui.ctx())
+                && let Some((page, top, bottom, text)) = preview(app, rendered, &id, quick, &children, views, &margins)
+                && let (Some(page_rect), Some(view)) = (page_rects.get(page), views.get(page))
+            {
+                let r = Rect::from_min_max(
+                    page_rect.min + egui::vec2((margins.left - 8.0) * scale, (top - 4.0) * scale),
+                    page_rect.min + egui::vec2((view.size_pt.x - margins.right + 8.0) * scale, (bottom + 4.0) * scale),
+                );
+                let painter = ui.painter_at(*page_rect);
+                painter.rect_filled(r, 0.0, t.accent.gamma_multiply(0.22));
+                painter.rect_stroke(r, 0.0, Stroke::new(2.0, t.identity), StrokeKind::Outside);
+                let font = egui::FontId::new(12.5, theme::strong());
+                let galley = painter.layout_no_wrap(text, font, t.accent_ink);
+                let pill = Rect::from_min_size(
+                    egui::pos2(
+                        r.right() - galley.size().x - 16.0,
+                        (r.top() - galley.size().y - 8.0).max(page_rect.top() + 2.0),
+                    ),
+                    galley.size() + egui::vec2(12.0, 6.0),
+                );
+                painter.rect_filled(pill, 0.0, t.accent);
+                painter.rect_stroke(pill, 0.0, Stroke::new(1.0, t.ink), StrokeKind::Inside);
+                painter.galley(pill.min + egui::vec2(6.0, 3.0), galley, t.accent_ink);
             }
 
             // Repères des retouches dans la marge gauche.
@@ -406,6 +437,112 @@ pub fn show(
     action
 }
 
+/// Une action survolée (barre, clic droit, panneau) : on montre ce qui va
+/// bouger avant le clic.
+pub fn hover_action(ctx: &egui::Context, id: &BlockId, quick: Quick) {
+    let key = egui::Id::new("apercu-action");
+    let frame = ctx.cumulative_frame_nr();
+    let previous: Option<(BlockId, Quick, u64)> = ctx.data(|d| d.get_temp(key));
+    if previous.as_ref().is_none_or(|(i, q, _)| i != id || *q != quick) {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|d| d.insert_temp(key, (id.clone(), quick, frame)));
+}
+
+/// L'action survolée à l'image précédente (ou à celle-ci).
+fn hovered_action(ctx: &egui::Context) -> Option<(BlockId, Quick)> {
+    let (id, quick, frame): (BlockId, Quick, u64) = ctx.data(|d| d.get_temp(egui::Id::new("apercu-action")))?;
+    // On revérifie bientôt : l'aperçu s'efface quand le pointeur s'en va.
+    ctx.request_repaint_after(std::time::Duration::from_millis(120));
+    (frame + 1 >= ctx.cumulative_frame_nr()).then_some((id, quick))
+}
+
+/// Ce que l'action va changer : la page, la zone touchée (haut, bas, en
+/// points) et une phrase.
+fn preview(
+    app: &NectarApp,
+    rendered: &crate::worker::Layouted,
+    id: &BlockId,
+    quick: Quick,
+    children: &HashSet<BlockId>,
+    views: &[PageView],
+    margins: &Margins,
+) -> Option<(usize, f32, f32, String)> {
+    let project = app.project.as_ref()?;
+    let ops = project.layout.ops_for(&project.document, id);
+    let positions = &rendered.positions;
+    let (page, [_, top, _, bottom]) = bands(rendered, id, children, views, margins).into_iter().next()?;
+    let content_bottom = |page: usize| {
+        rendered.boxes.iter().filter(|b| b.page == page).map(|b| b.rect[3] as f32).fold(margins.top + 14.0, f32::max)
+    };
+    let auto_landscape =
+        rendered.choices.iter().any(|c| &c.block == id && c.kind == nectar_core::auto::ChoiceKind::Landscape);
+    Some(match quick {
+        Quick::BreakBefore if ops.break_before => (page, top, bottom, "↑ Le bloc revient à sa place".into()),
+        Quick::BreakBefore => {
+            // Les titres qui le précèdent sur la page partent avec lui.
+            let blocks = &project.document.blocks;
+            let mut start = (page, top);
+            if let Some(index) = blocks.iter().position(|b| &b.id == id) {
+                for previous in blocks[..index].iter().rev() {
+                    let Some(p) = positions.iter().find(|p| p.id == previous.id) else { break };
+                    if !matches!(previous.node, Node::Heading { .. }) || p.page != page {
+                        break;
+                    }
+                    start = (p.page, p.y as f32 - 2.0);
+                }
+            }
+            if start.1 <= margins.top + 4.0 {
+                (page, top, bottom, "Déjà en haut de la page : rien ne bouge".into())
+            } else {
+                (page, start.1, content_bottom(page), format!("↓ Tout ceci passe en haut de la page {}", page + 2))
+            }
+        }
+        Quick::BreakAfter if ops.break_after => (page, top, bottom, "La suite remonte sur cette page".into()),
+        Quick::BreakAfter => {
+            let next = positions
+                .iter()
+                .skip_while(|p| &p.id != id)
+                .skip(1)
+                .find(|p| !children.contains(&p.id) && (p.page > page || p.y as f32 > bottom - 2.0))?;
+            if next.page != page {
+                (page, top, bottom, "Déjà en bas de page : rien ne bouge".into())
+            } else {
+                let y = next.y as f32 - 2.0;
+                (
+                    page,
+                    y,
+                    content_bottom(page),
+                    format!("↓ La suite passe page {} ; ce bas de page reste vide", page + 2),
+                )
+            }
+        }
+        Quick::Landscape
+            if auto_landscape
+                || ops.image.as_ref().is_some_and(|i| i.placement == nectar_core::layout::Placement::Landscape) =>
+        {
+            (page, top, bottom, "↺ Revient dans le texte, en portrait".into())
+        }
+        Quick::Landscape => (page, top, bottom, "→ Seul sur une page paysage, en grand".into()),
+        Quick::AsIs if auto_landscape => (page, top, bottom, "↺ Revient dans le texte, en portrait".into()),
+        Quick::AsIs => (page, top, bottom, "Le placement automatique n'y touchera plus".into()),
+        Quick::FullPage => (page, top, bottom, "→ Seul sur sa page, aussi grand que possible".into()),
+        Quick::KeepWithNext => {
+            let next_bottom = positions
+                .iter()
+                .skip_while(|p| &p.id != id)
+                .skip(1)
+                .find(|p| !children.contains(&p.id))
+                .and_then(|n| bands(rendered, &n.id, children, views, margins).into_iter().find(|(p, _)| *p == page))
+                .map(|(_, r)| r[3])
+                .unwrap_or(bottom);
+            (page, top, next_bottom, "Ces deux blocs resteront sur la même page".into())
+        }
+        Quick::KeepTogether => (page, top, bottom, "Restera entier, sur une seule page".into()),
+        Quick::Clear => (page, top, bottom, "Toutes les retouches de ce bloc seront retirées".into()),
+    })
+}
+
 /// Le numéro cliquable d'une page, à sa droite.
 fn tag_rect(page: Rect) -> Rect {
     Rect::from_min_size(page.right_top() + egui::vec2(6.0, 0.0), egui::vec2(26.0, 18.0))
@@ -441,7 +578,11 @@ fn toolbar(
                             let button = egui::Button::new(text)
                                 .fill(if offer.active { t.accent } else { t.raised })
                                 .stroke(Stroke::NONE);
-                            if ui.add(button).on_hover_text(offer.hint).clicked() {
+                            let button = ui.add(button).on_hover_text(offer.hint);
+                            if button.hovered() {
+                                hover_action(ui.ctx(), id, offer.quick);
+                            }
+                            if button.clicked() {
                                 action.quick = Some((id.clone(), offer.quick));
                             }
                         }

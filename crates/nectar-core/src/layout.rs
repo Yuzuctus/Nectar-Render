@@ -262,6 +262,10 @@ pub struct BlockOps {
     /// Colonnes d'un tableau réglées à la main.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub table: Option<TableOps>,
+    /// Laisser ce bloc tel quel : le placement automatique ne le met pas en
+    /// page paysage et ne réduit pas son image.
+    #[serde(skip_serializing_if = "is_false")]
+    pub manual: bool,
 }
 
 /// Apparence d'un bloc, par-dessus le style du document.
@@ -349,6 +353,7 @@ impl BlockOps {
         if let Some(table) = &other.table {
             self.table = Some(table.clone());
         }
+        self.manual |= other.manual;
     }
 }
 
@@ -390,9 +395,30 @@ impl Default for PageSpec {
     }
 }
 
+/// Formats de papier connus : identifiant, petit et grand côté en mm.
+pub const PAPERS_MM: &[(&str, f32, f32)] = &[
+    ("a5", 148.0, 210.0),
+    ("a4", 210.0, 297.0),
+    ("a3", 297.0, 420.0),
+    ("a2", 420.0, 594.0),
+    ("a1", 594.0, 841.0),
+    ("us-letter", 215.9, 279.4),
+    ("us-legal", 215.9, 355.6),
+];
+
 impl PageSpec {
     pub fn paper(paper: &str, landscape: bool) -> Self {
         Self { paper: paper.into(), landscape, ..Self::default() }
+    }
+
+    /// Largeur et hauteur de la page en mm (A4 si le format est inconnu).
+    pub fn size_mm(&self) -> (f32, f32) {
+        if let (Some(w), Some(h)) = (self.width_mm, self.height_mm) {
+            return (w, h);
+        }
+        let (short, long) =
+            PAPERS_MM.iter().find(|(id, ..)| *id == self.paper).map(|(_, s, l)| (*s, *l)).unwrap_or((210.0, 297.0));
+        if self.landscape { (long, short) } else { (short, long) }
     }
 
     /// Lit `a3`, `a3-landscape`, `a4-paysage` ou `210x297` (mm).

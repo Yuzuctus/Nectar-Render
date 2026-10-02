@@ -15,6 +15,8 @@ pub enum Quick {
     KeepTogether,
     Landscape,
     FullPage,
+    /// Refuser les décisions du placement automatique pour ce bloc.
+    AsIs,
     Clear,
 }
 
@@ -42,15 +44,28 @@ pub fn offers(app: &NectarApp, id: &nectar_core::BlockId) -> Vec<Offer> {
     };
     let ops = project.layout.ops_for(&project.document, id);
     let figure = matches!(block.node, Node::Figure(_) | Node::Diagram { .. });
+    let table = matches!(block.node, Node::Table(_));
     let placement = ops.image.as_ref().map(|i| i.placement).unwrap_or_default();
+    let auto_landscape = app.rendered.as_ref().is_some_and(|r| {
+        r.choices.iter().any(|c| &c.block == id && c.kind == nectar_core::auto::ChoiceKind::Landscape)
+    });
     let mut list = vec![offer(Quick::BreakBefore, "↓ Page suivante", ops.break_before, NEXT_PAGE)];
-    if figure {
+    if (figure || table) && auto_landscape && placement != Placement::Landscape {
+        list.push(offer(
+            Quick::AsIs,
+            "Page paysage (auto)",
+            true,
+            "Choisi automatiquement pour être lu en grand. Cliquer : le garder dans le texte, en portrait.",
+        ));
+    } else if figure || table {
         list.push(offer(
             Quick::Landscape,
             "Page paysage",
             placement == Placement::Landscape,
-            "L'image seule sur une page tournée, en grand ; le texte reprend ensuite au format normal.",
+            "Seul sur une page tournée, en grand ; le texte reprend ensuite au format normal.",
         ));
+    }
+    if figure {
         list.push(offer(
             Quick::FullPage,
             "Pleine page",
@@ -110,6 +125,7 @@ pub fn apply(ops: &mut BlockOps, quick: Quick) {
                 ops.image = None;
             }
         }
+        Quick::AsIs => ops.manual = !ops.manual,
         Quick::Clear => *ops = BlockOps::default(),
     }
 }

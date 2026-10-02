@@ -22,14 +22,18 @@ const INSTRUCTIONS: &str = "Nectar Render met en page des notes Markdown (Obsidi
 Démarche conseillée : read_note pour connaître les blocs (id, type, page) et les pages ; check_layout pour \
 les défauts repérés ; render_page pour voir une page ; puis set_block / set_page_format / set_style pour \
 retoucher, et de nouveau check_layout ou render_page pour vérifier. La note elle-même n'est jamais \
-modifiée : les retouches sont rangées à côté (dossier .nectar), et l'atelier Nectar Render les affiche en direct.";
+modifiée : les retouches sont rangées à côté (dossier .nectar), et l'atelier Nectar Render les affiche en direct. \
+Le placement automatique décide déjà seul des cas courants (tableaux et schémas larges en paysage, images un peu \
+réduites pour ne pas laisser de trou, dernière page résorbée) : check_layout les liste dans automatic_decisions. \
+Ne retouchez que ce qui reste à revoir ; « tel-quel » sur un bloc refuse les décisions automatiques.";
 
 const DIRECTIVES: &str = "Retouches séparées par des virgules : saut-avant (le bloc et la suite passent page \
 suivante), saut-apres (reste de la page vide après), garder-avec-suivant, insecable (jamais coupé), secable \
 (coupure autorisée), bas-de-page, masquer, espace-avant=MM (négatif pour rapprocher), page=a3 | a3-paysage | \
 a4-paysage | defaut (format de la page du bloc), suite (le format vaut aussi pour les pages suivantes), \
 largeur=60 (image, % de la largeur du texte), alignement=gauche|centre|droite, placement=texte|haut|bas|\
-pleine-page|paysage, legende=\"…\", centre, droite, colonnes=2, taille=120 (texte en %).";
+pleine-page|paysage, legende=\"…\", centre, droite, colonnes=2, taille=120 (texte en %), tel-quel (le placement \
+automatique ne touche pas à ce bloc).";
 
 /// Le serveur : un moteur partagé entre les appels (polices, photos en cache).
 #[derive(Default)]
@@ -163,8 +167,20 @@ impl Server {
         let laid = nectar_typst::lay_out(self.engine(), &project.document, &project.layout, &style);
         let compiled = laid.compiled.map_err(|e| anyhow!("{e}"))?;
         let missing = self.engine().missing_fonts(&laid.generated.fonts);
-        let issues =
-            nectar_typst::inspect(&compiled, &project.document, &project.layout, &style, &laid.generated, &missing);
+        let issues = nectar_typst::inspect_tuned(
+            &compiled,
+            &project.document,
+            &project.layout,
+            &style,
+            &laid.generated,
+            &missing,
+            &laid.tuning,
+        );
+        let automatic: Vec<Value> = laid
+            .choices
+            .iter()
+            .map(|c| json!({ "block": c.block.as_str(), "decision": c.describe(), "refuse_with": "as-is" }))
+            .collect();
         let list: Vec<Value> = issues
             .iter()
             .map(|issue| {
@@ -186,7 +202,7 @@ impl Server {
                 })
             })
             .collect();
-        let report = json!({ "pages": compiled.page_count(), "issues": list });
+        let report = json!({ "pages": compiled.page_count(), "automatic_decisions": automatic, "issues": list });
         Ok(vec![text(&serde_json::to_string_pretty(&report)?)])
     }
 

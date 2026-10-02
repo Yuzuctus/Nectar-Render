@@ -38,8 +38,11 @@ Ligne de commande
 Avec une IA (serveur MCP)
 -------------------------
 « nectar.exe mcp » permet à une IA (Claude Desktop, Claude Code…) de lire une
-note, voir ses pages, la vérifier, la retoucher et exporter le PDF. Voir la
-section « Avec une IA » du README pour la configuration.
+note, voir ses pages, la vérifier, la retoucher et exporter le PDF.
+Il faut le brancher une fois :
+  - Claude Desktop : dans l'atelier, Aide → « Connecter à Claude Desktop »
+    (ou « nectar.exe mcp install »), puis quitter et rouvrir Claude Desktop ;
+  - Claude Code : la commande à copier est dans la même fenêtre d'aide.
 
 En cas de souci
 ---------------
