@@ -18,13 +18,16 @@ pub enum Quick {
     Clear,
 }
 
-/// Une action rapide telle qu'on la montre : libellé, état, explication.
+/// Une action rapide telle qu'on la montre : libellé court, état, et ce
+/// qu'elle fait, en une phrase.
 pub struct Offer {
     pub quick: Quick,
     pub label: &'static str,
     pub active: bool,
     pub hint: &'static str,
 }
+
+const NEXT_PAGE: &str = "Envoie ce bloc, et tout ce qui le suit, en haut de la page suivante (Ctrl + Entrée).";
 
 /// Les actions qui ont du sens pour ce bloc, dans l'ordre d'affichage.
 pub fn offers(app: &NectarApp, id: &nectar_core::BlockId) -> Vec<Offer> {
@@ -33,53 +36,56 @@ pub fn offers(app: &NectarApp, id: &nectar_core::BlockId) -> Vec<Offer> {
         // Une puce de liste : pas de bloc de premier niveau.
         let ops = project.layout.ops_for(&project.document, id);
         return vec![
-            offer(Quick::BreakBefore, "Page avant", ops.break_before, "Commencer une nouvelle page avant cette puce"),
-            offer(Quick::Clear, "Effacer", false, "Effacer les retouches de cette puce"),
+            offer(Quick::BreakBefore, "↓ Page suivante", ops.break_before, NEXT_PAGE),
+            offer(Quick::Clear, "Tout annuler", false, "Retire toutes les retouches de cette puce (Suppr)."),
         ];
     };
     let ops = project.layout.ops_for(&project.document, id);
     let figure = matches!(block.node, Node::Figure(_) | Node::Diagram { .. });
     let placement = ops.image.as_ref().map(|i| i.placement).unwrap_or_default();
-    let mut list = vec![offer(
-        Quick::BreakBefore,
-        "Page avant",
-        ops.break_before,
-        "Commencer une nouvelle page avant ce bloc (Ctrl+Entrée)",
-    )];
+    let mut list = vec![offer(Quick::BreakBefore, "↓ Page suivante", ops.break_before, NEXT_PAGE)];
     if figure {
         list.push(offer(
             Quick::Landscape,
-            "Paysage",
+            "Page paysage",
             placement == Placement::Landscape,
-            "L'image seule sur une page paysage, en grand",
+            "L'image seule sur une page tournée, en grand ; le texte reprend ensuite au format normal.",
         ));
         list.push(offer(
             Quick::FullPage,
             "Pleine page",
             placement == Placement::FullPage,
-            "L'image seule sur sa page, aussi grande que possible",
+            "L'image seule sur sa page, aussi grande que possible.",
         ));
-        list.push(offer(Quick::BreakAfter, "Vide après", ops.break_after, "Laisser le reste de la page vide après"));
-    } else {
         list.push(offer(
-            Quick::KeepWithNext,
-            "Avec la suite",
-            ops.keep_with_next,
-            "Garder ce bloc sur la même page que le suivant",
+            Quick::BreakAfter,
+            "Fin de page après",
+            ops.break_after,
+            "Laisse le reste de la page vide après ce bloc : la suite commence page suivante.",
         ));
+    } else {
+        // Un titre reste déjà toujours avec ce qui le suit.
+        if !matches!(block.node, Node::Heading { .. }) {
+            list.push(offer(
+                Quick::KeepWithNext,
+                "Lier au suivant",
+                ops.keep_with_next,
+                "Jamais séparé du bloc qui le suit par une fin de page : s'il le faut, les deux passent ensemble à la page suivante.",
+            ));
+        }
         if matches!(
             block.node.kind(),
             BlockKind::Table | BlockKind::Code | BlockKind::List | BlockKind::Callout | BlockKind::Quote
         ) {
             list.push(offer(
                 Quick::KeepTogether,
-                "D'un seul tenant",
+                "Ne pas couper",
                 ops.keep_together == Some(true),
-                "Ne jamais couper ce bloc entre deux pages",
+                "Le bloc reste entier sur une seule page, jamais coupé en deux.",
             ));
         }
     }
-    list.push(offer(Quick::Clear, "Effacer", false, "Effacer les retouches de ce bloc (Suppr)"));
+    list.push(offer(Quick::Clear, "Tout annuler", false, "Retire toutes les retouches de ce bloc (Suppr)."));
     list
 }
 

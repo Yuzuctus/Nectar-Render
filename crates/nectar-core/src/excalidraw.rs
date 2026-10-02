@@ -24,6 +24,47 @@ pub enum Drawing {
     Svg(String),
 }
 
+/// Un dessin prêt à servir, partagé entre relectures.
+pub enum Shared {
+    Exported(PathBuf),
+    Svg(std::sync::Arc<String>),
+}
+
+type Stamp = (std::time::SystemTime, u64);
+
+/// Dessins déjà rendus (la note est relue à chaque enregistrement
+/// d'Obsidian : un dessin inchangé n'est pas redessiné).
+type Rendered = std::collections::HashMap<PathBuf, (Stamp, std::sync::Arc<String>)>;
+
+static RENDERED: std::sync::LazyLock<std::sync::Mutex<Rendered>> = std::sync::LazyLock::new(Default::default);
+
+/// [`load`], sans refaire le rendu d'un dessin qui n'a pas changé.
+pub fn load_shared(path: &Path, resolve: &dyn Fn(&str) -> Option<PathBuf>) -> Result<Shared, String> {
+    if let Some(export) = fresh_export(path) {
+        return Ok(Shared::Exported(export));
+    }
+    let stamp = std::fs::metadata(path).ok().and_then(|m| Some((m.modified().ok()?, m.len())));
+    if let Some(stamp) = stamp
+        && let Ok(cache) = RENDERED.lock()
+        && let Some((cached, svg)) = cache.get(path)
+        && *cached == stamp
+    {
+        return Ok(Shared::Svg(svg.clone()));
+    }
+    match load(path, resolve)? {
+        Drawing::Exported(file) => Ok(Shared::Exported(file)),
+        Drawing::Svg(svg) => {
+            let svg = std::sync::Arc::new(svg);
+            if let Some(stamp) = stamp
+                && let Ok(mut cache) = RENDERED.lock()
+            {
+                cache.insert(path.to_path_buf(), (stamp, svg.clone()));
+            }
+            Ok(Shared::Svg(svg))
+        }
+    }
+}
+
 /// Le fichier est-il un dessin Excalidraw ?
 pub fn is_drawing(path: &Path) -> bool {
     let name = path.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();

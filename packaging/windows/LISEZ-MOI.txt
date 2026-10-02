@@ -34,3 +34,14 @@ Ligne de commande
 -----------------
     nectar.exe export "coffre-demo\Démo Nectar.md" -o demo.pdf
     nectar.exe check  "coffre-demo\Démo Nectar.md"
+
+Avec une IA (serveur MCP)
+-------------------------
+« nectar.exe mcp » permet à une IA (Claude Desktop, Claude Code…) de lire une
+note, voir ses pages, la vérifier, la retoucher et exporter le PDF. Voir la
+section « Avec une IA » du README pour la configuration.
+
+En cas de souci
+---------------
+Le journal des erreurs est dans %LOCALAPPDATA%\Nectar Render\journal.txt :
+joins-le à ton message.

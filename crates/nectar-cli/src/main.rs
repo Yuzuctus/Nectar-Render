@@ -1,6 +1,8 @@
 //! `nectar` : export en ligne de commande, et retouches à la main en
 //! attendant l'atelier graphique.
 
+mod mcp;
+
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -57,6 +59,9 @@ enum Command {
     Unset { note: PathBuf, block: String },
     /// Affiche la source Typst générée.
     Typst { note: PathBuf },
+    /// Serveur MCP (sur l'entrée et la sortie standard) : une IA peut lire,
+    /// vérifier, retoucher et exporter les notes.
+    Mcp,
 }
 
 fn main() -> Result<()> {
@@ -85,6 +90,7 @@ fn main() -> Result<()> {
         Command::Blocks { note } => blocks(&note),
         Command::Set { note, block, ops } => set(&note, &block, &ops.join(",")),
         Command::Unset { note, block } => unset(&note, &block),
+        Command::Mcp => mcp::serve(),
         Command::Typst { note } => {
             let project = open(&note)?;
             let engine = Engine::new(FontSources::Bundled).with_cache_dir(nectar_core::style::default_cache_dir());

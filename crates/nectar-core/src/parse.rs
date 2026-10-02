@@ -613,9 +613,9 @@ impl Cx<'_> {
             page: None,
             svg: None,
         };
-        match crate::excalidraw::load(path, &resolve) {
-            Ok(crate::excalidraw::Drawing::Exported(file)) => image.path = Some(file),
-            Ok(crate::excalidraw::Drawing::Svg(svg)) => image.svg = Some(std::sync::Arc::new(svg)),
+        match crate::excalidraw::load_shared(path, &resolve) {
+            Ok(crate::excalidraw::Shared::Exported(file)) => image.path = Some(file),
+            Ok(crate::excalidraw::Shared::Svg(svg)) => image.svg = Some(svg),
             Err(e) => {
                 self.warn(line, format!("dessin {target} : {e}"));
                 return None;

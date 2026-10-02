@@ -25,7 +25,8 @@
 - **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
 - Onglet **Style** : un preset en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme preset… ».
 - Onglet **Vérifier** : l'assistant de mise en page (voir plus bas).
-- Annuler et rétablir (un glisser = une seule étape), export PDF, zoom, notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.
+- Annuler et rétablir (un glisser = une seule étape), export PDF, zoom (Ctrl + molette), notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.
+- Chaque option dit ce qu'elle fait, en une phrase ; **Aide** (F1) résume gestes et raccourcis ; **Affichage** règle la taille de l'interface (90 à 150 %).
 
 ## Placé intelligemment dès le départ
 
@@ -86,6 +87,37 @@ Repli possible dans la note, juste avant le bloc :
 
 Une retouche faite dans l'atelier remplace celle écrite dans la note. `<!-- pagebreak -->` et `\pagebreak` (ancien Nectar) restent compris.
 
+## Avec une IA (serveur MCP)
+
+`nectar mcp` est un serveur [MCP](https://modelcontextprotocol.io) : une IA (Claude Desktop, Claude Code…) peut lire une note, voir ses pages, la vérifier, la retoucher, régler son style et exporter le PDF. Les retouches vont dans le même fichier que celles de l'atelier : s'il est ouvert, il les montre aussitôt.
+
+Configuration (Claude Desktop, `claude_desktop_config.json`) :
+
+```json
+{
+  "mcpServers": {
+    "nectar-render": {
+      "command": "C:\\Users\\<toi>\\AppData\\Local\\Programs\\Nectar Render\\nectar.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Avec Claude Code : `claude mcp add nectar-render -- "<chemin>\nectar.exe" mcp`.
+
+| Outil | Ce qu'il fait |
+|---|---|
+| `read_note` | pages (numéro, format) et blocs (id, type, page, extrait, retouches) |
+| `check_layout` | défauts de mise en page, avec la retouche proposée pour chacun |
+| `render_page` | une page en image, pour juger le rendu |
+| `set_block` | retoucher un bloc (`saut-avant`, `largeur=70`, `placement=paysage`…) |
+| `set_page_format` | format d'une page (`a3-paysage`, `normal`…), cette page seulement ou la suite |
+| `list_presets`, `get_style`, `set_style` | presets et réglages du style |
+| `export_pdf` | le PDF final |
+
+Exemple de demande : « Mets en page mon compte rendu `C:\Coffre\TP réseau.md` : style Académique, schémas en paysage, aucune page à moitié vide, puis exporte le PDF. »
+
 ## Ligne de commande
 
 ```text
@@ -96,6 +128,7 @@ nectar set <note.md> <id> <retouches>    # ex. : nectar set note.md li-8f4c06da 
 nectar unset <note.md> <id>
 nectar presets | nectar use-preset <note.md> <preset>
 nectar typst <note.md>                   # la source Typst générée
+nectar mcp                               # serveur MCP pour les IA
 ```
 
 Le coffre `examples/coffre-demo` montre les cas d'origine : saut entre la phrase d'introduction et la première puce, image suivie d'une page vide, grand schéma sur une page A3 paysage au milieu d'un A4. Il contient aussi un dessin Excalidraw et un diagramme Mermaid.

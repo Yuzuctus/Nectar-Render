@@ -17,6 +17,7 @@ use crate::worker::{CheckInputs, Layouted, Request, Response, Worker};
 
 const LAST_NOTE: &str = "derniere-note";
 const RECENTS: &str = "notes-recentes";
+const UI_SCALE: &str = "taille-interface";
 const ZOOMS: &[f32] = &[0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,6 +67,10 @@ pub struct NectarApp {
     scroll_to: Option<BlockId>,
     pub save_preset_dialog: Option<String>,
     show_warnings: bool,
+    /// La fenêtre d'aide (F1).
+    show_help: bool,
+    /// Taille de l'interface (zoom de l'atelier, pas du PDF).
+    ui_scale: f32,
     launch_select: Option<String>,
     /// Notes ouvertes récemment (la plus récente d'abord).
     recents: Vec<PathBuf>,
@@ -74,6 +79,10 @@ pub struct NectarApp {
     shown: HashMap<usize, (egui::Vec2, egui::TextureHandle)>,
     /// Déplacement à la souris qui attend sa nouvelle mise en page.
     pub ghost: Option<pages::Ghost>,
+    /// Détecteur de lenteur : étapes de l'image en cours, dernière alerte.
+    timings: Vec<(&'static str, Duration)>,
+    frame_start: Instant,
+    last_slow: Option<Instant>,
     /// Relecture de la note prévue (moment, tentatives).
     reload_due: Option<(Instant, u32)>,
     /// Retouches ancrées sur la note, recalculées à chaque changement.
@@ -116,6 +125,8 @@ impl NectarApp {
             scroll_to: None,
             save_preset_dialog: None,
             show_warnings: false,
+            show_help: false,
+            ui_scale: cc.storage.and_then(|s| s.get_string(UI_SCALE)).and_then(|v| v.parse().ok()).unwrap_or(1.0),
             launch_select: launch.select,
             recents: cc
                 .storage
@@ -125,10 +136,14 @@ impl NectarApp {
             shown: HashMap::new(),
             ghost: None,
             reload_due: None,
+            timings: Vec::new(),
+            frame_start: Instant::now(),
+            last_slow: None,
             resolved: HashMap::new(),
             uploads: std::collections::VecDeque::new(),
         };
         let remembered = cc.storage.and_then(|s| s.get_string(LAST_NOTE)).map(PathBuf::from).filter(|p| p.is_file());
+        cc.egui_ctx.set_zoom_factor(app.ui_scale);
         if let Some(note) = launch.note.or(remembered) {
             app.open(&note, &cc.egui_ctx);
         }
@@ -569,6 +584,9 @@ impl NectarApp {
 
     fn shortcuts(&mut self, ctx: &egui::Context) {
         let pressed = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
+        if pressed(Modifiers::NONE, Key::F1) {
+            self.show_help = !self.show_help;
+        }
         if pressed(Modifiers::COMMAND, Key::O) {
             self.pick_and_open(ctx);
         }
@@ -718,18 +736,32 @@ impl NectarApp {
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        let dark = ctx.theme() == egui::Theme::Dark;
-                        if ui
-                            .button(if dark { "Clair" } else { "Sombre" })
-                            .on_hover_text("Thème de l'atelier")
-                            .clicked()
-                        {
-                            ctx.set_theme(if dark {
-                                egui::ThemePreference::Light
-                            } else {
-                                egui::ThemePreference::Dark
-                            });
+                        if ui.button("Aide").on_hover_text("Gestes, raccourcis et explications (F1)").clicked() {
+                            self.show_help = !self.show_help;
                         }
+                        ui.menu_button("Affichage", |ui| {
+                            kicker(ui, "Thème");
+                            let mut dark = ctx.theme() == egui::Theme::Dark;
+                            if panels::widgets::segmented(ui, &mut dark, &[(false, "Clair"), (true, "Sombre")]) {
+                                ctx.set_theme(if dark {
+                                    egui::ThemePreference::Dark
+                                } else {
+                                    egui::ThemePreference::Light
+                                });
+                            }
+                            ui.add_space(6.0);
+                            kicker(ui, "Taille de l'interface");
+                            let mut scale = self.ui_scale;
+                            if panels::widgets::segmented(
+                                ui,
+                                &mut scale,
+                                &[(0.9, "90 %"), (1.0, "100 %"), (1.15, "115 %"), (1.3, "130 %"), (1.5, "150 %")],
+                            ) {
+                                self.ui_scale = scale;
+                                ctx.set_zoom_factor(scale);
+                            }
+                            panels::widgets::help(ui, "Agrandit les boutons et les textes de l'atelier (pas le PDF).");
+                        });
                         ui.add_space(8.0);
                         if ui.button("Ajuster").on_hover_text("Ajuster à la largeur").clicked() {
                             self.fit_pending = true;
@@ -860,6 +892,35 @@ impl NectarApp {
         });
     }
 
+    /// L'aide : ce qu'on peut faire, en mots simples.
+    fn help_window(&mut self, ctx: &egui::Context) {
+        if !self.show_help {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("Aide de Nectar Render")
+            .open(&mut open)
+            .default_size([520.0, 560.0])
+            .pivot(egui::Align2::CENTER_CENTER)
+            .default_pos(ctx.content_rect().center())
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().max_height(620.0).show(ui, |ui| {
+                    for (title, lines) in HELP {
+                        kicker(ui, title);
+                        ui.add_space(2.0);
+                        for (what, how) in *lines {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(RichText::new(*what).strong());
+                                ui.label(*how);
+                            });
+                        }
+                        ui.add_space(10.0);
+                    }
+                });
+            });
+        self.show_help = open;
+    }
+
     fn warnings_window(&mut self, ctx: &egui::Context) {
         if !self.show_warnings {
             return;
@@ -947,6 +1008,71 @@ impl NectarApp {
     }
 }
 
+/// Le contenu de l'aide : (rubrique, [(geste, effet)]).
+const HELP: &[(&str, &[(&str, &str)])] = &[
+    (
+        "Sélectionner",
+        &[
+            ("Clic sur un bloc :", "le sélectionne ; ses réglages s'affichent à droite, dans « Retoucher »."),
+            (
+                "Clic sur le numéro d'une page",
+                "(ou dans sa marge) : sélectionne la page entière, pour changer son format.",
+            ),
+            ("Clic à côté des pages :", "ne sélectionne plus rien."),
+            ("↑ / ↓ :", "bloc précédent ou suivant. Échap : tout désélectionner."),
+            ("Plan (en haut) :", "aller directement à un titre."),
+        ],
+    ),
+    (
+        "Placer et déplacer",
+        &[
+            ("Glisser un bloc", "vers le haut ou le bas : il se rapproche ou s'éloigne de ce qui le précède."),
+            ("Alt + ↑ / ↓ :", "même chose au millimètre (avec Maj : 5 mm)."),
+            (
+                "↓ Page suivante (Ctrl + Entrée) :",
+                "le bloc et tout ce qui le suit passent en haut de la page suivante.",
+            ),
+            ("Lier au suivant :", "le bloc n'est jamais séparé du suivant par une fin de page."),
+            ("Ne pas couper :", "un tableau, une liste ou un code reste entier sur une page."),
+            ("Poignée à droite d'une image :", "règle sa largeur."),
+            ("Clic droit sur un bloc :", "les mêmes actions, en menu."),
+        ],
+    ),
+    (
+        "Pages",
+        &[
+            (
+                "Format d'une page :",
+                "elle prend ce format, se remplit avec la suite, puis le document reprend le sien.",
+            ),
+            ("Et les pages suivantes :", "garde ce format jusqu'au prochain changement."),
+            ("Page paysage (image) :", "un schéma seul sur une page tournée, en grand."),
+        ],
+    ),
+    (
+        "Style et vérification",
+        &[
+            ("Style :", "un preset en un clic, puis l'essentiel ; tout le reste dans « Réglages détaillés »."),
+            (
+                "Vérifier :",
+                "ce que l'assistant a repéré (page à moitié vide, schéma à agrandir…), corrigeable en un clic.",
+            ),
+        ],
+    ),
+    (
+        "Annuler, enregistrer, zoomer",
+        &[
+            ("Ctrl + Z / Ctrl + Y :", "annuler, rétablir. Suppr : retirer les retouches du bloc."),
+            (
+                "Les retouches",
+                "s'enregistrent toutes seules, à côté de la note (dossier .nectar) ; la note n'est jamais modifiée.",
+            ),
+            ("Ctrl + molette, Ctrl + / − :", "zoom des pages. « Affichage » : taille de l'interface."),
+            ("Ctrl + E :", "exporter le PDF. Ctrl + O : ouvrir une note."),
+        ],
+    ),
+];
+
 /// Ce que le surveillant de fichiers a vu changer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Changed {
@@ -959,9 +1085,29 @@ impl eframe::App for NectarApp {
         self.flush();
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // Détecteur de lenteur : une image qui met trop longtemps à se
+        // dessiner est notée au journal, avec l'étape fautive.
+        let started = Instant::now();
+        self.frame_start = started;
+        self.timings.clear();
+        self.draw(ui, frame);
+        let total = started.elapsed();
+        if total > Duration::from_millis(250) && self.last_slow.is_none_or(|t| t.elapsed() > Duration::from_secs(5)) {
+            self.last_slow = Some(Instant::now());
+            let steps: Vec<String> =
+                self.timings.iter().map(|(step, d)| format!("{step} {} ms", d.as_millis())).collect();
+            crate::journal::write(&format!("image lente : {} ms ({})", total.as_millis(), steps.join(", ")));
+        }
+    }
+}
+
+impl NectarApp {
+    fn draw(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let step = Instant::now();
         self.poll(&ctx);
+        self.timings.push(("événements", step.elapsed()));
         self.shortcuts(&ctx);
         let t = theme::tokens(&ctx);
 
@@ -1014,6 +1160,7 @@ impl eframe::App for NectarApp {
                 });
             });
 
+        self.timings.push(("jusqu'aux pages", self.frame_start.elapsed()));
         let views = self.views();
         egui::CentralPanel::default().frame(egui::Frame::new().fill(t.sunken)).show(ui, |ui| {
             if self.fit_pending
@@ -1037,6 +1184,7 @@ impl eframe::App for NectarApp {
             let scroll_to = self.scroll_to.take();
             let reset = std::mem::take(&mut self.reset_horizontal);
             let action = pages::show(self, ui, &views, self.zoom, scroll_to, reset);
+            self.timings.push(("pages dessinées", self.frame_start.elapsed()));
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
                 if self.selected.is_none() {
@@ -1046,8 +1194,9 @@ impl eframe::App for NectarApp {
             if let Some(page) = action.page_clicked {
                 self.select_page(Some(page));
             }
-            if let Some((page, format)) = action.page_format {
-                self.set_page_format(&ctx, page, &format);
+            if action.background_clicked {
+                self.select(None, false);
+                self.selected_page = None;
             }
             if let Some((id, width)) = action.resize {
                 self.edit_block(&ctx, &id, |ops| {
@@ -1102,6 +1251,7 @@ impl eframe::App for NectarApp {
         });
 
         self.warnings_window(&ctx);
+        self.help_window(&ctx);
         panels::style::save_preset_modal(self, &ctx);
 
         if let Some(project) = &self.project
@@ -1110,6 +1260,7 @@ impl eframe::App for NectarApp {
             storage.set_string(LAST_NOTE, project.note.display().to_string());
             let list: Vec<String> = self.recents.iter().map(|p| p.display().to_string()).collect();
             storage.set_string(RECENTS, list.join("\n"));
+            storage.set_string(UI_SCALE, self.ui_scale.to_string());
         }
     }
 }

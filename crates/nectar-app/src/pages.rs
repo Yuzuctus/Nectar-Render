@@ -37,8 +37,8 @@ pub struct PageAction {
     pub more: bool,
     /// Page sélectionnée (numéro, marge ou blanc de la page).
     pub page_clicked: Option<usize>,
-    /// Format choisi dans la barre de la page.
-    pub page_format: Option<(usize, crate::panels::page::Format)>,
+    /// Clic dans le vide, en dehors des pages.
+    pub background_clicked: bool,
 }
 
 /// Aperçu d'un déplacement : la partie de la page sous le haut du bloc,
@@ -220,7 +220,7 @@ pub fn show(
 
                 // Numéro de page : un clic sélectionne la page.
                 let selected_page = app.selected_page == Some(index);
-                let tag = Rect::from_min_size(rect.right_top() + egui::vec2(6.0, 0.0), egui::vec2(26.0, 18.0));
+                let tag = tag_rect(rect);
                 let tag_response = ui.interact(tag, ui.id().with(("page", index)), Sense::click());
                 let tag_painter = ui.painter_at(tag.expand(1.0));
                 if selected_page || tag_response.hovered() {
@@ -361,42 +361,14 @@ pub fn show(
                 }
             }
 
-            // Barre des formats posée sur la page sélectionnée.
-            if let Some(page) = app.selected_page
-                && let Some(page_rect) = page_rects.get(page)
-                && let Some(view) = views.get(page)
+            // Clic en dehors des pages (et de leurs numéros) : plus rien de sélectionné.
+            if let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+                && ui.input(|i| i.pointer.primary_clicked())
+                && ui.clip_rect().contains(pointer)
+                && !page_rects.iter().any(|r| r.contains(pointer) || tag_rect(*r).contains(pointer))
+                && ui.ctx().layer_id_at(pointer).is_none_or(|layer| layer.order == egui::Order::Background)
             {
-                let clip = ui.clip_rect();
-                let pos = egui::pos2((page_rect.right() - 8.0).min(clip.right() - 4.0), page_rect.top() + 8.0);
-                if clip.contains(pos) {
-                    let ctx = ui.ctx().clone();
-                    egui::Area::new(egui::Id::new("barre-page"))
-                        .fixed_pos(pos)
-                        .pivot(egui::Align2::RIGHT_TOP)
-                        .order(egui::Order::Foreground)
-                        .show(&ctx, |ui| {
-                            egui::Frame::new()
-                                .fill(t.raised)
-                                .stroke(Stroke::new(1.0, t.ink))
-                                .inner_margin(egui::Margin::symmetric(6, 4))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "Page {} · {}",
-                                                page + 1,
-                                                crate::panels::page::describe(view.size_pt)
-                                            ))
-                                            .size(12.0)
-                                            .color(t.muted),
-                                        );
-                                        if let Some(format) = crate::panels::page::bar(app, ui, page) {
-                                            action.page_format = Some((page, format));
-                                        }
-                                    });
-                                });
-                        });
-                }
+                action.background_clicked = true;
             }
 
             // Barre d'actions posée sur le bloc sélectionné.
@@ -432,6 +404,11 @@ pub fn show(
         ui.add_space(40.0);
     });
     action
+}
+
+/// Le numéro cliquable d'une page, à sa droite.
+fn tag_rect(page: Rect) -> Rect {
+    Rect::from_min_size(page.right_top() + egui::vec2(6.0, 0.0), egui::vec2(26.0, 18.0))
 }
 
 /// La barre des actions rapides du bloc sélectionné.

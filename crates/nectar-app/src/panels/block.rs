@@ -11,9 +11,6 @@ use super::widgets::{self, choice, grid, label, section};
 use crate::app::NectarApp;
 use crate::theme::{self, kicker};
 
-const PAPERS: &[(&str, &str)] =
-    &[("a4", "A4"), ("a3", "A3"), ("a5", "A5"), ("us-letter", "Letter"), ("us-legal", "Legal"), ("a2", "A2")];
-
 pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let t = theme::tokens(ui.ctx());
     let ctx = ui.ctx().clone();
@@ -26,9 +23,10 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         for tip in [
             "Glisse un bloc vers le haut ou le bas pour le déplacer",
             "Clic sur le numéro d'une page (ou dans sa marge) : son format",
+            "Clic à côté des pages : tout désélectionner · F1 : l'aide",
             "Alt + ↑ / ↓ : déplacer d'1 mm (Maj : 5 mm)",
             "Clic droit sur un bloc : actions rapides",
-            "Ctrl + Entrée : nouvelle page avant le bloc",
+            "Ctrl + Entrée : le bloc passe à la page suivante",
             "↑ / ↓ : bloc précédent ou suivant",
         ] {
             ui.label(RichText::new(format!("·  {tip}")).small().color(t.faint));
@@ -92,22 +90,22 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 
     let mut ops = current.clone();
 
-    // L'essentiel, à un clic.
-    kicker(ui, "Sur la page");
-    ui.add_space(2.0);
-    ui.horizontal_wrapped(|ui| {
-        for offer in &offers {
-            if offer.quick == Quick::Clear || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage)) {
-                continue;
-            }
-            if widgets::toggle(ui, offer.active, offer.label, offer.hint) {
-                actions::apply(&mut ops, offer.quick);
-            }
+    // L'essentiel, à un clic, chaque option avec ce qu'elle fait.
+    kicker(ui, "Où placer ce bloc ?");
+    ui.add_space(4.0);
+    for offer in &offers {
+        if offer.quick == Quick::Clear || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage)) {
+            continue;
         }
-    });
-    ui.add_space(6.0);
+        if widgets::explained(ui, offer.active, offer.label, offer.hint) {
+            actions::apply(&mut ops, offer.quick);
+        }
+    }
+    ui.add_space(8.0);
+    kicker(ui, "Rapprocher ou éloigner");
+    ui.add_space(2.0);
     ui.horizontal(|ui| {
-        label(ui, "Décalage");
+        label(ui, "Espace en plus avant");
         let mut mm = ops.space_before_mm.unwrap_or(0.0);
         if widgets::number(ui, &mut mm, -50.0..=200.0, 0.5, " mm") {
             ops.space_before_mm = (mm.abs() >= 0.25).then_some(mm);
@@ -116,11 +114,14 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
             ops.space_before_mm = None;
         }
     });
-    ui.label(RichText::new("Ou glisse le bloc dans la page · Alt + ↑ / ↓").small().color(t.faint));
+    widgets::help(
+        ui,
+        "Négatif : le bloc remonte vers le précédent ; positif : il descend. Plus simple : glisse le bloc dans la page, ou Alt + ↑ / ↓.",
+    );
     ui.add_space(10.0);
 
     if is_figure {
-        kicker(ui, "Image");
+        kicker(ui, "Taille et place de l'image");
         ui.add_space(2.0);
         let image = ops.image.get_or_insert_with(ImageOps::default);
         widgets::segmented(
@@ -132,6 +133,18 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
             ui,
             &mut image.placement,
             &[(Placement::FullPage, "Seule sur sa page"), (Placement::Landscape, "Page paysage")],
+        );
+        widgets::help(
+            ui,
+            match image.placement {
+                Placement::Inline => "À sa place dans le texte, entre ce qui la précède et ce qui la suit.",
+                Placement::Top => "En haut de la page : le texte se range dessous, sans trou.",
+                Placement::Bottom => "En bas de la page : le texte se range au-dessus, sans trou.",
+                Placement::FullPage => "Seule sur une page, aussi grande que possible.",
+                Placement::Landscape => {
+                    "Seule sur une page tournée, en grand ; le texte reprend ensuite au format normal."
+                }
+            },
         );
         ui.add_space(4.0);
         grid(ui, "image-grille", |ui| {
@@ -227,12 +240,27 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 
     theme::rule(ui, 1.0, false);
     let mut apply_to_headings = false;
-    section(ui, "Plus d'options", false, |ui| {
+    section(ui, "Autres réglages", false, |ui| {
         if !is_figure {
-            ui.checkbox(&mut ops.break_after, "Laisser le reste de la page vide après");
+            widgets::explained_check(
+                ui,
+                &mut ops.break_after,
+                "Fin de page après",
+                "Le reste de la page reste vide : la suite commence page suivante.",
+            );
         }
-        ui.checkbox(&mut ops.push_to_bottom, "Pousser en bas de la page");
-        ui.checkbox(&mut ops.hidden, "Masquer ce bloc dans le PDF");
+        widgets::explained_check(
+            ui,
+            &mut ops.push_to_bottom,
+            "Coller en bas de la page",
+            "Ce bloc et ce qui le suit sur la page descendent tout en bas (signature, note finale…).",
+        );
+        widgets::explained_check(
+            ui,
+            &mut ops.hidden,
+            "Ne pas imprimer",
+            "Le bloc reste dans la note mais n'apparaît pas dans le PDF.",
+        );
         ui.add_space(6.0);
         page_format(ui, &mut ops, page_state, t);
         if kind != BlockKind::ListItem && !is_figure {
@@ -435,11 +463,14 @@ fn document_section(app: &mut NectarApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let Some(project) = &app.project else { return };
     let mut page = project.layout.page.clone();
-    section(ui, "Format du document", true, |ui| {
-        let options: Vec<(String, &str)> = PAPERS.iter().map(|(id, label)| ((*id).to_string(), *label)).collect();
-        choice(ui, "format-document", &mut page.paper, &options);
-        ui.checkbox(&mut page.landscape, "Paysage");
-    });
+    kicker(ui, "Format du document");
+    ui.add_space(2.0);
+    let current = super::page::Format::Paper(page.paper.clone(), page.landscape);
+    if let Some(super::page::Format::Paper(paper, landscape)) = super::page::document_picker(ui, &current) {
+        page.paper = paper;
+        page.landscape = landscape;
+    }
+    widgets::help(ui, "Le format de toutes les pages, sauf celles qui ont le leur.");
     if page != project.layout.page {
         app.edit_layout(&ctx, move |layout| layout.page = page);
     }

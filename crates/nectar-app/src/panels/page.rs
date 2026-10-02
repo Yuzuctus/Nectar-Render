@@ -92,7 +92,7 @@ pub fn picker(ui: &mut egui::Ui, id: &str, current: &Format) -> Option<Format> {
 }
 
 /// Le format du document : les mêmes choix, A4 à la place de « Normal ».
-fn document_picker(ui: &mut egui::Ui, current: &Format) -> Option<Format> {
+pub fn document_picker(ui: &mut egui::Ui, current: &Format) -> Option<Format> {
     let mut options = quick();
     options[0] = (Format::Paper("a4".into(), false), "A4");
     picker_among(ui, "format-document", current, &options)
@@ -225,11 +225,4 @@ fn truncate(text: &str, max: usize) -> String {
     } else {
         format!("{}…", text.chars().take(max).collect::<String>())
     }
-}
-
-/// Barre des formats posée sur la page sélectionnée (dans l'aperçu) : elle
-/// montre le format réel de la page.
-pub fn bar(app: &NectarApp, ui: &mut egui::Ui, page: usize) -> Option<Format> {
-    let current = app.page_format(page)?;
-    picker(ui, "format-page-barre", &current)
 }

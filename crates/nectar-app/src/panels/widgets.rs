@@ -148,3 +148,23 @@ pub fn toggle(ui: &mut egui::Ui, on: bool, label: &str, hint: &str) -> bool {
     let text = if on { RichText::new(format!("✔ {label}")).color(t.accent_ink) } else { text };
     ui.add(egui::Button::new(text).fill(if on { t.accent } else { t.raised })).on_hover_text(hint).clicked()
 }
+
+/// Une option expliquée : le bouton, puis ce qu'elle fait en une phrase.
+pub fn explained(ui: &mut egui::Ui, on: bool, label: &str, explain: &str) -> bool {
+    let clicked = toggle(ui, on, label, explain);
+    help(ui, explain);
+    ui.add_space(4.0);
+    clicked
+}
+
+/// Une case à cocher suivie de son explication.
+pub fn explained_check(ui: &mut egui::Ui, value: &mut bool, label: &str, explain: &str) -> bool {
+    let changed = ui.checkbox(value, label).on_hover_text(explain).changed();
+    ui.indent(label, |ui| help(ui, explain));
+    changed
+}
+
+/// Une phrase d'aide discrète.
+pub fn help(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).small().color(theme::tokens(ui.ctx()).faint));
+}

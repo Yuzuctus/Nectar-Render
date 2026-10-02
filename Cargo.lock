@@ -3132,10 +3132,12 @@ name = "nectar-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "clap",
  "nectar-core",
  "nectar-typst",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

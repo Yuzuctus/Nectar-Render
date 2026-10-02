@@ -39,6 +39,10 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
             }
         }
     });
+    super::widgets::help(
+        ui,
+        "Un preset règle tout le style d'un coup. Ce que tu changes ensuite s'ajoute par-dessus ; « Rétablir le preset » l'efface.",
+    );
     if has_overrides {
         ui.label(
             RichText::new(format!("{current_label}, modifié à la main"))
@@ -92,6 +96,10 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 /// Les réglages qu'on change vraiment souvent.
 fn essentials(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
     kicker(ui, "L'essentiel");
+    super::widgets::help(
+        ui,
+        "Ce qu'on change le plus souvent. Tout le reste est dans « Réglages détaillés », plus bas.",
+    );
     ui.add_space(2.0);
     grid(ui, "essentiel", |ui| {
         label(ui, "Police du texte");

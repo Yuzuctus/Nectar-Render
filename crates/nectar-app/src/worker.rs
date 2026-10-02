@@ -191,6 +191,13 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         millis: started.elapsed().as_millis(),
                     },
                 };
+                if started.elapsed() > std::time::Duration::from_secs(3) {
+                    crate::journal::write(&format!(
+                        "mise en page lente : {} ms pour {} pages",
+                        started.elapsed().as_millis(),
+                        laid.pages.len()
+                    ));
+                }
                 let _ = responses.send(Response::Laid(Box::new(laid)));
                 ctx.request_repaint();
             }
