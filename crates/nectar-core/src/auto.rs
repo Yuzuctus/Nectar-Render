@@ -37,6 +37,8 @@ pub enum ChoiceKind {
     /// Tableau resserré (texte plus petit, colonnes réparties) pour ne pas
     /// dépasser la marge.
     Narrowed,
+    /// Titre passé en haut de la page suivante pour rester avec son contenu.
+    KeptWithContent,
 }
 
 impl ChoiceKind {
@@ -60,6 +62,9 @@ impl Choice {
                 "Espacements légèrement resserrés pour éviter une dernière page presque vide".into()
             }
             ChoiceKind::LargerPaper => "Sur une page A3 paysage, pour tenir en entier sur une seule page".into(),
+            ChoiceKind::KeptWithContent => {
+                "Titre passé en haut de la page suivante pour rester avec son contenu".into()
+            }
             ChoiceKind::Narrowed => "Tableau resserré (texte un peu plus petit) pour ne pas dépasser la marge".into(),
             ChoiceKind::Compacted => {
                 "Tableau légèrement resserré pour ne pas déborder de quelques lignes sur une page de plus".into()

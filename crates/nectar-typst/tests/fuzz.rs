@@ -294,6 +294,12 @@ fn verify(seed: u64, engine: &Engine, dir: &Path, report: &mut Report) {
     };
     report.check(millis < 8000, || tag(&format!("mise en page lente : {millis} ms")));
     report.pages += compiled.page_count();
+    for choice in &laid.choices {
+        *report
+            .remarks
+            .entry(format!("décision : {:?}", choice.kind).split('(').next().unwrap_or("").to_string())
+            .or_default() += 1;
+    }
     report.millis += millis;
 
     // Le placement automatique n'ajoute pas plus de pages que de pages paysage.
@@ -364,6 +370,30 @@ fn verify(seed: u64, engine: &Engine, dir: &Path, report: &mut Report) {
         let caption_page = positions.iter().find(|p| p.id == next.id).map(|p| p.page);
         report.check(last_image_page.is_none() || last_image_page == caption_page, || {
             tag(&format!("légende de {} page {:?}, image page {:?}", block.id, caption_page, last_image_page))
+        });
+    }
+
+    // Un titre n'est jamais seul en bas de page : au moins deux lignes de
+    // son contenu le suivent, ou il passe page suivante.
+    let metrics = compiled.page_metrics(bottom);
+    let line = f64::from(style.text.size_pt * style.text.line_height);
+    for (i, block) in doc.blocks.iter().enumerate() {
+        if !matches!(block.node, Node::Heading { .. }) || resolved.get(&block.id).is_some_and(|o| o.manual || o.hidden)
+        {
+            continue;
+        }
+        let Some(next) = doc.blocks.get(i + 1) else { continue };
+        if matches!(next.node, Node::Heading { .. }) {
+            continue;
+        }
+        let Some(page) = positions.iter().find(|p| p.id == block.id).map(|p| p.page) else { continue };
+        let continues = boxes.iter().any(|b| b.id == next.id && b.page > page);
+        let heading_bottom =
+            boxes.iter().filter(|b| b.id == block.id && b.page == page).map(|b| b.rect[3]).fold(0.0, f64::max);
+        let content_bottom = metrics.get(page).and_then(|m| m.content).map(|c| c[3]).unwrap_or(0.0);
+        let first = positions.iter().find(|p| p.page == page).is_some_and(|p| p.id == block.id);
+        report.check(first || !continues || content_bottom - heading_bottom >= 2.0 * line - 1.0, || {
+            tag(&format!("titre {} seul en bas de la page {}", block.id, page + 1))
         });
     }
 

@@ -83,6 +83,9 @@ pub struct Tuning {
     /// Tableaux qui dépassaient encore : Typst répartit lui-même la largeur
     /// entre les colonnes, avec la vraie police.
     pub fluid: HashSet<BlockId>,
+    /// Titres envoyés en haut de la page suivante : en bas de page, il ne
+    /// restait que quelques lignes de leur contenu.
+    pub pushed: HashSet<BlockId>,
 }
 
 impl Tuning {
@@ -112,6 +115,9 @@ impl Tuning {
             }
             if self.compact.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Compacted });
+            }
+            if self.pushed.contains(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::KeptWithContent });
             }
             if self.squeeze.contains(id) || self.fluid.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Narrowed });
@@ -371,7 +377,9 @@ impl Gen<'_> {
     }
 
     fn block(&mut self, block: &Block, next: Option<&Block>) {
-        let ops = self.ops.get(&block.id).cloned().unwrap_or_default();
+        let mut ops = self.ops.get(&block.id).cloned().unwrap_or_default();
+        // Titre envoyé à la page suivante par le placement automatique.
+        ops.break_before |= self.tuning.pushed.contains(&block.id);
         // Numéro d'étiquette du titre, compté même s'il est masqué.
         let heading_label = matches!(block.node, Node::Heading { .. }).then(|| {
             self.heading_index += 1;
@@ -451,7 +459,12 @@ impl Gen<'_> {
             && next.is_some_and(|n| is_caption(&n.node));
         let sticky = ops.keep_with_next
             || (p.keep_intro_with_next && !ops.break_after && !next_breaks && announces(&block.node, next))
-            || (captioned && !ops.break_after && !next_breaks);
+            || (captioned && !ops.break_after && !next_breaks)
+            || (p.keep_intro_with_next
+                && !ops.break_after
+                && !next_breaks
+                && next.is_some()
+                && is_pseudo_heading(&block.node));
         let unbreakable = ops
             .keep_together
             .unwrap_or(p.keep_small_blocks && self.is_small(&block.node) && !self.relaxed.contains(&block.id));
@@ -1035,6 +1048,22 @@ pub fn leads_freely(ops: Option<&BlockOps>) -> bool {
 /// format de page, ou si elle est masquée.
 pub fn follows_freely(ops: Option<&BlockOps>) -> bool {
     ops.is_none_or(|o| !o.hidden && o.page.is_none() && !o.break_before && !o.push_to_bottom)
+}
+
+/// Une ligne courte tout en gras, qui tient lieu de titre (« **Résultats** ») :
+/// comme un titre, elle reste avec ce qui la suit.
+pub fn is_pseudo_heading(node: &Node) -> bool {
+    let Node::Paragraph(content) = node else { return false };
+    let text = plain_text(content);
+    let text = text.trim();
+    !text.is_empty()
+        && text.chars().count() <= 90
+        && !text.ends_with('.')
+        && content.iter().all(|i| match i {
+            Inline::Strong(_) => true,
+            Inline::Text(t) => t.trim().is_empty() || t.trim() == ":",
+            _ => false,
+        })
 }
 
 /// Mots qui ouvrent une légende écrite sous une image ou un tableau.

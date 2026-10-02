@@ -20,8 +20,33 @@ pub struct PageView {
     pub size_pt: egui::Vec2,
 }
 
+/// Où en est le défilement des pages (image précédente).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Viewport {
+    pub offset: f32,
+    pub height: f32,
+}
+
+/// Ce que l'atelier demande au défilement des pages.
+#[derive(Default)]
+pub struct Navigation {
+    /// Amener ce bloc à l'écran ; `true` : seulement s'il n'y est pas déjà.
+    pub scroll_to: Option<(BlockId, bool)>,
+    /// Défilement au clavier, en points d'écran.
+    pub delta: f32,
+    /// Garder ce bloc à cette hauteur de l'écran (après une nouvelle mise en page).
+    pub anchor: Option<(BlockId, f32)>,
+    pub reset_horizontal: bool,
+    pub viewport: Viewport,
+}
+
 #[derive(Default)]
 pub struct PageAction {
+    /// Défilement après cette image.
+    pub viewport: Viewport,
+    /// Premier bloc visible et sa hauteur à l'écran : la vue s'y accroche
+    /// quand la mise en page change.
+    pub anchor: Option<(BlockId, f32)>,
     /// `Some(None)` : clic dans le vide (désélection).
     pub clicked: Option<Option<BlockId>>,
     /// Pages au moins en partie visibles.
@@ -33,6 +58,10 @@ pub struct PageAction {
     pub nudge: Option<(BlockId, f32, Ghost)>,
     /// Action rapide choisie sur le bloc (barre ou clic droit).
     pub quick: Option<(BlockId, Quick)>,
+    /// Bloc glissé au-delà du bas de sa page : il passe à la page suivante.
+    pub next_page: Option<BlockId>,
+    /// Bloc remonté au-dessus de son saut de page : le saut est retiré.
+    pub unbreak: Option<BlockId>,
     /// « Plus… » : ouvrir toutes les retouches du bloc.
     pub more: bool,
     /// Page sélectionnée (numéro, marge ou blanc de la page).
@@ -57,6 +86,43 @@ pub struct Ghost {
 struct Drag {
     id: BlockId,
     origin: Pos2,
+    /// Page et haut du bloc au début du geste (points).
+    page: usize,
+    top: f32,
+    /// Place libre au-dessus du bloc : il ne remonte jamais plus haut (il
+    /// passerait sur le texte d'avant).
+    up: f32,
+    /// Le bloc commence par un saut de page.
+    breaks: bool,
+}
+
+/// Ce que fera le geste en cours, une fois lâché.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DragMode {
+    /// Rapprocher ou éloigner, de `dy` points.
+    Nudge,
+    /// Glissé au-delà du bas de la page : page suivante.
+    NextPage,
+    /// Remonté au-dessus d'un saut de page : le saut est retiré.
+    Unbreak,
+}
+
+/// Place libre (points) entre le haut d'un bloc et ce qui le précède sur sa
+/// page : de combien il peut remonter sans recouvrir le texte d'avant.
+pub fn up_room(rendered: &crate::worker::Layouted, id: &BlockId, margin_top: f32) -> Option<f32> {
+    let first = rendered
+        .boxes
+        .iter()
+        .filter(|b| &b.id == id)
+        .min_by(|a, b| a.page.cmp(&b.page).then(a.rect[1].total_cmp(&b.rect[1])))?;
+    let top = first.rect[1] as f32;
+    let above = rendered
+        .boxes
+        .iter()
+        .filter(|b| b.page == first.page && &b.id != id && (b.rect[3] as f32) <= top + 2.0)
+        .map(|b| b.rect[3] as f32)
+        .fold(margin_top, f32::max);
+    Some((top - above - 1.5).max(0.0))
 }
 
 /// En dessous, un glisser est un clic qui a tremblé : rien ne bouge.
@@ -65,16 +131,11 @@ const DRAG_DEAD_ZONE: f32 = 10.0;
 /// Points typographiques → points d'écran à 100 % (96 ppp).
 const PT_TO_SCREEN: f32 = 96.0 / 72.0;
 const TOP_GAP: f32 = 24.0;
+/// Espace entre deux pages, en points d'écran.
+const PAGE_GAP: f32 = 20.0;
 const MM: f32 = 72.0 / 25.4;
 
-pub fn show(
-    app: &NectarApp,
-    ui: &mut egui::Ui,
-    views: &[PageView],
-    zoom: f32,
-    scroll_to: Option<BlockId>,
-    reset_horizontal: bool,
-) -> PageAction {
+pub fn show(app: &NectarApp, ui: &mut egui::Ui, views: &[PageView], zoom: f32, nav: Navigation) -> PageAction {
     let t = theme::tokens(ui.ctx());
     let mut action = PageAction::default();
     let Some(rendered) = &app.rendered else { return action };
@@ -88,28 +149,50 @@ pub fn show(
     let drag_id = ui.id().with("glisser-bloc");
     let menu_id = ui.id().with("menu-bloc");
 
-    // Défilement vers un bloc : on calcule le décalage vertical d'avance,
-    // sans toucher au défilement horizontal.
+    // Hauteur d'un bloc dans le contenu défilé (les pages sont empilées sans
+    // autre espace que TOP_GAP et PAGE_GAP).
+    let block_y = |id: &BlockId| {
+        let position = positions.iter().find(|p| &p.id == id)?;
+        let above: f32 = views.iter().take(position.page).map(|v| v.size_pt.y * scale + PAGE_GAP).sum();
+        Some(TOP_GAP + above + position.y as f32 * scale)
+    };
+    let vp = nav.viewport;
+    let mut target: Option<f32> = None;
+    if let Some((id, reveal)) = &nav.scroll_to
+        && let Some(y) = block_y(id)
+    {
+        let visible = y >= vp.offset + 8.0 && y <= vp.offset + vp.height - 80.0;
+        if !(*reveal && visible && vp.height > 0.0) {
+            target = Some(y - 40.0 * scale);
+        }
+    } else if let Some((id, dy)) = &nav.anchor
+        && let Some(y) = block_y(id)
+    {
+        target = Some(y - dy);
+    }
+    if nav.delta != 0.0 {
+        target = Some(target.unwrap_or(vp.offset) + nav.delta);
+    }
+
     let mut area = egui::ScrollArea::both()
         .auto_shrink(false)
         .scroll_source(egui::scroll_area::ScrollSource::SCROLL_BAR | egui::scroll_area::ScrollSource::MOUSE_WHEEL);
-    if reset_horizontal {
+    if nav.reset_horizontal {
         area = area.horizontal_scroll_offset(0.0);
     }
-    if let Some(target) = &scroll_to
-        && let Some(position) = positions.iter().find(|p| &p.id == target)
-    {
-        let above: f32 = views.iter().take(position.page).map(|v| v.size_pt.y * scale + 20.0).sum();
-        area =
-            area.vertical_scroll_offset((TOP_GAP + above + (position.y as f32 - 40.0).max(0.0) * scale - 8.0).max(0.0));
+    if let Some(offset) = target {
+        area = area.vertical_scroll_offset(offset.max(0.0));
     }
-    area.show(ui, |ui| {
+    let output = area.show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
         ui.add_space(TOP_GAP);
         ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             let mut hovered: Option<BlockId> = None;
             let mut page_rects = Vec::with_capacity(views.len());
             let mut drag: Option<Drag> = ui.data(|d| d.get_temp(drag_id));
             let mut drag_dy = 0.0f32;
+            let mut drag_mode = DragMode::Nudge;
             for (index, view) in views.iter().enumerate() {
                 let size = view.size_pt * scale;
                 let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
@@ -196,9 +279,13 @@ pub fn show(
                 if response.drag_started()
                     && let Some(origin) = ui.input(|i| i.pointer.press_origin())
                     && let Some(id) = hit(positions, index, to_pt(origin).1)
+                    && let Some((page, [_, top, _, _])) =
+                        bands(rendered, &id, &children, views, &margins).into_iter().next()
                 {
                     action.clicked = Some(Some(id.clone()));
-                    drag = Some(Drag { id, origin });
+                    let up = up_room(rendered, &id, margins.top).unwrap_or(0.0);
+                    let breaks = app.resolved.get(&id).is_some_and(|o| o.break_before);
+                    drag = Some(Drag { id, origin, page, top, up, breaks });
                 }
                 if let Some(d) = &drag
                     && (response.dragged() || response.drag_stopped())
@@ -207,16 +294,29 @@ pub fn show(
                     let delta = pointer - d.origin;
                     // Un geste surtout horizontal, ou trop court, ne déplace rien.
                     let vertical = delta.y.abs() >= DRAG_DEAD_ZONE && delta.y.abs() >= delta.x.abs() * 0.5;
-                    drag_dy = if vertical { (delta.y / scale).clamp(-30.0 * MM, 80.0 * MM) } else { 0.0 };
+                    let raw = if vertical { delta.y / scale } else { 0.0 };
+                    let page_bottom = views.get(d.page).map(|v| v.size_pt.y - margins.bottom).unwrap_or(f32::MAX);
+                    drag_mode = if d.top + raw > page_bottom - 18.0 {
+                        DragMode::NextPage
+                    } else if raw < -d.up - 18.0 && d.breaks {
+                        DragMode::Unbreak
+                    } else {
+                        DragMode::Nudge
+                    };
+                    // Jamais par-dessus le texte d'avant.
+                    drag_dy = raw.max(-d.up);
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                     if response.drag_stopped() {
-                        let mm = (drag_dy / MM * 2.0).round() / 2.0;
-                        if mm.abs() >= 0.5
-                            && let Some((page, [_, top, _, _])) =
-                                bands(rendered, &d.id, &children, views, &margins).into_iter().next()
-                        {
-                            let ghost = Ghost { page, top, dy: mm * MM, generation: 0 };
-                            action.nudge = Some((d.id.clone(), mm, ghost));
+                        match drag_mode {
+                            DragMode::NextPage => action.next_page = Some(d.id.clone()),
+                            DragMode::Unbreak => action.unbreak = Some(d.id.clone()),
+                            DragMode::Nudge => {
+                                let mm = (drag_dy / MM * 2.0).round() / 2.0;
+                                if mm.abs() >= 0.5 {
+                                    let ghost = Ghost { page: d.page, top: d.top, dy: mm * MM, generation: 0 };
+                                    action.nudge = Some((d.id.clone(), mm, ghost));
+                                }
+                            }
                         }
                         drag = None;
                     }
@@ -245,7 +345,7 @@ pub fn show(
                 if selected_page {
                     painter.rect_stroke(rect, 0.0, Stroke::new(2.5, t.identity), StrokeKind::Outside);
                 }
-                ui.add_space(20.0);
+                ui.add_space(PAGE_GAP);
             }
             if !ui.input(|i| i.pointer.any_down()) && action.nudge.is_none() {
                 drag = None;
@@ -258,10 +358,30 @@ pub fn show(
             });
 
             // Fantôme du déplacement en cours, ou de celui qui attend sa mise en page.
-            let live = drag.as_ref().and_then(|d| {
-                let (page, [_, top, _, _]) = bands(rendered, &d.id, &children, views, &margins).into_iter().next()?;
-                Some(Ghost { page, top, dy: drag_dy, generation: 0 })
+            let live = drag.as_ref().filter(|_| drag_mode == DragMode::Nudge).map(|d| Ghost {
+                page: d.page,
+                top: d.top,
+                dy: drag_dy,
+                generation: 0,
             });
+            // Glissé hors de la page, ou au-dessus d'un saut : on montre ce qui
+            // se passera au lâcher, sans dessiner le bloc n'importe où.
+            if let Some(d) = drag.as_ref().filter(|_| drag_mode != DragMode::Nudge)
+                && let (Some(page_rect), Some(view)) = (page_rects.get(d.page), views.get(d.page))
+            {
+                let bottom = rendered
+                    .boxes
+                    .iter()
+                    .filter(|b| b.page == d.page)
+                    .map(|b| b.rect[3] as f32)
+                    .fold(d.top + 14.0, f32::max);
+                let text = if drag_mode == DragMode::NextPage {
+                    format!("↓ Lâcher : tout ceci passe en haut de la page {}", d.page + 2)
+                } else {
+                    "↑ Lâcher : revient à la suite de la page précédente".to_string()
+                };
+                paint_region(ui, *page_rect, view, d.top, bottom, &text, scale, &margins, t);
+            }
             let pending =
                 app.ghost.filter(|g| g.generation > rendered.generation || views.get(g.page).is_some_and(|v| !v.fresh));
             if let Some(ghost) = live.or(pending)
@@ -300,25 +420,7 @@ pub fn show(
                 && let Some((page, top, bottom, text)) = preview(app, rendered, &id, quick, &children, views, &margins)
                 && let (Some(page_rect), Some(view)) = (page_rects.get(page), views.get(page))
             {
-                let r = Rect::from_min_max(
-                    page_rect.min + egui::vec2((margins.left - 8.0) * scale, (top - 4.0) * scale),
-                    page_rect.min + egui::vec2((view.size_pt.x - margins.right + 8.0) * scale, (bottom + 4.0) * scale),
-                );
-                let painter = ui.painter_at(*page_rect);
-                painter.rect_filled(r, 0.0, t.accent.gamma_multiply(0.22));
-                painter.rect_stroke(r, 0.0, Stroke::new(2.0, t.identity), StrokeKind::Outside);
-                let font = egui::FontId::new(12.5, theme::strong());
-                let galley = painter.layout_no_wrap(text, font, t.accent_ink);
-                let pill = Rect::from_min_size(
-                    egui::pos2(
-                        r.right() - galley.size().x - 16.0,
-                        (r.top() - galley.size().y - 8.0).max(page_rect.top() + 2.0),
-                    ),
-                    galley.size() + egui::vec2(12.0, 6.0),
-                );
-                painter.rect_filled(pill, 0.0, t.accent);
-                painter.rect_stroke(pill, 0.0, Stroke::new(1.0, t.ink), StrokeKind::Inside);
-                painter.galley(pill.min + egui::vec2(6.0, 3.0), galley, t.accent_ink);
+                paint_region(ui, *page_rect, view, top, bottom, &text, scale, &margins, t);
             }
 
             // Repères des retouches dans la marge gauche.
@@ -402,9 +504,10 @@ pub fn show(
                 action.background_clicked = true;
             }
 
-            // Barre d'actions posée sur le bloc sélectionné.
+            // Barre d'actions posée sur le bloc sélectionné (pas pendant un geste).
             if let Some(id) = &app.selected
                 && live.is_none()
+                && drag.is_none()
                 && let Some((page, [_, top, x1, bottom])) =
                     bands(rendered, id, &children, views, &margins).into_iter().next()
                 && let Some(page_rect) = page_rects.get(page)
@@ -433,6 +536,13 @@ pub fn show(
             }
         });
         ui.add_space(40.0);
+    });
+    let offset = output.state.offset.y;
+    action.viewport = Viewport { offset, height: output.inner_rect.height() };
+    // Premier bloc dont le haut est à l'écran : la vue s'y accrochera.
+    action.anchor = positions.iter().find_map(|p| {
+        let y = block_y(&p.id)?;
+        (y >= offset).then(|| (p.id.clone(), y - offset))
     });
     action
 }
@@ -541,6 +651,38 @@ fn preview(
         Quick::KeepTogether => (page, top, bottom, "Restera entier, sur une seule page".into()),
         Quick::Clear => (page, top, bottom, "Toutes les retouches de ce bloc seront retirées".into()),
     })
+}
+
+/// Surligne une zone d'une page (du haut `top` au bas `bottom`, en points)
+/// et dit, dans une étiquette, ce qui va lui arriver.
+#[allow(clippy::too_many_arguments)]
+fn paint_region(
+    ui: &egui::Ui,
+    page_rect: Rect,
+    view: &PageView,
+    top: f32,
+    bottom: f32,
+    text: &str,
+    scale: f32,
+    margins: &Margins,
+    t: theme::Tokens,
+) {
+    let r = Rect::from_min_max(
+        page_rect.min + egui::vec2((margins.left - 8.0) * scale, (top - 4.0) * scale),
+        page_rect.min + egui::vec2((view.size_pt.x - margins.right + 8.0) * scale, (bottom + 4.0) * scale),
+    );
+    let painter = ui.painter_at(page_rect);
+    painter.rect_filled(r, 0.0, t.accent.gamma_multiply(0.22));
+    painter.rect_stroke(r, 0.0, Stroke::new(2.0, t.identity), StrokeKind::Outside);
+    let font = egui::FontId::new(12.5, theme::strong());
+    let galley = painter.layout_no_wrap(text.to_string(), font, t.accent_ink);
+    let pill = Rect::from_min_size(
+        egui::pos2(r.right() - galley.size().x - 16.0, (r.top() - galley.size().y - 8.0).max(page_rect.top() + 2.0)),
+        galley.size() + egui::vec2(12.0, 6.0),
+    );
+    painter.rect_filled(pill, 0.0, t.accent);
+    painter.rect_stroke(pill, 0.0, Stroke::new(1.0, t.ink), StrokeKind::Inside);
+    painter.galley(pill.min + egui::vec2(6.0, 3.0), galley, t.accent_ink);
 }
 
 /// Le numéro cliquable d'une page, à sa droite.

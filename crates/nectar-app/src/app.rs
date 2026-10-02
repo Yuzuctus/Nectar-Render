@@ -64,7 +64,15 @@ pub struct NectarApp {
     /// Dernière modification, pour regrouper un glisser en une seule annulation.
     last_edit: Option<Instant>,
     status: Option<(String, bool, Instant)>,
-    scroll_to: Option<BlockId>,
+    /// Bloc à amener à l'écran ; `true` : seulement s'il n'y est pas déjà.
+    scroll_to: Option<(BlockId, bool)>,
+    /// Défilement demandé au clavier (points d'écran).
+    scroll_delta: f32,
+    /// Défilement à l'image précédente.
+    viewport: pages::Viewport,
+    /// Premier bloc visible : la vue s'y accroche quand la mise en page change.
+    view_anchor: Option<(BlockId, f32)>,
+    pending_anchor: Option<(BlockId, f32)>,
     pub save_preset_dialog: Option<String>,
     show_warnings: bool,
     /// La fenêtre d'aide (F1).
@@ -125,6 +133,10 @@ impl NectarApp {
             last_edit: None,
             status: None,
             scroll_to: None,
+            scroll_delta: 0.0,
+            viewport: pages::Viewport::default(),
+            view_anchor: None,
+            pending_anchor: None,
             save_preset_dialog: None,
             show_warnings: false,
             show_help: false,
@@ -173,7 +185,7 @@ impl NectarApp {
                 self.redo.clear();
                 self.selected = self.launch_select.take().map(BlockId);
                 self.selected_page = None;
-                self.scroll_to = self.selected.clone();
+                self.scroll_to = self.selected.clone().map(|id| (id, false));
                 self.rendered = None;
                 self.textures.clear();
                 self.shown.clear();
@@ -295,8 +307,22 @@ impl NectarApp {
         });
     }
 
-    /// Décale un bloc verticalement (espace avant, en millimètres).
+    /// Décale un bloc verticalement (espace avant, en millimètres). Il ne
+    /// remonte jamais plus haut que le bas de ce qui le précède.
     pub fn nudge(&mut self, ctx: &egui::Context, id: &BlockId, mm: f32) {
+        let room = self
+            .rendered
+            .as_ref()
+            .and_then(|r| pages::up_room(r, id, self.style.page.margin_top_mm * 72.0 / 25.4))
+            .map(|pt| pt * 25.4 / 72.0);
+        let mm = match room {
+            Some(room) if mm < 0.0 => mm.max(-room),
+            _ => mm,
+        };
+        if mm.abs() < 0.25 {
+            self.notify("Le bloc touche déjà ce qui le précède", false);
+            return;
+        }
         self.edit_block(ctx, id, |ops| {
             let value = ((ops.space_before_mm.unwrap_or(0.0) + mm) * 2.0).round() / 2.0;
             ops.space_before_mm = (value.abs() >= 0.25).then_some(value.clamp(-50.0, 200.0));
@@ -380,7 +406,7 @@ impl NectarApp {
 
     pub fn select(&mut self, id: Option<BlockId>, scroll: bool) {
         if scroll {
-            self.scroll_to = id.clone();
+            self.scroll_to = id.clone().map(|id| (id, false));
         }
         if id.is_some() {
             self.tab = Tab::Block;
@@ -493,6 +519,11 @@ impl NectarApp {
                     if laid.generation == self.generation || self.rendered.is_none() {
                         if let Some(error) = &laid.error {
                             self.notify(first_line(error), true);
+                        }
+                        // La vue reste sur ce qu'on regardait, même si des pages
+                        // plus haut ont changé de hauteur.
+                        if self.rendered.as_ref().is_some_and(|r| r.positions != laid.positions) {
+                            self.pending_anchor = self.view_anchor.clone();
                         }
                         self.rendered = Some(*laid);
                         self.requested.clear();
@@ -631,8 +662,26 @@ impl NectarApp {
                 self.notify("Retouches du bloc effacées (Ctrl+Z pour annuler)", false);
             }
         }
-        // Flèches haut/bas : bloc précédent ou suivant.
+        // Sans bloc sélectionné, les flèches et Page préc./suiv. font défiler.
         if !ctx.egui_wants_keyboard_input() && self.project.is_some() {
+            let page = (self.viewport.height * 0.85).max(200.0);
+            for (key, delta) in [(Key::PageDown, page), (Key::PageUp, -page), (Key::Home, -1.0e7), (Key::End, 1.0e7)] {
+                if pressed(Modifiers::NONE, key) {
+                    self.scroll_delta += delta;
+                }
+            }
+            if self.selected.is_none() {
+                if pressed(Modifiers::NONE, Key::ArrowDown) {
+                    self.scroll_delta += 60.0;
+                }
+                if pressed(Modifiers::NONE, Key::ArrowUp) {
+                    self.scroll_delta -= 60.0;
+                }
+            }
+        }
+        // Flèches haut/bas, un bloc sélectionné : bloc précédent ou suivant
+        // (la vue ne suit que s'il sort de l'écran).
+        if !ctx.egui_wants_keyboard_input() && self.project.is_some() && self.selected.is_some() {
             let step = if pressed(Modifiers::NONE, Key::ArrowDown) {
                 1
             } else if pressed(Modifiers::NONE, Key::ArrowUp) {
@@ -650,7 +699,8 @@ impl NectarApp {
                     None => 0,
                 };
                 if let Some(id) = ids.get(next).cloned() {
-                    self.select(Some(id), true);
+                    self.select(Some(id.clone()), false);
+                    self.scroll_to = Some((id, true));
                 }
             }
         }
@@ -684,6 +734,10 @@ impl NectarApp {
         let zoom = zoom.clamp(0.25, 4.0);
         if (zoom - self.zoom).abs() > 0.001 {
             self.zoom = zoom;
+            // Le bloc en haut de l'écran y reste : on zoome sur ce qu'on lit.
+            if self.scroll_to.is_none() {
+                self.pending_anchor = self.view_anchor.clone();
+            }
             ctx.request_repaint();
         }
     }
@@ -1278,9 +1332,16 @@ impl NectarApp {
                 });
                 return;
             }
-            let scroll_to = self.scroll_to.take();
-            let reset = std::mem::take(&mut self.reset_horizontal);
-            let action = pages::show(self, ui, &views, self.zoom, scroll_to, reset);
+            let nav = pages::Navigation {
+                scroll_to: self.scroll_to.take(),
+                delta: std::mem::take(&mut self.scroll_delta),
+                anchor: self.pending_anchor.take(),
+                reset_horizontal: std::mem::take(&mut self.reset_horizontal),
+                viewport: self.viewport,
+            };
+            let action = pages::show(self, ui, &views, self.zoom, nav);
+            self.viewport = action.viewport;
+            self.view_anchor = action.anchor.clone();
             self.timings.push(("pages dessinées", self.frame_start.elapsed()));
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
@@ -1307,6 +1368,17 @@ impl NectarApp {
             }
             if let Some((id, quick)) = action.quick {
                 self.edit_block(&ctx, &id, |ops| panels::actions::apply(ops, quick));
+            }
+            if let Some(id) = action.next_page {
+                self.edit_block(&ctx, &id, |ops| {
+                    ops.break_before = true;
+                    ops.space_before_mm = None;
+                });
+                self.notify("Le bloc passe en haut de la page suivante (Ctrl+Z pour annuler)", false);
+            }
+            if let Some(id) = action.unbreak {
+                self.edit_block(&ctx, &id, |ops| ops.break_before = false);
+                self.notify("Le bloc revient à la suite de la page précédente", false);
             }
             if action.more {
                 self.tab = Tab::Block;

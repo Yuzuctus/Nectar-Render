@@ -412,6 +412,9 @@ pub fn inspect_tuned(
     for id in &tuning.landscape {
         ops.entry(id.clone()).or_default().image.get_or_insert_with(ImageOps::default).placement = Placement::Landscape;
     }
+    for id in &tuning.pushed {
+        ops.entry(id.clone()).or_default().break_before = true;
+    }
     let warnings: Vec<String> =
         document.warnings.iter().chain(&generated.warnings).chain(&compiled.warnings).cloned().collect();
     analyse(&Inputs {
@@ -766,6 +769,22 @@ pub fn lay_out(
         }
     }
 
+    // 2 quater. Titres restés en bas de page avec seulement quelques lignes
+    // de leur contenu : on n'hésite pas, ils passent à la page suivante.
+    for _ in 0..4 {
+        let Ok(current) = &compiled else { break };
+        let stranded = stranded_headings(current, document, style, &ops, &tuning);
+        if stranded.is_empty() {
+            break;
+        }
+        let previous = tuning.clone();
+        tuning.pushed.extend(stranded);
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            tuning = previous;
+            break;
+        }
+    }
+
     if trace {
         eprintln!(
             "[{:>5} ms, {} compositions] 3. Images un peu trop hautes",
@@ -956,8 +975,23 @@ pub fn lay_out(
     if trace {
         eprintln!("[{:>5} ms, {} compositions] 7. Dernier contrôle", started.elapsed().as_millis(), passes.get());
     }
-    // 7. Dernier contrôle : une légende ne reste jamais seule en haut de page
-    // (les étapes précédentes ont pu faire remonter le texte).
+    // 7. Dernier contrôle : aucun titre seul en bas de page, aucune légende
+    // seule en haut de page (les étapes précédentes ont pu faire bouger le
+    // texte).
+    for _ in 0..2 {
+        let Ok(current) = &compiled else { break };
+        let stranded = stranded_headings(current, document, style, &ops, &tuning);
+        if stranded.is_empty() {
+            break;
+        }
+        let previous = tuning.clone();
+        tuning.pushed.extend(stranded);
+        if !retry(&tuning, &mut generated, &mut compiled) {
+            tuning = previous;
+            retry(&tuning, &mut generated, &mut compiled);
+            break;
+        }
+    }
     if rules.fit_images {
         for _ in 0..3 {
             let Ok(current) = &compiled else { break };
@@ -1000,6 +1034,67 @@ fn fit_height(compiled: &Compiled, style: &nectar_core::Style, page: usize, figu
     let height = image.height - (stack - room) - 4.0;
     let ratio = height / image.height;
     ((0.55..1.0).contains(&ratio) && height >= 90.0).then_some((height, ratio))
+}
+
+/// Titres (ou lignes en gras qui en tiennent lieu) restés en bas d'une page
+/// avec moins de quatre lignes de leur contenu, alors que la section continue
+/// page suivante : le premier titre de chaque série.
+fn stranded_headings(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    style: &nectar_core::Style,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+    tuning: &nectar_core::Tuning,
+) -> Vec<BlockId> {
+    use nectar_core::codegen::is_pseudo_heading;
+    use nectar_core::model::Node;
+    let bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+    let positions = compiled.block_positions();
+    let boxes = compiled.block_boxes(bottom);
+    let metrics = compiled.page_metrics(bottom);
+    let line = f64::from(style.text.size_pt * style.text.line_height);
+    let blocks = &document.blocks;
+    let is_title = |b: &nectar_core::Block| matches!(b.node, Node::Heading { .. }) || is_pseudo_heading(&b.node);
+    let page_of = |id: &BlockId| positions.iter().find(|p| &p.id == id).map(|p| p.page);
+    let mut out = Vec::new();
+    let mut first = 0;
+    while first < blocks.len() {
+        if !is_title(&blocks[first]) {
+            first += 1;
+            continue;
+        }
+        // La série de titres blocks[first..=last].
+        let mut last = first;
+        while last + 1 < blocks.len() && is_title(&blocks[last + 1]) {
+            last += 1;
+        }
+        let titles = &blocks[first..=last];
+        let head = &blocks[first];
+        first = last + 1;
+        let Some(page) = page_of(&head.id) else { continue };
+        if page + 1 >= compiled.page_count() || tuning.pushed.contains(&head.id) {
+            continue;
+        }
+        let first_on_page = positions.iter().find(|p| p.page == page).map(|p| &p.id) == Some(&head.id);
+        let movable = ops.get(&head.id).is_none_or(|o| !o.manual && !o.hidden && o.page.is_none() && !o.break_before);
+        if first_on_page || !movable {
+            continue;
+        }
+        // Ce qui suit les titres sur leur page, et la suite page suivante.
+        let titles_bottom = boxes
+            .iter()
+            .filter(|b| b.page == page && titles.iter().any(|t| t.id == b.id))
+            .map(|b| b.rect[3])
+            .fold(0.0, f64::max);
+        let Some(content_bottom) = metrics.get(page).and_then(|m| m.content).map(|c| c[3]) else { continue };
+        let Some(next) = blocks.get(last + 1) else { continue };
+        let continues =
+            boxes.iter().any(|b| b.id == next.id && b.page > page) || page_of(&next.id).is_some_and(|p| p > page);
+        if continues && titles_bottom > 0.0 && content_bottom - titles_bottom < 4.0 * line {
+            out.push(head.id.clone());
+        }
+    }
+    out
 }
 
 /// Tableaux (que le placement automatique peut toucher) qui dépassent la
