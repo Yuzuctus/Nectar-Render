@@ -71,7 +71,7 @@ pub struct NectarApp {
     recents: Vec<PathBuf>,
     /// Dernière image affichée de chaque page : montrée le temps que la
     /// nouvelle arrive, plutôt qu'une page blanche.
-    shown: HashMap<usize, egui::TextureHandle>,
+    shown: HashMap<usize, (egui::Vec2, egui::TextureHandle)>,
     /// Déplacement à la souris qui attend sa nouvelle mise en page.
     pub ghost: Option<pages::Ghost>,
 }
@@ -370,6 +370,47 @@ impl NectarApp {
             .find(|id| ops.get(**id).is_some_and(|o| o.page.is_some()))
             .or_else(|| on_page.first())
             .map(|id| (*id).clone())
+    }
+
+    /// Le format réel d'une page, tel qu'on le montre : « Normal » quand elle
+    /// est au format du document.
+    pub fn page_format(&self, page: usize) -> Option<panels::page::Format> {
+        let size = self.rendered.as_ref()?.pages.get(page)?.size_pt;
+        Some(if self.page_differs(page) { panels::page::format_of_size(size) } else { panels::page::Format::Document })
+    }
+
+    /// Donne un format à une page. Une image posée seule sur une page
+    /// paysage porte ce format : elle revient dans le texte pour « Normal ».
+    pub fn set_page_format(&mut self, ctx: &egui::Context, page: usize, format: &panels::page::Format) {
+        use nectar_core::layout::Placement;
+        let Some(rendered) = &self.rendered else { return };
+        let Some(project) = &self.project else { return };
+        let ops = project.layout.resolve(&project.document).ops;
+        let landscape_image = rendered
+            .positions
+            .iter()
+            .filter(|p| p.page == page)
+            .map(|p| &p.id)
+            .find(|id| ops.get(*id).and_then(|o| o.image.as_ref()).is_some_and(|i| i.placement == Placement::Landscape))
+            .cloned();
+        let differs = self.page_differs(page);
+        if let Some(image) = landscape_image {
+            let format = format.clone();
+            self.edit_block(ctx, &image, move |ops| {
+                if let Some(i) = &mut ops.image {
+                    i.placement = Placement::Inline;
+                }
+                if ops.image.as_ref().is_some_and(|i| *i == Default::default()) {
+                    ops.image = None;
+                }
+                if format != panels::page::Format::Document {
+                    panels::page::apply(&mut ops.page, &mut ops.page_onward, &format, false);
+                }
+            });
+            return;
+        }
+        let Some(owner) = self.page_owner(page) else { return };
+        self.edit_block(ctx, &owner, |ops| panels::page::apply(&mut ops.page, &mut ops.page_onward, format, differs));
     }
 
     /// La page n'est pas au format du document.
@@ -769,10 +810,19 @@ impl NectarApp {
         for (index, page) in rendered.pages.iter().enumerate() {
             let view = match self.textures.get(&page.hash) {
                 Some((_, texture)) => {
-                    self.shown.insert(index, texture.clone());
+                    self.shown.insert(index, (page.size_pt, texture.clone()));
                     PageView { texture: Some(texture.clone()), fresh: true, size_pt: page.size_pt }
                 }
-                None => PageView { texture: self.shown.get(&index).cloned(), fresh: false, size_pt: page.size_pt },
+                // L'ancienne image, seulement si la page garde sa taille (sinon elle serait déformée).
+                None => PageView {
+                    texture: self
+                        .shown
+                        .get(&index)
+                        .filter(|(size, _)| (*size - page.size_pt).length() < 1.0)
+                        .map(|(_, t)| t.clone()),
+                    fresh: false,
+                    size_pt: page.size_pt,
+                },
             };
             views.push(view);
         }
@@ -917,11 +967,8 @@ impl eframe::App for NectarApp {
             if let Some(page) = action.page_clicked {
                 self.select_page(Some(page));
             }
-            if let Some((page, owner, format)) = action.page_format {
-                let differs = self.page_differs(page);
-                self.edit_block(&ctx, &owner, |ops| {
-                    panels::page::apply(&mut ops.page, &mut ops.page_onward, &format, differs);
-                });
+            if let Some((page, format)) = action.page_format {
+                self.set_page_format(&ctx, page, &format);
             }
             if let Some((id, width)) = action.resize {
                 self.edit_block(&ctx, &id, |ops| {

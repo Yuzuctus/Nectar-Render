@@ -134,3 +134,24 @@ fn a_page_format_applies_to_its_page_only_unless_asked() {
         assert!(on_a3 > 5, "{on_a3} blocs sur la page A3");
     }
 }
+
+#[test]
+fn a_screenshot_is_never_proposed_in_landscape() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut svg = String::from(r##"<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080">"##);
+    for i in 0..30 {
+        svg.push_str(&format!(r##"<text x="20" y="{}" font-size="20">Router#show vlan {i}</text>"##, 30 + i * 34));
+    }
+    svg.push_str("</svg>");
+    std::fs::write(dir.path().join("capture.svg"), &svg).unwrap();
+    std::fs::write(dir.path().join("plan.svg"), &svg).unwrap();
+    let text = "# TP\n\nIntro.\n\n![[capture.svg|Capture de la configuration réseau du switch]]\n\n\
+                ![[plan.svg|Plan d'adressage du réseau]]\n\nSuite.\n";
+    let options = ParseOptions { note_dir: Some(dir.path()), ..Default::default() };
+    let doc = parse(text, &options);
+    let engine = Engine::new(FontSources::Bundled);
+    let laid = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+    let compiled = laid.compiled.unwrap();
+    let issues = nectar_typst::inspect(&compiled, &doc, &Layout::default(), &Style::default(), &laid.generated, &[]);
+    assert!(!issues.iter().any(|i| i.title.starts_with("Schéma")), "{issues:#?}");
+}

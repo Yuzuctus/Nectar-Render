@@ -63,6 +63,8 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let current: BlockOps = project.layout.ops_for(&project.document, &id);
     let position = app.rendered.as_ref().and_then(|r| r.positions.iter().find(|p| p.id == id)).map(|p| p.page + 1);
     let offers = actions::offers(app, &id);
+    // Format réel de la page du bloc (il peut venir d'un changement plus haut).
+    let page_state = position.and_then(|p| Some((app.page_format(p - 1)?, app.page_differs(p - 1))));
 
     // En-tête du bloc.
     let mut head = kind.label_fr().to_string();
@@ -232,7 +234,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         ui.checkbox(&mut ops.push_to_bottom, "Pousser en bas de la page");
         ui.checkbox(&mut ops.hidden, "Masquer ce bloc dans le PDF");
         ui.add_space(6.0);
-        page_format(ui, &mut ops, t);
+        page_format(ui, &mut ops, page_state, t);
         if kind != BlockKind::ListItem && !is_figure {
             ui.add_space(6.0);
             appearance(ui, &mut ops, kind, heading_level.is_some());
@@ -307,12 +309,22 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 }
 
 /// Format de page à partir de ce bloc.
-fn page_format(ui: &mut egui::Ui, ops: &mut BlockOps, t: theme::Tokens) {
+fn page_format(ui: &mut egui::Ui, ops: &mut BlockOps, page: Option<(super::page::Format, bool)>, t: theme::Tokens) {
     use super::page::{self, Format};
     label(ui, "Format de sa page");
-    let current = page::format_of(&ops.page);
+    // Le format propre au bloc s'il en a un, sinon celui de sa page.
+    let (actual, differs) = page.unwrap_or((Format::Document, false));
+    let current = if ops.page.is_some() { page::format_of(&ops.page) } else { actual };
     if let Some(format) = page::picker(ui, "format-bloc", &current) {
-        page::apply(&mut ops.page, &mut ops.page_onward, &format, false);
+        let mut inherited = differs && ops.page.is_none();
+        // Une image seule sur sa page paysage : ce format-là vient de son placement.
+        if let Some(image) = &mut ops.image
+            && image.placement == Placement::Landscape
+        {
+            image.placement = Placement::Inline;
+            inherited = false;
+        }
+        page::apply(&mut ops.page, &mut ops.page_onward, &format, inherited);
     }
     if let Some(PageChange::Set(spec)) = &mut ops.page {
         if current == Format::Custom {

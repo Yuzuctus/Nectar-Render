@@ -190,11 +190,14 @@ fn check(note: &Path) -> Result<()> {
 fn blocks(note: &Path) -> Result<()> {
     let project = open(note)?;
     let engine = Engine::new(FontSources::Bundled);
-    let positions = match lay_out(&project, &engine).1 {
-        Ok(compiled) => compiled.block_positions(),
+    let (positions, sizes) = match lay_out(&project, &engine).1 {
+        Ok(compiled) => {
+            let sizes: Vec<(f64, f64)> = (0..compiled.page_count()).filter_map(|i| compiled.page_size(i)).collect();
+            (compiled.block_positions(), sizes)
+        }
         Err(error) => {
             eprintln!("{error}");
-            Vec::new()
+            (Vec::new(), Vec::new())
         }
     };
     let resolution = project.layout.resolve(&project.document);
@@ -215,7 +218,23 @@ fn blocks(note: &Path) -> Result<()> {
             anchor.excerpt
         );
     }
+    let formats: Vec<String> =
+        sizes.iter().enumerate().map(|(i, (w, h))| format!("{} {}", i + 1, page_name(*w, *h))).collect();
+    println!("\npages : {}", formats.join(" · "));
     Ok(())
+}
+
+/// Nom d'un format de page d'après sa taille en points.
+fn page_name(width: f64, height: f64) -> String {
+    const PAPERS: &[(&str, f64, f64)] =
+        &[("A4", 595.3, 841.9), ("A3", 841.9, 1190.6), ("A5", 419.5, 595.3), ("Letter", 612.0, 792.0)];
+    let (short, long) = (width.min(height), width.max(height));
+    let name = PAPERS
+        .iter()
+        .find(|(_, w, h)| (w - short).abs() < 2.0 && (h - long).abs() < 2.0)
+        .map(|(n, ..)| (*n).to_string())
+        .unwrap_or_else(|| format!("{:.0}×{:.0} mm", width * 25.4 / 72.0, height * 25.4 / 72.0));
+    if width > height { format!("{name} paysage") } else { name }
 }
 
 fn set(note: &Path, block: &str, ops: &str) -> Result<()> {

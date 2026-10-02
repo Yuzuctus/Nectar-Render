@@ -5,7 +5,6 @@
 //! puis le document reprend son format, sauf si « et les suivantes ».
 
 use eframe::egui::{self, RichText};
-use nectar_core::BlockId;
 use nectar_core::layout::{DefaultPage, PageChange, PageSpec};
 
 use super::widgets::label;
@@ -163,6 +162,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui, page: usize) {
         return;
     };
     let Some(owner) = app.page_owner(page) else { return };
+    let Some(current) = app.page_format(page) else { return };
     let Some(project) = &app.project else { return };
     let ops = project.layout.ops_for(&project.document, &owner);
     let excerpt = project.document.anchors().into_iter().find(|a| *a.id == owner).map(|a| a.excerpt.to_string());
@@ -174,13 +174,6 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui, page: usize) {
 
     kicker(ui, "Format de cette page");
     ui.add_space(2.0);
-    let current = format_of(&ops.page);
-    let current = if current == Format::Document && app.page_differs(page) {
-        // Héritée d'un changement plus haut : on montre le format réel.
-        format_of_size(size)
-    } else {
-        current
-    };
     let mut onward = ops.page_onward;
     let chosen = picker(ui, "format-page", &current);
     let onward_changed = matches!(ops.page, Some(PageChange::Set(_)))
@@ -195,16 +188,10 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui, page: usize) {
     }
     ui.label(RichText::new(note).small().color(t.faint));
 
-    if chosen.is_some() || onward_changed {
-        let differs = app.page_differs(page);
-        app.edit_block(&ctx, &owner, |ops| {
-            if let Some(format) = &chosen {
-                apply(&mut ops.page, &mut ops.page_onward, format, differs);
-            }
-            if onward_changed {
-                ops.page_onward = onward;
-            }
-        });
+    if let Some(format) = &chosen {
+        app.set_page_format(&ctx, page, format);
+    } else if onward_changed {
+        app.edit_block(&ctx, &owner, |ops| ops.page_onward = onward);
     }
 
     ui.add_space(12.0);
@@ -240,11 +227,9 @@ fn truncate(text: &str, max: usize) -> String {
     }
 }
 
-/// Barre des formats posée sur la page sélectionnée (dans l'aperçu).
-pub fn bar(app: &NectarApp, ui: &mut egui::Ui, page: usize) -> Option<(BlockId, Format)> {
-    let owner = app.page_owner(page)?;
-    let project = app.project.as_ref()?;
-    let ops = project.layout.ops_for(&project.document, &owner);
-    let current = format_of(&ops.page);
-    picker(ui, "format-page-barre", &current).map(|f| (owner, f))
+/// Barre des formats posée sur la page sélectionnée (dans l'aperçu) : elle
+/// montre le format réel de la page.
+pub fn bar(app: &NectarApp, ui: &mut egui::Ui, page: usize) -> Option<Format> {
+    let current = app.page_format(page)?;
+    picker(ui, "format-page-barre", &current)
 }

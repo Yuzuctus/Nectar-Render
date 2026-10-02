@@ -316,42 +316,42 @@ pub fn analyse(input: &Inputs<'_>) -> Vec<Issue> {
 }
 
 /// Mots qui désignent un schéma dans une légende ou un nom de fichier.
+/// Volontairement étroits : « réseau » ou « plan » se lisent aussi sous une
+/// capture d'écran, qui n'a rien à gagner à passer en paysage.
 const SCHEMA_WORDS: &[&str] = &[
     "schéma",
     "schema",
     "diagram",
     "architecture",
-    "réseau",
-    "reseau",
     "topolog",
-    "plan ",
-    "carte",
-    "map",
-    "uml",
-    "flux",
-    "flow",
     "organigramme",
+    "synoptique",
+    "logigramme",
     "excalidraw",
-    "graphe",
-    "graph",
-    "infra",
-    "câblage",
-    "cablage",
     "mindmap",
+    "carte mentale",
+    "uml",
 ];
+
+/// Mots d'une capture d'écran : jamais proposée en paysage.
+const SCREENSHOT_WORDS: &[&str] = &["capture", "screenshot", "screen shot", "écran", "ecran", "copie d"];
 
 /// Un schéma large et détaillé, affiché à la largeur du texte d'une page en
 /// portrait : sur une page paysage, il serait nettement plus grand.
 fn wide_schema(input: &Inputs<'_>, figure: &FigureView) -> Option<Issue> {
     let block = input.document.blocks.iter().find(|b| b.id == figure.id)?;
     let named_schema = |text: &str| {
-        let text = format!("{} ", text.to_lowercase());
-        SCHEMA_WORDS.iter().any(|w| text.contains(w))
+        let text = text.to_lowercase();
+        SCHEMA_WORDS.iter().any(|w| text.contains(w)) && !SCREENSHOT_WORDS.iter().any(|w| text.contains(w))
     };
-    let schema = match &block.node {
-        Node::Diagram { .. } => true,
-        Node::Figure(image) => named_schema(&image.alt) || named_schema(&image.target),
-        _ => false,
+    let (schema, name) = match &block.node {
+        Node::Diagram { .. } => (true, "Le diagramme".to_string()),
+        Node::Figure(image) => {
+            let both = format!("{} {}", image.alt, image.target);
+            let name = if image.alt.trim().is_empty() { image.target.clone() } else { image.alt.clone() };
+            (named_schema(&both), format!("« {} »", shorten(&name, 50)))
+        }
+        _ => (false, String::new()),
     };
     // Une image déjà retouchée : la personne a décidé de sa taille.
     if !schema || input.ops.get(&figure.id).is_some_and(|o| o.image.is_some() || o.page.is_some()) {
@@ -387,11 +387,19 @@ fn wide_schema(input: &Inputs<'_>, figure: &FigureView) -> Option<Issue> {
         block: Some(figure.id.clone()),
         title: format!("Schéma à lire en grand (page {})", figure.page + 1),
         detail: format!(
-            "Large et détaillé : sur une page paysage, il serait {} fois plus grand. Le texte reprend ensuite au format normal.",
+            "{name} est large et détaillé : sur une page paysage, il serait {} fois plus grand. Le texte reprend ensuite au format normal.",
             format!("{gain:.1}").replace('.', ",")
         ),
         fixes: vec![fix("Le mettre sur une page paysage", &figure.id, FixAction::ImagePlacement(Placement::Landscape))],
     })
+}
+
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        format!("{}…", text.chars().take(max).collect::<String>())
+    }
 }
 
 fn fix(label: &str, block: &BlockId, action: FixAction) -> Fix {

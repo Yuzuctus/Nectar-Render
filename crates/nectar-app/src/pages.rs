@@ -37,8 +37,8 @@ pub struct PageAction {
     pub more: bool,
     /// Page sélectionnée (numéro, marge ou blanc de la page).
     pub page_clicked: Option<usize>,
-    /// Format choisi dans la barre de la page : (page, bloc qui le porte, format).
-    pub page_format: Option<(usize, BlockId, crate::panels::page::Format)>,
+    /// Format choisi dans la barre de la page.
+    pub page_format: Option<(usize, crate::panels::page::Format)>,
 }
 
 /// Aperçu d'un déplacement : la partie de la page sous le haut du bloc,
@@ -56,8 +56,11 @@ pub struct Ghost {
 #[derive(Clone, Debug)]
 struct Drag {
     id: BlockId,
-    origin_y: f32,
+    origin: Pos2,
 }
+
+/// En dessous, un glisser est un clic qui a tremblé : rien ne bouge.
+const DRAG_DEAD_ZONE: f32 = 10.0;
 
 /// Points typographiques → points d'écran à 100 % (96 ppp).
 const PT_TO_SCREEN: f32 = 96.0 / 72.0;
@@ -191,13 +194,16 @@ pub fn show(
                     && let Some(id) = hit(positions, index, to_pt(origin).1)
                 {
                     action.clicked = Some(Some(id.clone()));
-                    drag = Some(Drag { id, origin_y: origin.y });
+                    drag = Some(Drag { id, origin });
                 }
                 if let Some(d) = &drag
                     && (response.dragged() || response.drag_stopped())
                     && let Some(pointer) = ui.input(|i| i.pointer.latest_pos())
                 {
-                    drag_dy = ((pointer.y - d.origin_y) / scale).clamp(-30.0 * MM, 80.0 * MM);
+                    let delta = pointer - d.origin;
+                    // Un geste surtout horizontal, ou trop court, ne déplace rien.
+                    let vertical = delta.y.abs() >= DRAG_DEAD_ZONE && delta.y.abs() >= delta.x.abs() * 0.5;
+                    drag_dy = if vertical { (delta.y / scale).clamp(-30.0 * MM, 80.0 * MM) } else { 0.0 };
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                     if response.drag_stopped() {
                         let mm = (drag_dy / MM * 2.0).round() / 2.0;
@@ -360,8 +366,9 @@ pub fn show(
                 && let Some(page_rect) = page_rects.get(page)
                 && let Some(view) = views.get(page)
             {
-                let pos = page_rect.right_top() + egui::vec2(-8.0, 8.0);
-                if ui.clip_rect().contains(pos) {
+                let clip = ui.clip_rect();
+                let pos = egui::pos2((page_rect.right() - 8.0).min(clip.right() - 4.0), page_rect.top() + 8.0);
+                if clip.contains(pos) {
                     let ctx = ui.ctx().clone();
                     egui::Area::new(egui::Id::new("barre-page"))
                         .fixed_pos(pos)
@@ -383,8 +390,8 @@ pub fn show(
                                             .size(12.0)
                                             .color(t.muted),
                                         );
-                                        if let Some((owner, format)) = crate::panels::page::bar(app, ui, page) {
-                                            action.page_format = Some((page, owner, format));
+                                        if let Some(format) = crate::panels::page::bar(app, ui, page) {
+                                            action.page_format = Some((page, format));
                                         }
                                     });
                                 });
@@ -399,16 +406,25 @@ pub fn show(
                     bands(rendered, id, &children, views, &margins).into_iter().next()
                 && let Some(page_rect) = page_rects.get(page)
             {
+                // La barre ne recouvre jamais un autre bloc (un clic destiné au
+                // voisin tomberait sur un de ses boutons) : elle se pose dans le
+                // bloc lui-même s'il est assez haut, sinon à côté de la page.
                 let clip = ui.clip_rect();
-                let right = page_rect.left() + (x1 + 5.0).max(margins.left + 120.0) * scale;
-                let above = page_rect.top() + (top - 6.0) * scale;
-                let below = page_rect.top() + (bottom + 5.0) * scale;
-                let (pos, pivot) = if above - 36.0 > clip.top() {
-                    (egui::pos2(right, above), egui::Align2::RIGHT_BOTTOM)
+                let right = (page_rect.left() + (x1 + 5.0).max(margins.left + 120.0) * scale).min(clip.right() - 4.0);
+                let band_top = page_rect.top() + (top - 4.0) * scale;
+                let band_bottom = page_rect.top() + (bottom + 3.0) * scale;
+                let visible_top = band_top.max(clip.top() + 4.0);
+                // Sans place sûre, pas de barre : le panneau et le clic droit restent.
+                let placed = if band_bottom - visible_top >= 44.0 {
+                    Some((egui::pos2(right - 4.0, visible_top + 4.0), egui::Align2::RIGHT_TOP))
+                } else if clip.right() - page_rect.right() >= 380.0 {
+                    Some((egui::pos2(page_rect.right() + 40.0, visible_top), egui::Align2::LEFT_TOP))
                 } else {
-                    (egui::pos2(right, below), egui::Align2::RIGHT_TOP)
+                    None
                 };
-                if clip.contains(pos) {
+                if let Some((pos, pivot)) = placed
+                    && clip.contains(pos)
+                {
                     toolbar(app, ui.ctx(), id, pos, pivot, &mut action);
                 }
             }
