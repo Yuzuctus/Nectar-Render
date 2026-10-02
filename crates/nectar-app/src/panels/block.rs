@@ -2,7 +2,7 @@
 
 use eframe::egui::{self, FontId, RichText};
 use nectar_core::layout::{
-    BlockOps, BlockStyle, DefaultPage, HAlign, ImageOps, PageChange, PageSpec, Placement, TableOps, TextAlign,
+    BlockOps, BlockStyle, HAlign, ImageOps, PageChange, PageSpec, Placement, TableOps, TextAlign,
 };
 use nectar_core::model::{AnchorInfo, BlockKind, Node};
 
@@ -13,14 +13,6 @@ use crate::theme::{self, kicker};
 
 const PAPERS: &[(&str, &str)] =
     &[("a4", "A4"), ("a3", "A3"), ("a5", "A5"), ("us-letter", "Letter"), ("us-legal", "Legal"), ("a2", "A2")];
-
-#[derive(Clone, PartialEq)]
-enum PageChoice {
-    Unchanged,
-    Default,
-    Paper(String),
-    Custom,
-}
 
 pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let t = theme::tokens(ui.ctx());
@@ -33,6 +25,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         for tip in [
             "Glisse un bloc vers le haut ou le bas pour le déplacer",
+            "Clic sur le numéro d'une page (ou dans sa marge) : son format",
             "Alt + ↑ / ↓ : déplacer d'1 mm (Maj : 5 mm)",
             "Clic droit sur un bloc : actions rapides",
             "Ctrl + Entrée : nouvelle page avant le bloc",
@@ -315,48 +308,32 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
 
 /// Format de page à partir de ce bloc.
 fn page_format(ui: &mut egui::Ui, ops: &mut BlockOps, t: theme::Tokens) {
-    ui.horizontal(|ui| {
-        label(ui, "Format de page");
-        let mut choice_now = match &ops.page {
-            None => PageChoice::Unchanged,
-            Some(PageChange::Default(_)) => PageChoice::Default,
-            Some(PageChange::Set(spec)) if spec.width_mm.is_some() => PageChoice::Custom,
-            Some(PageChange::Set(spec)) => PageChoice::Paper(spec.paper.clone()),
-        };
-        let mut options: Vec<(PageChoice, &str)> =
-            vec![(PageChoice::Unchanged, "Inchangé"), (PageChoice::Default, "Celui du document")];
-        options.extend(PAPERS.iter().map(|(id, label)| (PageChoice::Paper((*id).to_string()), *label)));
-        options.push((PageChoice::Custom, "Personnalisé…"));
-        if choice(ui, "format-bloc", &mut choice_now, &options) {
-            let landscape = matches!(&ops.page, Some(PageChange::Set(s)) if s.landscape);
-            ops.page = match &choice_now {
-                PageChoice::Unchanged => None,
-                PageChoice::Default => Some(PageChange::Default(DefaultPage::Default)),
-                PageChoice::Paper(paper) => Some(PageChange::Set(PageSpec::paper(paper, landscape))),
-                PageChoice::Custom => Some(PageChange::Set(PageSpec {
-                    width_mm: Some(297.0),
-                    height_mm: Some(210.0),
-                    ..PageSpec::default()
-                })),
-            };
-        }
-    });
+    use super::page::{self, Format};
+    label(ui, "Format de sa page");
+    let current = page::format_of(&ops.page);
+    if let Some(format) = page::picker(ui, "format-bloc", &current) {
+        page::apply(&mut ops.page, &mut ops.page_onward, &format, false);
+    }
     if let Some(PageChange::Set(spec)) = &mut ops.page {
-        if spec.width_mm.is_some() {
+        if current == Format::Custom {
             ui.horizontal(|ui| {
                 label(ui, "Largeur");
                 widgets::number(ui, spec.width_mm.get_or_insert(297.0), 50.0..=2000.0, 1.0, " mm");
                 label(ui, "hauteur");
                 widgets::number(ui, spec.height_mm.get_or_insert(210.0), 50.0..=2000.0, 1.0, " mm");
             });
-        } else {
-            ui.checkbox(&mut spec.landscape, "Paysage");
         }
+        ui.checkbox(&mut ops.page_onward, "Et les pages suivantes");
+    } else if ui.small_button("Format libre…").clicked() {
+        ops.page =
+            Some(PageChange::Set(PageSpec { width_mm: Some(297.0), height_mm: Some(210.0), ..PageSpec::default() }));
     }
     ui.label(
-        RichText::new("S'applique à partir de ce bloc, sur une nouvelle page, jusqu'au prochain changement.")
-            .small()
-            .color(t.faint),
+        RichText::new(
+            "Le bloc ouvre une page à ce format, qui se remplit avec la suite ; puis le document reprend son format.",
+        )
+        .small()
+        .color(t.faint),
     );
 }
 

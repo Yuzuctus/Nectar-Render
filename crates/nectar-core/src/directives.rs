@@ -59,6 +59,7 @@ pub fn parse_ops(body: &str) -> Result<BlockOps, String> {
             ("page", Some(v)) if v.eq_ignore_ascii_case("default") || v.eq_ignore_ascii_case("défaut") => {
                 ops.page = Some(PageChange::Default(DefaultPage::Default));
             }
+            ("suite" | "et-suivantes" | "onward", None) => ops.page_onward = true,
             ("page", Some(v)) => {
                 let spec = PageSpec::parse(v).ok_or_else(|| format!("format de page inconnu : {v}"))?;
                 ops.page = Some(PageChange::Set(spec));

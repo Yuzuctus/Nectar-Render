@@ -104,3 +104,33 @@ fn wide_schema_is_detected_then_laid_on_a_landscape_page() {
     let suite = doc.blocks.iter().find(|b| b.excerpt.starts_with("Suite")).unwrap();
     assert_eq!(page(&suite.id), 2, "la section suivante vient après le schéma");
 }
+
+#[test]
+fn a_page_format_applies_to_its_page_only_unless_asked() {
+    use nectar_core::layout::{PageChange, PageSpec};
+    let mut text = String::from("# Rapport\n\nIntroduction.\n\n");
+    for i in 0..140 {
+        text.push_str(&format!("Paragraphe {i} : un texte assez long pour remplir les pages, ligne après ligne.\n\n"));
+    }
+    let doc = parse(&text, &ParseOptions::default());
+    let engine = Engine::new(FontSources::Bundled);
+    let target = doc.anchors().into_iter().find(|a| a.excerpt.starts_with("Paragraphe 5 ")).unwrap();
+    let target_id = target.id.clone();
+
+    for onward in [false, true] {
+        let mut layout = Layout::default();
+        let ops = layout.ops_mut(target);
+        ops.page = Some(PageChange::Set(PageSpec::paper("a3", false)));
+        ops.page_onward = onward;
+        let compiled = lay_out(&engine, &doc, &layout, &Style::default()).compiled.unwrap();
+        let page = compiled.block_positions().into_iter().find(|p| p.id == target_id).unwrap().page;
+        let size = |i: usize| compiled.page_size(i).unwrap();
+        assert!((size(page).1 - 1190.55).abs() < 1.0, "la page du bloc est en A3");
+        assert!(compiled.page_count() > page + 1, "il reste des pages après");
+        let next_is_a3 = (size(page + 1).1 - 1190.55).abs() < 1.0;
+        assert_eq!(next_is_a3, onward, "onward = {onward}");
+        // La page A3 se remplit avec la suite avant de revenir au format.
+        let on_a3 = compiled.block_positions().into_iter().filter(|p| p.page == page).count();
+        assert!(on_a3 > 5, "{on_a3} blocs sur la page A3");
+    }
+}

@@ -247,9 +247,15 @@ pub struct BlockOps {
     /// Espace supplémentaire avant le bloc, en millimètres.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub space_before_mm: Option<f32>,
-    /// Changer le format de page à partir de ce bloc (nouvelle page).
+    /// Format de la page de ce bloc (qui commence alors une nouvelle page) :
+    /// seulement cette page (le bloc et ce qui tient après lui), puis le
+    /// format reprend ; ou, avec `page_onward`, les pages suivantes aussi.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page: Option<PageChange>,
+    /// Le format de `page` vaut aussi pour les pages suivantes, jusqu'au
+    /// prochain changement.
+    #[serde(skip_serializing_if = "is_false")]
+    pub page_onward: bool,
     /// Réglages d'une image.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageOps>,
@@ -335,6 +341,7 @@ impl BlockOps {
         }
         if other.page.is_some() {
             self.page = other.page.clone();
+            self.page_onward = other.page_onward;
         }
         if let Some(image) = &other.image {
             self.image = Some(image.clone());

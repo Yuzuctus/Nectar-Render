@@ -55,6 +55,9 @@ pub struct Tuning {
     /// Pages paysage repoussées (image, bloc après lequel la placer) : le
     /// texte qui suit remplit d'abord la page en cours, comme un flottant.
     pub deferred: Vec<(BlockId, BlockId)>,
+    /// Blocs devant lesquels le format revient, après une page au format
+    /// propre (« cette page seulement »).
+    pub returns: HashSet<BlockId>,
 }
 
 /// Produit la source Typst d'un document retouché.
@@ -69,6 +72,8 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
     let mut g = Gen {
         ops: &resolution.ops,
         relaxed: &tuning.relaxed,
+        returns: &tuning.returns,
+        persistent: layout.page.clone(),
         layout,
         style,
         french: style.text.french_typography && doc.meta.lang.as_deref().unwrap_or("fr").starts_with("fr"),
@@ -133,8 +138,14 @@ fn hoist_over_headings(doc: &Document, ops: &mut HashMap<BlockId, BlockOps>) {
             continue;
         }
         let current = ops.get_mut(id).expect("présent");
-        let moved = BlockOps { break_before: current.break_before, page: current.page.take(), ..BlockOps::default() };
+        let moved = BlockOps {
+            break_before: current.break_before,
+            page: current.page.take(),
+            page_onward: current.page_onward,
+            ..BlockOps::default()
+        };
         current.break_before = false;
+        current.page_onward = false;
         ops.entry(doc.blocks[target].id.clone()).or_default().merge(&moved);
     }
 }
@@ -142,6 +153,9 @@ fn hoist_over_headings(doc: &Document, ops: &mut HashMap<BlockId, BlockOps>) {
 struct Gen<'a> {
     ops: &'a HashMap<BlockId, BlockOps>,
     relaxed: &'a HashSet<BlockId>,
+    returns: &'a HashSet<BlockId>,
+    /// Le format en vigueur hors des pages au format propre.
+    persistent: PageSpec,
     layout: &'a Layout,
     style: &'a Style,
     /// Typographie française active (langue `fr` et réglage du style).
@@ -188,6 +202,10 @@ impl Gen<'_> {
             self.heading_index += 1;
             self.heading_index - 1
         });
+        // Fin d'une page au format propre : on revient au format courant.
+        if self.returns.contains(&block.id) && ops.page.is_none() {
+            let _ = writeln!(self.out, "#set page({})", page_args(&self.persistent, self.style));
+        }
         self.before(&ops);
         // Un saut demandé avant la première puce passe avant toute la liste,
         // pour que le marqueur de la liste atterrisse sur la bonne page.
@@ -271,9 +289,13 @@ impl Gen<'_> {
         match &ops.page {
             Some(PageChange::Set(spec)) => {
                 let _ = writeln!(self.out, "#set page({})", page_args(spec, self.style));
+                if ops.page_onward {
+                    self.persistent = spec.clone();
+                }
             }
             Some(PageChange::Default(_)) => {
                 let _ = writeln!(self.out, "#set page({})", page_args(&self.layout.page, self.style));
+                self.persistent = self.layout.page.clone();
             }
             None => {}
         }

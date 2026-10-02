@@ -16,9 +16,11 @@
   - clic sur un bloc : il est surligné et une **barre d'actions** apparaît dessus (nouvelle page avant, garder avec la suite, d'un seul tenant, page paysage, pleine page…) ;
   - **glisser un bloc** vers le haut ou le bas le déplace au demi-millimètre, avec tout ce qui suit, en direct ;
   - la **poignée** à droite d'une image règle sa largeur ;
-  - **clic droit** : les mêmes actions rapides.
+  - **clic droit** : les mêmes actions rapides ;
+  - **clic sur le numéro d'une page** (ou dans sa marge, ou dans le blanc sous le texte) : la page est sélectionnée et on choisit son format en un clic (A4 paysage, A3, A3 paysage, autre).
 - Au clavier : Alt + ↑ / ↓ déplace le bloc d'1 mm (Maj : 5 mm), Ctrl + Entrée lui donne une nouvelle page, Suppr efface ses retouches, ↑ / ↓ passe au bloc voisin.
-- Onglet **Retoucher** : l'essentiel d'abord (actions, décalage, image, colonnes du tableau), le reste dans « Plus d'options » (format de page à partir du bloc, apparence, masquer, appliquer à tous les titres du même niveau).
+- Onglet **Retoucher** : l'essentiel d'abord (actions, décalage, image, colonnes du tableau), le reste dans « Plus d'options » (format de la page du bloc, apparence, masquer, appliquer à tous les titres du même niveau).
+- **Format d'une page** : la page prend ce format, se remplit avec la suite, puis le document reprend tout seul son format. Cocher « Et les pages suivantes » pour le garder jusqu'au prochain changement.
 - **Plan** dans la barre du haut : aller directement à un titre.
 - **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
 - Onglet **Style** : un preset en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme preset… ».
@@ -78,6 +80,7 @@ Repli possible dans la note, juste avant le bloc :
 ```markdown
 <!-- nectar: saut-avant, page=a3-paysage, largeur=80, centre -->
 <!-- nectar: placement=paysage -->
+<!-- nectar: page=a3, suite -->   (A3 pour cette page et les suivantes)
 ![[schema.png]]
 ```
 

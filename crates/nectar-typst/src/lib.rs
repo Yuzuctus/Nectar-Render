@@ -416,7 +416,7 @@ pub fn lay_out(
     style: &nectar_core::Style,
 ) -> LaidOut {
     use nectar_core::assistant::FixAction;
-    use nectar_core::layout::Placement;
+    use nectar_core::layout::{PageChange, Placement};
     let mut tuning = nectar_core::Tuning::default();
     let mut generated = nectar_core::generate_tuned(document, layout, style, &tuning);
     let mut compiled = engine.compile(&generated);
@@ -469,9 +469,71 @@ pub fn lay_out(
             }
         }
     }
+    // Pages au format propre (« cette page seulement ») : le format revient
+    // devant le premier bloc qui commence après elles.
+    let mut owners: Vec<&BlockId> = ops
+        .iter()
+        .filter(|(_, o)| matches!(o.page, Some(PageChange::Set(_))) && !o.page_onward && !o.hidden)
+        .map(|(id, _)| id)
+        .collect();
+    if let Ok(current) = &compiled {
+        let order = current.block_positions();
+        owners.sort_by_key(|id| order.iter().position(|p| &p.id == *id).unwrap_or(usize::MAX));
+    }
+    for owner in owners.into_iter().take(12) {
+        let Ok(current) = &compiled else { break };
+        let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+        let Some(target) = return_point(current, document, &ops, owner, margin_bottom) else { continue };
+        if !tuning.returns.insert(target.clone()) {
+            continue;
+        }
+        let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
+        match engine.compile(&retry) {
+            Ok(better) => {
+                compiled = Ok(better);
+                generated = retry;
+            }
+            Err(_) => {
+                tuning.returns.remove(&target);
+            }
+        }
+    }
     let mut relaxed: Vec<BlockId> = tuning.relaxed.into_iter().collect();
     relaxed.sort();
     LaidOut { generated, compiled, relaxed }
+}
+
+/// Le bloc de premier niveau devant lequel revenir au format courant, après
+/// la (ou les) page(s) du bloc `owner` au format propre.
+fn return_point(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+    owner: &BlockId,
+    margin_bottom: f64,
+) -> Option<BlockId> {
+    let positions = compiled.block_positions();
+    let boxes = compiled.block_boxes(margin_bottom);
+    let start = positions.iter().position(|p| &p.id == owner)?;
+    let last = boxes.iter().filter(|b| &b.id == owner).map(|b| b.page).max().unwrap_or(0).max(positions[start].page);
+    let top_level = |id: &BlockId| document.blocks.iter().any(|b| &b.id == id);
+    let mut previous: Option<&BlockId> = None;
+    for position in &positions[start + 1..] {
+        if !top_level(&position.id) {
+            continue;
+        }
+        if position.page > last {
+            // Un bloc commencé sur la page au format propre et qui déborde
+            // passe lui aussi au format courant, en entier.
+            let target = match previous {
+                Some(prev) if prev != owner && boxes.iter().any(|b| &b.id == prev && b.page >= position.page) => prev,
+                _ => &position.id,
+            };
+            return ops.get(target).is_none_or(|o| o.page.is_none()).then(|| target.clone());
+        }
+        previous = Some(&position.id);
+    }
+    None
 }
 
 /// Le bloc après lequel placer la page paysage d'une image pour que le texte

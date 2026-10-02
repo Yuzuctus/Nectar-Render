@@ -52,6 +52,8 @@ pub struct NectarApp {
     fit_pending: bool,
     reset_horizontal: bool,
     pub selected: Option<BlockId>,
+    /// Page sélectionnée (clic sur son numéro ou dans sa marge).
+    pub selected_page: Option<usize>,
     pub tab: Tab,
     undo: Vec<Layout>,
     redo: Vec<Layout>,
@@ -94,6 +96,7 @@ impl NectarApp {
             fit_pending: true,
             reset_horizontal: true,
             selected: None,
+            selected_page: None,
             tab: launch.tab.unwrap_or(Tab::Block),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -134,6 +137,7 @@ impl NectarApp {
                 self.undo.clear();
                 self.redo.clear();
                 self.selected = self.launch_select.take().map(BlockId);
+                self.selected_page = None;
                 self.scroll_to = self.selected.clone();
                 self.rendered = None;
                 self.textures.clear();
@@ -341,8 +345,40 @@ impl NectarApp {
         }
         if id.is_some() {
             self.tab = Tab::Block;
+            self.selected_page = None;
         }
         self.selected = id;
+    }
+
+    pub fn select_page(&mut self, page: Option<usize>) {
+        if page.is_some() {
+            self.tab = Tab::Block;
+            self.selected = None;
+        }
+        self.selected_page = page;
+    }
+
+    /// Le bloc qui porte le format d'une page : celui qui l'a changé, sinon
+    /// le premier qui y commence.
+    pub fn page_owner(&self, page: usize) -> Option<BlockId> {
+        let rendered = self.rendered.as_ref()?;
+        let project = self.project.as_ref()?;
+        let ops = project.layout.resolve(&project.document).ops;
+        let on_page: Vec<&BlockId> = rendered.positions.iter().filter(|p| p.page == page).map(|p| &p.id).collect();
+        on_page
+            .iter()
+            .find(|id| ops.get(**id).is_some_and(|o| o.page.is_some()))
+            .or_else(|| on_page.first())
+            .map(|id| (*id).clone())
+    }
+
+    /// La page n'est pas au format du document.
+    pub fn page_differs(&self, page: usize) -> bool {
+        let Some(size) = self.rendered.as_ref().and_then(|r| r.pages.get(page)).map(|p| p.size_pt) else {
+            return false;
+        };
+        let Some(project) = &self.project else { return false };
+        panels::page::size_of(&project.layout.page).is_some_and(|doc| (doc - size).length() > 2.0)
     }
 
     // ---------------------------------------------------------- événements
@@ -491,6 +527,7 @@ impl NectarApp {
         }
         if ctx.input(|i| i.key_pressed(Key::Escape)) && !ctx.egui_wants_keyboard_input() {
             self.selected = None;
+            self.selected_page = None;
         }
     }
 
@@ -839,7 +876,10 @@ impl eframe::App for NectarApp {
                 theme::rule(ui, 2.0, true);
                 ui.add_space(8.0);
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| match self.tab {
-                    Tab::Block => panels::block::show(self, ui),
+                    Tab::Block => match self.selected_page {
+                        Some(page) => panels::page::show(self, ui, page),
+                        None => panels::block::show(self, ui),
+                    },
                     Tab::Style => panels::style::show(self, ui),
                     Tab::Check => panels::check::show(self, ui),
                 });
@@ -870,6 +910,18 @@ impl eframe::App for NectarApp {
             let action = pages::show(self, ui, &views, self.zoom, scroll_to, reset);
             if let Some(clicked) = action.clicked {
                 self.select(clicked, false);
+                if self.selected.is_none() {
+                    self.selected_page = None;
+                }
+            }
+            if let Some(page) = action.page_clicked {
+                self.select_page(Some(page));
+            }
+            if let Some((page, owner, format)) = action.page_format {
+                let differs = self.page_differs(page);
+                self.edit_block(&ctx, &owner, |ops| {
+                    panels::page::apply(&mut ops.page, &mut ops.page_onward, &format, differs);
+                });
             }
             if let Some((id, width)) = action.resize {
                 self.edit_block(&ctx, &id, |ops| {

@@ -35,6 +35,10 @@ pub struct PageAction {
     pub quick: Option<(BlockId, Quick)>,
     /// « Plus… » : ouvrir toutes les retouches du bloc.
     pub more: bool,
+    /// Page sélectionnée (numéro, marge ou blanc de la page).
+    pub page_clicked: Option<usize>,
+    /// Format choisi dans la barre de la page : (page, bloc qui le porte, format).
+    pub page_format: Option<(usize, BlockId, crate::panels::page::Format)>,
 }
 
 /// Aperçu d'un déplacement : la partie de la page sous le haut du bloc,
@@ -136,8 +140,21 @@ pub fn show(
                 if response.clicked()
                     && let Some(pointer) = response.interact_pointer_pos()
                 {
-                    let (_, y) = to_pt(pointer);
-                    action.clicked = Some(hit(positions, index, y));
+                    let (x, y) = to_pt(pointer);
+                    // Dans la marge, ou dans le blanc sous le texte : la page.
+                    let content_bottom = rendered
+                        .boxes
+                        .iter()
+                        .filter(|b| b.page == index)
+                        .map(|b| b.rect[3] as f32)
+                        .fold(margins.top, f32::max);
+                    let in_margin = x < margins.left - 6.0 || x > view.size_pt.x - margins.right + 6.0;
+                    if in_margin || y > content_bottom + 8.0 || y < margins.top - 6.0 {
+                        action.page_clicked = Some(index);
+                        action.clicked = Some(None);
+                    } else {
+                        action.clicked = Some(hit(positions, index, y));
+                    }
                 }
                 // Clic droit : on sélectionne le bloc et on ouvre ses actions.
                 if response.secondary_clicked()
@@ -195,15 +212,29 @@ pub fn show(
                     }
                 }
 
-                // Repère de page.
-                let label = format!("{}", index + 1);
-                painter.text(
-                    rect.right_top() + egui::vec2(8.0, 0.0),
-                    egui::Align2::LEFT_TOP,
-                    label,
+                // Numéro de page : un clic sélectionne la page.
+                let selected_page = app.selected_page == Some(index);
+                let tag = Rect::from_min_size(rect.right_top() + egui::vec2(6.0, 0.0), egui::vec2(26.0, 18.0));
+                let tag_response = ui.interact(tag, ui.id().with(("page", index)), Sense::click());
+                let tag_painter = ui.painter_at(tag.expand(1.0));
+                if selected_page || tag_response.hovered() {
+                    tag_painter.rect_filled(tag, 0.0, if selected_page { t.accent } else { t.surface });
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                tag_painter.text(
+                    tag.center(),
+                    egui::Align2::CENTER_CENTER,
+                    format!("{}", index + 1),
                     egui::FontId::new(10.5, theme::mono()),
-                    t.faint,
+                    if selected_page { t.accent_ink } else { t.faint },
                 );
+                if tag_response.on_hover_text(format!("Sélectionner la page {}", index + 1)).clicked() {
+                    action.page_clicked = Some(index);
+                    action.clicked = Some(None);
+                }
+                if selected_page {
+                    painter.rect_stroke(rect, 0.0, Stroke::new(2.5, t.identity), StrokeKind::Outside);
+                }
                 ui.add_space(20.0);
             }
             if !ui.input(|i| i.pointer.any_down()) && action.nudge.is_none() {
@@ -321,6 +352,43 @@ pub fn show(
                     if (new - percent).abs() >= 1.0 {
                         action.resize = Some((id.clone(), new));
                     }
+                }
+            }
+
+            // Barre des formats posée sur la page sélectionnée.
+            if let Some(page) = app.selected_page
+                && let Some(page_rect) = page_rects.get(page)
+                && let Some(view) = views.get(page)
+            {
+                let pos = page_rect.right_top() + egui::vec2(-8.0, 8.0);
+                if ui.clip_rect().contains(pos) {
+                    let ctx = ui.ctx().clone();
+                    egui::Area::new(egui::Id::new("barre-page"))
+                        .fixed_pos(pos)
+                        .pivot(egui::Align2::RIGHT_TOP)
+                        .order(egui::Order::Foreground)
+                        .show(&ctx, |ui| {
+                            egui::Frame::new()
+                                .fill(t.raised)
+                                .stroke(Stroke::new(1.0, t.ink))
+                                .inner_margin(egui::Margin::symmetric(6, 4))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "Page {} · {}",
+                                                page + 1,
+                                                crate::panels::page::describe(view.size_pt)
+                                            ))
+                                            .size(12.0)
+                                            .color(t.muted),
+                                        );
+                                        if let Some((owner, format)) = crate::panels::page::bar(app, ui, page) {
+                                            action.page_format = Some((page, owner, format));
+                                        }
+                                    });
+                                });
+                        });
                 }
             }
 
@@ -463,9 +531,12 @@ fn summary(ops: &nectar_core::BlockOps) -> Vec<String> {
         out.push(format!("Espace avant {mm} mm"));
     }
     match &ops.page {
-        Some(PageChange::Set(spec)) => {
-            out.push(format!("Format {}{}", spec.paper.to_uppercase(), if spec.landscape { " paysage" } else { "" }))
-        }
+        Some(PageChange::Set(spec)) => out.push(format!(
+            "Format {}{} ({})",
+            spec.paper.to_uppercase(),
+            if spec.landscape { " paysage" } else { "" },
+            if ops.page_onward { "et pages suivantes" } else { "cette page" }
+        )),
         Some(PageChange::Default(_)) => out.push("Retour au format du document".into()),
         None => {}
     }
