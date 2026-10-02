@@ -155,3 +155,30 @@ fn a_screenshot_is_never_proposed_in_landscape() {
     let issues = nectar_typst::inspect(&compiled, &doc, &Layout::default(), &Style::default(), &laid.generated, &[]);
     assert!(!issues.iter().any(|i| i.title.starts_with("Schéma")), "{issues:#?}");
 }
+
+#[test]
+fn many_page_formats_each_stay_on_their_page() {
+    use nectar_core::layout::{PageChange, PageSpec};
+    let mut text = String::from("# Long rapport\n\n");
+    for i in 0..400 {
+        text.push_str(&format!("Paragraphe {i} : du texte pour remplir un long document, ligne après ligne.\n\n"));
+    }
+    let doc = parse(&text, &ParseOptions::default());
+    let engine = Engine::new(FontSources::Bundled);
+    // Une page paysage tous les 20 paragraphes : bien plus de 12.
+    let mut layout = Layout::default();
+    let anchors: Vec<_> = doc.anchors().into_iter().filter(|a| a.excerpt.starts_with("Paragraphe")).collect();
+    let owners: Vec<_> = anchors.iter().step_by(20).skip(1).copied().collect();
+    for anchor in &owners {
+        layout.ops_mut(*anchor).page = Some(PageChange::Set(PageSpec::paper("a4", true)));
+    }
+    let compiled = lay_out(&engine, &doc, &layout, &Style::default()).compiled.unwrap();
+    let positions = compiled.block_positions();
+    let owner_pages: std::collections::HashSet<usize> =
+        owners.iter().map(|a| positions.iter().find(|p| &p.id == a.id).unwrap().page).collect();
+    assert!(owner_pages.len() > 12);
+    for page in 0..compiled.page_count() {
+        let (w, h) = compiled.page_size(page).unwrap();
+        assert_eq!(w > h, owner_pages.contains(&page), "page {} : {w}×{h}", page + 1);
+    }
+}

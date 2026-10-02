@@ -74,6 +74,11 @@ pub struct NectarApp {
     shown: HashMap<usize, (egui::Vec2, egui::TextureHandle)>,
     /// Déplacement à la souris qui attend sa nouvelle mise en page.
     pub ghost: Option<pages::Ghost>,
+    /// Retouches ancrées sur la note, recalculées à chaque changement.
+    pub resolved: HashMap<BlockId, nectar_core::BlockOps>,
+    /// Images de pages reçues du moteur, envoyées à la carte graphique peu à
+    /// peu (une grande page pèse plus de 10 Mo : tout d'un coup, ça fige).
+    uploads: std::collections::VecDeque<crate::worker::PageImage>,
 }
 
 impl NectarApp {
@@ -115,6 +120,8 @@ impl NectarApp {
                 .unwrap_or_default(),
             shown: HashMap::new(),
             ghost: None,
+            resolved: HashMap::new(),
+            uploads: std::collections::VecDeque::new(),
         };
         let remembered = cc.storage.and_then(|s| s.get_string(LAST_NOTE)).map(PathBuf::from).filter(|p| p.is_file());
         if let Some(note) = launch.note.or(remembered) {
@@ -210,6 +217,7 @@ impl NectarApp {
     pub fn regenerate(&mut self, ctx: &egui::Context) {
         let Some(project) = &self.project else { return };
         self.generation += 1;
+        self.resolved = project.layout.resolve(&project.document).ops;
         let check = Box::new(CheckInputs {
             document: project.document.clone(),
             layout: project.layout.clone(),
@@ -362,8 +370,7 @@ impl NectarApp {
     /// le premier qui y commence.
     pub fn page_owner(&self, page: usize) -> Option<BlockId> {
         let rendered = self.rendered.as_ref()?;
-        let project = self.project.as_ref()?;
-        let ops = project.layout.resolve(&project.document).ops;
+        let ops = &self.resolved;
         let on_page: Vec<&BlockId> = rendered.positions.iter().filter(|p| p.page == page).map(|p| &p.id).collect();
         on_page
             .iter()
@@ -384,8 +391,7 @@ impl NectarApp {
     pub fn set_page_format(&mut self, ctx: &egui::Context, page: usize, format: &panels::page::Format) {
         use nectar_core::layout::Placement;
         let Some(rendered) = &self.rendered else { return };
-        let Some(project) = &self.project else { return };
-        let ops = project.layout.resolve(&project.document).ops;
+        let ops = &self.resolved;
         let landscape_image = rendered
             .positions
             .iter()
@@ -437,19 +443,26 @@ impl NectarApp {
                         self.requested.clear();
                     }
                 }
-                Response::Images(images) => {
-                    for page in images {
-                        let texture = ctx.load_texture(
-                            format!("page-{:x}", page.hash),
-                            egui::ImageData::Color(page.image),
-                            egui::TextureOptions::LINEAR,
-                        );
-                        self.textures.insert(page.hash, (page.ppi, texture));
-                    }
-                }
+                Response::Images(images) => self.uploads.extend(images),
                 Response::Exported(Ok(path)) => self.notify(format!("PDF exporté : {}", path.display()), false),
                 Response::Exported(Err(e)) => self.notify(format!("Export impossible : {e}"), true),
             }
+        }
+        // Envoi des images à la carte graphique : au plus ~10 ms par image affichée.
+        let started = Instant::now();
+        while let Some(page) = self.uploads.pop_front() {
+            let texture = ctx.load_texture(
+                format!("page-{:x}", page.hash),
+                egui::ImageData::Color(page.image),
+                egui::TextureOptions::LINEAR,
+            );
+            self.textures.insert(page.hash, (page.ppi, texture));
+            if started.elapsed() > Duration::from_millis(10) {
+                break;
+            }
+        }
+        if !self.uploads.is_empty() {
+            ctx.request_repaint();
         }
         let changes: Vec<Changed> = self.watcher.as_ref().map(|(_, rx)| rx.try_iter().collect()).unwrap_or_default();
         if changes.contains(&Changed::Note)
@@ -994,6 +1007,32 @@ impl eframe::App for NectarApp {
                 self.ghost = None;
             }
             self.request_pages(&ctx, &action.visible);
+
+            // Le moteur travaille : on le dit, plutôt que de laisser croire à un gel.
+            let laying_out = self.rendered.as_ref().is_some_and(|r| r.generation < self.generation);
+            let drawing = action.visible.iter().any(|i| views.get(*i).is_some_and(|v| !v.fresh));
+            if laying_out || drawing {
+                let text = if laying_out { "Mise en page…" } else { "Rendu des pages…" };
+                let at = egui::pos2(ui.max_rect().center().x, ui.max_rect().top() + 12.0);
+                egui::Area::new(egui::Id::new("chargement"))
+                    .fixed_pos(at)
+                    .pivot(egui::Align2::CENTER_TOP)
+                    .order(egui::Order::Foreground)
+                    .interactable(false)
+                    .show(&ctx, |ui| {
+                        egui::Frame::new()
+                            .fill(t.raised)
+                            .stroke(egui::Stroke::new(1.0, t.rule_strong))
+                            .inner_margin(egui::Margin::symmetric(10, 5))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add(egui::Spinner::new().size(14.0).color(t.identity));
+                                    ui.label(RichText::new(text).color(t.muted));
+                                });
+                            });
+                    });
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
         });
 
         self.warnings_window(&ctx);

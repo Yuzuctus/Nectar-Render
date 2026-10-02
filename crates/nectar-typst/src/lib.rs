@@ -7,7 +7,7 @@
 mod images;
 mod world;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -453,7 +453,10 @@ pub fn lay_out(
         .collect();
     // De la dernière à la première : une image plus loin, déjà repoussée,
     // laisse son texte disponible pour les précédentes.
-    for figure in landscapes.iter().rev().take(6) {
+    // De la dernière à la première : une image plus loin, déjà repoussée,
+    // laisse son texte disponible pour les précédentes. Une recomposition
+    // par image repoussée (elles sont rarement nombreuses).
+    for figure in landscapes.iter().rev().take(10) {
         let Ok(current) = &compiled else { break };
         let moved: Vec<&BlockId> = tuning.deferred.iter().map(|(f, _)| f).collect();
         let Some(after) = defer_point(current, document, style, figure, &moved) else { continue };
@@ -471,22 +474,30 @@ pub fn lay_out(
     }
     // Pages au format propre (« cette page seulement ») : le format revient
     // devant le premier bloc qui commence après elles.
-    let mut owners: Vec<&BlockId> = ops
+    //
+    // Une page au format propre commence toujours à son bloc (le changement de
+    // format ouvre une page) : ce qu'elle contient ne dépend pas des retours
+    // placés plus haut. Tous les retours se calculent donc sur une même mise
+    // en page ; un second tour vérifie que rien n'a bougé.
+    let owners: Vec<&BlockId> = ops
         .iter()
         .filter(|(_, o)| matches!(o.page, Some(PageChange::Set(_))) && !o.page_onward && !o.hidden)
         .map(|(id, _)| id)
         .collect();
-    if let Ok(current) = &compiled {
-        let order = current.block_positions();
-        owners.sort_by_key(|id| order.iter().position(|p| &p.id == *id).unwrap_or(usize::MAX));
-    }
-    for owner in owners.into_iter().take(12) {
-        let Ok(current) = &compiled else { break };
-        let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
-        let Some(target) = return_point(current, document, &ops, owner, margin_bottom) else { continue };
-        if !tuning.returns.insert(target.clone()) {
-            continue;
+    let margin_bottom = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+    for _ in 0..3 {
+        if owners.is_empty() {
+            break;
         }
+        let Ok(current) = &compiled else { break };
+        let positions = current.block_positions();
+        let boxes = current.block_boxes(margin_bottom);
+        let wanted: HashSet<BlockId> =
+            owners.iter().filter_map(|owner| return_point(&positions, &boxes, document, &ops, owner)).collect();
+        if wanted == tuning.returns {
+            break;
+        }
+        let previous = std::mem::replace(&mut tuning.returns, wanted);
         let retry = nectar_core::generate_tuned(document, layout, style, &tuning);
         match engine.compile(&retry) {
             Ok(better) => {
@@ -494,7 +505,8 @@ pub fn lay_out(
                 generated = retry;
             }
             Err(_) => {
-                tuning.returns.remove(&target);
+                tuning.returns = previous;
+                break;
             }
         }
     }
@@ -506,14 +518,12 @@ pub fn lay_out(
 /// Le bloc de premier niveau devant lequel revenir au format courant, après
 /// la (ou les) page(s) du bloc `owner` au format propre.
 fn return_point(
-    compiled: &Compiled,
+    positions: &[BlockPosition],
+    boxes: &[BlockBox],
     document: &nectar_core::Document,
     ops: &HashMap<BlockId, nectar_core::BlockOps>,
     owner: &BlockId,
-    margin_bottom: f64,
 ) -> Option<BlockId> {
-    let positions = compiled.block_positions();
-    let boxes = compiled.block_boxes(margin_bottom);
     let start = positions.iter().position(|p| &p.id == owner)?;
     let last = boxes.iter().filter(|b| &b.id == owner).map(|b| b.page).max().unwrap_or(0).max(positions[start].page);
     let top_level = |id: &BlockId| document.blocks.iter().any(|b| &b.id == id);

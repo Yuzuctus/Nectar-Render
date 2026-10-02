@@ -109,9 +109,17 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
     let mut current: Option<Compiled> = None;
     let mut cache: VecDeque<PageImage> = VecDeque::new();
 
-    while let Ok(first) = requests.recv() {
+    // Demandes arrivées pendant le rendu des pages, à traiter au tour suivant.
+    let mut backlog: Vec<Request> = Vec::new();
+    loop {
         // Seules la dernière mise en page et la dernière demande d'images comptent.
-        let mut pending = vec![first];
+        let mut pending = std::mem::take(&mut backlog);
+        if pending.is_empty() {
+            match requests.recv() {
+                Ok(first) => pending.push(first),
+                Err(_) => break,
+            }
+        }
         while let Ok(more) = requests.try_recv() {
             pending.push(more);
         }
@@ -180,8 +188,16 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
         }
 
         if let (Some((indices, ppi)), Some(compiled)) = (pages, &current) {
-            let mut images = Vec::new();
             for index in indices {
+                // Une retouche ou un défilement arrivé entre-temps passe avant
+                // les pages qui restent (elles seraient périmées).
+                if let Ok(newer) = requests.try_recv() {
+                    let export = matches!(newer, Request::Export { .. });
+                    backlog.push(newer);
+                    if !export {
+                        break;
+                    }
+                }
                 let Some(hash) = compiled.page_hash(index) else { continue };
                 let cached = cache.iter().position(|c| c.hash == hash && c.ppi == ppi);
                 let image = match cached {
@@ -202,10 +218,8 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                         image
                     }
                 };
-                images.push(PageImage { hash, ppi, image });
-            }
-            if !images.is_empty() {
-                let _ = responses.send(Response::Images(images));
+                // Chaque page dès qu'elle est prête.
+                let _ = responses.send(Response::Images(vec![PageImage { hash, ppi, image }]));
                 ctx.request_repaint();
             }
         }

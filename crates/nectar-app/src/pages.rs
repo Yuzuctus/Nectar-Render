@@ -291,8 +291,8 @@ pub fn show(
             }
 
             // Repères des retouches dans la marge gauche.
-            if let Some(project) = &app.project {
-                let ops = project.layout.resolve(&project.document).ops;
+            {
+                let ops = &app.resolved;
                 for position in positions {
                     let Some(block_ops) = ops.get(&position.id) else { continue };
                     let summary = summary(block_ops);
