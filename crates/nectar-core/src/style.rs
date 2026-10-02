@@ -96,6 +96,11 @@ pub struct PaginationStyle {
     /// Les espacements se resserrent un peu si la dernière page n'a que
     /// quelques lignes.
     pub avoid_short_last_page: bool,
+    /// Un grand tableau trop haut même en paysage peut aller sur une page A3
+    /// paysage, s'il y tient en entier.
+    pub larger_paper: bool,
+    /// Une image horizontale seule sur sa page passe en paysage, en grand.
+    pub lonely_landscape: bool,
 }
 
 impl Default for PaginationStyle {
@@ -106,6 +111,8 @@ impl Default for PaginationStyle {
             auto_landscape: true,
             fit_images: true,
             avoid_short_last_page: true,
+            larger_paper: true,
+            lonely_landscape: true,
         }
     }
 }

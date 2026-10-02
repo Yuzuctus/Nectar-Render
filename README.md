@@ -38,7 +38,10 @@
 Puis Nectar relit les pages produites et corrige ce qui gâche le PDF, sans qu'on le lui demande :
 
 - **Tableaux trop larges** (5 colonnes ou plus, qui déborderaient ou passeraient beaucoup à la ligne) : sur une page paysage, avec leur titre et leur phrase d'annonce ; le texte reprend ensuite en portrait.
-- **Schémas larges et détaillés** (Mermaid, Excalidraw, image nommée « schéma », « architecture », « topologie »…) : page paysage. Une capture d'écran ou une image verticale reste toujours en portrait.
+- **Grands tableaux sur plusieurs pages** : Nectar essaie la page A4 paysage, puis la page A3 paysage, et garde la première où le tableau tient en entier (sinon il reste en portrait).
+- **Schémas larges et détaillés** (Mermaid, Excalidraw, image nommée « schéma », « architecture », « topologie »…) : page paysage. Une image verticale reste toujours en portrait.
+- **Image horizontale seule sur sa page** (avec son titre et sa légende) : la page passe en paysage, l'image grandit et le vide disparaît ; jamais si cela ajoute une page.
+- **Légendes** : un paragraphe « Capture : … », « Figure … » ou tout en italique, juste sous une image ou un tableau, ne le quitte jamais.
 - **Pas de trou en bas de page** : une image un peu trop haute pour la place restante est réduite juste assez (jamais sous 55 %) ; un bloc gardé d'un seul tenant est autorisé à se couper (le tableau répète son en-tête) ; un tableau qui déborde de 2 ou 3 lignes est un peu resserré ; une page paysage qui laisserait la page d'avant à moitié vide passe après le texte qui la suit, sans quitter la section.
 - **Dernière page de quelques lignes** : l'espace entre paragraphes se resserre un peu pour la supprimer.
 

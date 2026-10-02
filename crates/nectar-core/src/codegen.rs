@@ -71,6 +71,12 @@ pub struct Tuning {
     /// Tableaux un peu resserrés (texte et cellules) pour ne pas déborder de
     /// quelques lignes sur une page de plus.
     pub compact: HashSet<BlockId>,
+    /// Pages paysage sur un papier plus grand (`a3`) : un grand tableau qui
+    /// y tient sur une seule page.
+    pub paper: HashMap<BlockId, String>,
+    /// Hauteur mesurée (en points) des titres et légendes qui accompagnent
+    /// une image sur sa page paysage (sinon, elle est estimée).
+    pub reserve: HashMap<BlockId, f32>,
 }
 
 impl Tuning {
@@ -88,6 +94,9 @@ impl Tuning {
             let id = &block.id;
             if self.landscape.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Landscape });
+            }
+            if self.paper.contains_key(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::LargerPaper });
             }
             if self.deferred.iter().any(|(f, _)| f == id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Deferred });
@@ -133,6 +142,10 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         returns: &tuning.returns,
         tuning,
         open_landscape: false,
+        trails: HashMap::new(),
+        close_after: None,
+        page_fresh: false,
+        reserve: HashMap::new(),
         persistent: layout.page.clone(),
         current: layout.page.clone(),
         layout,
@@ -158,31 +171,69 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
     let deferred: HashSet<&BlockId> = tuning.deferred.iter().map(|(figure, _)| figure).collect();
     let emitted: Vec<&Block> = doc.blocks.iter().filter(|b| !deferred.contains(&b.id)).collect();
     // Un schéma ou un tableau mis en paysage emporte sur sa page la phrase
-    // qui l'annonce et les titres qui le précèdent directement.
-    let mut opens: HashSet<usize> = HashSet::new();
+    // qui l'annonce, les titres qui le précèdent directement et ses légendes.
+    let mut opens: HashMap<usize, BlockId> = HashMap::new();
+    let mut trails: HashMap<BlockId, BlockId> = HashMap::new();
+    let mut reserve: HashMap<BlockId, f32> = HashMap::new();
     for (index, block) in emitted.iter().enumerate() {
         if !g.lands(block) {
             continue;
         }
         let mut start = index;
         let plain = |b: &Block| g.ops.get(&b.id).is_none_or(|o| o.is_empty()) && !g.returns.contains(&b.id);
-        if start > 0 && announces(&emitted[start - 1].node, Some(block)) && plain(emitted[start - 1]) {
+        // Un saut de page avant un titre ne gêne pas : la page paysage en ouvre une.
+        let lead = |b: &Block| leads_freely(g.ops.get(&b.id)) && !g.returns.contains(&b.id);
+        if start > 0 && announces(&emitted[start - 1].node, Some(block)) && lead(emitted[start - 1]) {
             start -= 1;
         }
-        while start > 0 && matches!(emitted[start - 1].node, Node::Heading { .. }) && plain(emitted[start - 1]) {
+        while start > 0 && matches!(emitted[start - 1].node, Node::Heading { .. }) && lead(emitted[start - 1]) {
             start -= 1;
+        }
+        let mut end = index;
+        while let Some(next) = emitted.get(end + 1)
+            && is_caption(&next.node)
+            && plain(next)
+            && !g.lands(next)
+        {
+            end += 1;
         }
         if start < index {
-            opens.insert(start);
+            opens.insert(start, block.id.clone());
+        }
+        if end > index {
+            trails.insert(block.id.clone(), emitted[end].id.clone());
+        }
+        // Place à laisser sous (ou sur) l'image pour ce qui l'accompagne.
+        let width = crate::auto::text_width_pt(&crate::auto::flipped(&g.current), style);
+        let room: f32 = emitted[start..index]
+            .iter()
+            .chain(&emitted[index + 1..=end])
+            .map(|b| estimated_height(&b.node, width, style))
+            .sum();
+        let room = tuning.reserve.get(&block.id).copied().unwrap_or(room);
+        if room > 0.0 && (start < index || end > index) {
+            reserve.insert(block.id.clone(), room);
         }
     }
+    g.trails = trails;
+    g.reserve = reserve;
     for (index, block) in emitted.iter().enumerate() {
         let next = emitted.get(index + 1).copied();
-        if opens.contains(&index) && !g.open_landscape {
-            g.out.push_str("#page(flipped: true)[\n");
+        if let Some(owner) = opens.get(&index)
+            && !g.open_landscape
+        {
+            let open = g.landscape_open(owner);
+            g.out.push_str(&open);
             g.open_landscape = true;
+            g.page_fresh = true;
         }
         g.block(block, next);
+        g.page_fresh = false;
+        // Fin d'une page paysage qui emportait les légendes de son contenu.
+        if g.close_after.as_ref() == Some(&block.id) {
+            g.close_after = None;
+            g.out.push_str("]\n\n");
+        }
         // Les pages paysage repoussées ici, dans l'ordre du document.
         for figure in doc.blocks.iter().filter(|b| tuning.deferred.iter().any(|(f, a)| *f == b.id && *a == block.id)) {
             g.block(figure, None);
@@ -242,6 +293,16 @@ struct Gen<'a> {
     tuning: &'a Tuning,
     /// Une page paysage est ouverte par la phrase qui annonce son contenu.
     open_landscape: bool,
+    /// Bloc paysage → dernière légende qui l'accompagne sur sa page.
+    trails: HashMap<BlockId, BlockId>,
+    /// La page paysage en cours se ferme après ce bloc (sa dernière légende).
+    close_after: Option<BlockId>,
+    /// Une page paysage vient de s'ouvrir : un saut de page y créerait une
+    /// page blanche.
+    page_fresh: bool,
+    /// Hauteur (en points) à laisser, sur une page paysage, aux titres,
+    /// phrases d'annonce et légendes qui accompagnent son image.
+    reserve: HashMap<BlockId, f32>,
     /// Le format en vigueur hors des pages au format propre.
     persistent: PageSpec,
     /// Le format de la page en cours (pour la largeur des tableaux).
@@ -314,7 +375,7 @@ impl Gen<'_> {
         }
         // Schéma ou tableau sur sa propre page paysage : le marqueur va dans la page.
         if self.lands(block) {
-            let turned = crate::auto::flipped(&self.current);
+            let turned = self.landscape_spec(&block.id);
             let page = std::mem::replace(&mut self.current, turned);
             let image = Some(crate::layout::ImageOps {
                 placement: Placement::Landscape,
@@ -329,10 +390,16 @@ impl Gen<'_> {
             self.current = page;
             if let Some(body) = body {
                 if !std::mem::take(&mut self.open_landscape) {
-                    self.out.push_str("#page(flipped: true)[\n");
+                    let open = self.landscape_open(&block.id);
+                    self.out.push_str(&open);
                 }
                 self.block_lines.push((block.id.clone(), self.line()));
-                let _ = writeln!(self.out, "#nb({})\n{body}\n]", string(block.id.as_str()));
+                let _ = writeln!(self.out, "#nb({})\n{body}", string(block.id.as_str()));
+                // Les légendes qui suivent restent sur la page paysage.
+                match self.trails.get(&block.id) {
+                    Some(last) => self.close_after = Some(last.clone()),
+                    None => self.out.push_str("]\n"),
+                }
                 self.after(&ops);
                 self.out.push('\n');
                 return;
@@ -348,8 +415,12 @@ impl Gen<'_> {
             starts_page(&n.id)
                 || matches!(&n.node, Node::List(l) if l.items.first().and_then(|i| i.id.as_ref()).is_some_and(starts_page))
         });
+        // Une image ou un tableau ne se sépare jamais de la légende qui le suit.
+        let captioned = matches!(block.node, Node::Figure(_) | Node::Diagram { .. } | Node::Table(_))
+            && next.is_some_and(|n| is_caption(&n.node));
         let sticky = ops.keep_with_next
-            || (p.keep_intro_with_next && !ops.break_after && !next_breaks && announces(&block.node, next));
+            || (p.keep_intro_with_next && !ops.break_after && !next_breaks && announces(&block.node, next))
+            || (captioned && !ops.break_after && !next_breaks);
         let unbreakable = ops
             .keep_together
             .unwrap_or(p.keep_small_blocks && is_small(&block.node) && !self.relaxed.contains(&block.id));
@@ -386,6 +457,23 @@ impl Gen<'_> {
         self.out.push('\n');
     }
 
+    /// Le format de la page paysage d'un bloc : la page en cours tournée, ou
+    /// un papier plus grand tourné.
+    fn landscape_spec(&self, id: &BlockId) -> PageSpec {
+        match self.tuning.paper.get(id) {
+            Some(paper) => crate::auto::flipped(&PageSpec { paper: paper.clone(), ..self.current.clone() }),
+            None => crate::auto::flipped(&self.current),
+        }
+    }
+
+    /// Ouverture de la page paysage d'un bloc.
+    fn landscape_open(&self, id: &BlockId) -> String {
+        match self.tuning.paper.get(id) {
+            Some(paper) => format!("#page(paper: {}, flipped: true)[\n", string(paper)),
+            None => "#page(flipped: true)[\n".into(),
+        }
+    }
+
     /// Le bloc va-t-il sur sa propre page paysage ?
     fn lands(&self, block: &Block) -> bool {
         let ops = self.ops.get(&block.id);
@@ -414,7 +502,7 @@ impl Gen<'_> {
         if ops.hidden {
             return;
         }
-        if ops.break_before {
+        if ops.break_before && !self.page_fresh {
             self.out.push_str("#pagebreak(weak: true)\n");
         }
         if let Some(mm) = ops.space_before_mm {
@@ -667,6 +755,9 @@ impl Gen<'_> {
         if let Some(height) = self.tuning.fit.get(id) {
             args.push(format!("fit-height: {}pt", num(*height)));
         }
+        if let Some(room) = self.reserve.get(id).filter(|_| ops.is_some_and(|o| o.placement == Placement::Landscape)) {
+            args.push(format!("reserve: {}pt", num(*room)));
+        }
         if let Some(align) = ops.and_then(|o| o.align) {
             let align = match align {
                 HAlign::Left => "left",
@@ -875,6 +966,64 @@ fn wrap_block(body: &str, sticky: bool, unbreakable: bool, style: Option<&crate:
         inner = format!("#pad(left: {}mm)[\n{inner}\n]", num(mm));
     }
     format!("#block({})[\n{inner}\n]\n", args.join(", "))
+}
+
+/// Un titre ou une phrase d'annonce peut suivre son schéma sur une page
+/// paysage : sans retouche, ou avec un simple saut de page avant lui.
+pub fn leads_freely(ops: Option<&BlockOps>) -> bool {
+    ops.is_none_or(|o| BlockOps { break_before: false, ..o.clone() }.is_empty())
+}
+
+/// Mots qui ouvrent une légende écrite sous une image ou un tableau.
+const CAPTION_WORDS: &[&str] = &[
+    "capture",
+    "figure",
+    "fig.",
+    "fig ",
+    "source",
+    "photo",
+    "image",
+    "légende",
+    "legende",
+    "schéma",
+    "schema",
+    "illustration",
+    "tableau",
+    "screenshot",
+];
+
+/// Un court paragraphe de légende : « Capture : … », « Figure 3 – … », ou
+/// tout en italique.
+pub fn is_caption(node: &Node) -> bool {
+    let Node::Paragraph(content) = node else { return false };
+    let text = plain_text(content);
+    let text = text.trim();
+    if text.is_empty() || text.chars().count() > 320 {
+        return false;
+    }
+    let lower = text.to_lowercase();
+    let italic = content.iter().all(|i| match i {
+        Inline::Emph(_) => true,
+        Inline::Text(t) => t.trim().is_empty(),
+        _ => false,
+    });
+    italic || CAPTION_WORDS.iter().any(|w| lower.starts_with(w))
+}
+
+/// Hauteur approximative (en points) d'un titre ou d'un paragraphe composé
+/// dans une largeur donnée.
+fn estimated_height(node: &Node, width_pt: f32, style: &Style) -> f32 {
+    let size = style.text.size_pt;
+    match node {
+        Node::Heading { level: 1, .. } => size * 5.5,
+        Node::Heading { .. } => size * 3.4,
+        Node::Paragraph(content) => {
+            let per_line = (width_pt / (size * 0.5)).max(20.0);
+            let lines = (plain_text(content).chars().count() as f32 / per_line).ceil().max(1.0);
+            lines * size * style.text.line_height + size * (style.text.paragraph_spacing_em + 0.4)
+        }
+        _ => size * 3.0,
+    }
 }
 
 /// Le bloc `block` mène à `next` : c'est un titre, ou une phrase qui

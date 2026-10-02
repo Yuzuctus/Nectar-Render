@@ -32,6 +32,8 @@ pub enum ChoiceKind {
     Tightened,
     /// Tableau un peu resserré pour ne pas déborder de quelques lignes.
     Compacted,
+    /// Page paysage sur un papier plus grand (A3), pour tenir sur une page.
+    LargerPaper,
 }
 
 impl Choice {
@@ -47,6 +49,7 @@ impl Choice {
             ChoiceKind::Tightened => {
                 "Espacements légèrement resserrés pour éviter une dernière page presque vide".into()
             }
+            ChoiceKind::LargerPaper => "Sur une page A3 paysage, pour tenir en entier sur une seule page".into(),
             ChoiceKind::Compacted => {
                 "Tableau légèrement resserré pour ne pas déborder de quelques lignes sur une page de plus".into()
             }
@@ -156,36 +159,128 @@ fn wrapped_lines(text: &str, width: f32) -> f32 {
     lines
 }
 
+/// Où poser un tableau.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TablePage {
+    /// À sa place, dans le format en cours.
+    Inline,
+    /// Sur une page paysage du même papier.
+    Landscape,
+    /// Sur une page paysage d'un papier plus grand (`a3`).
+    Larger(String),
+}
+
+/// Hauteur de texte d'une page (moins la place d'un titre et d'une phrase).
+fn body_height_pt(page: &PageSpec, style: &Style) -> f32 {
+    let (_, height) = page.size_mm();
+    let margins = match page.margin_mm {
+        Some(m) => 2.0 * m,
+        None => style.page.margin_top_mm + style.page.margin_bottom_mm,
+    };
+    (height - margins).max(40.0) * PT_PER_MM - 3.5 * style.text.size_pt
+}
+
+/// Hauteur estimée d'un tableau composé ainsi.
+fn table_height_pt(table: &Table, fit: &TableFit, style: &Style) -> f32 {
+    let size = style.table.size_pt.unwrap_or(style.text.size_pt);
+    let rows = (table.rows.len() + 1) as f32;
+    fit.lines * size * 1.3 + rows * 2.0 * style.table.cell_padding_y_pt
+}
+
+/// Le papier d'un cran plus grand (A4 → A3…), s'il existe.
+pub fn larger_paper(paper: &str) -> Option<&'static str> {
+    match paper {
+        "a5" => Some("a4"),
+        "a4" => Some("a3"),
+        "a3" => Some("a2"),
+        _ => None,
+    }
+}
+
 /// Un tableau large se lit mieux sur une page paysage : il déborderait en
-/// portrait, ou ses cellules y passeraient beaucoup à la ligne.
-pub fn table_wants_landscape(table: &Table, page: &PageSpec, style: &Style) -> bool {
+/// portrait, ses cellules y passeraient beaucoup à la ligne, ou il y
+/// prendrait plusieurs pages alors qu'il tient sur une seule page paysage
+/// (au besoin d'un papier plus grand, si `larger` le permet).
+pub fn table_page(table: &Table, page: &PageSpec, style: &Style, larger: bool) -> TablePage {
     let columns = table.align.len().max(table.header.len());
-    if columns < 5 || table.rows.len() < 2 {
-        return false;
+    if columns < 3 || table.rows.len() < 2 {
+        return TablePage::Inline;
     }
     let portrait = text_width_pt(page, style);
-    let turned = text_width_pt(&flipped(page), style);
+    let turned_page = flipped(page);
+    let turned = text_width_pt(&turned_page, style);
     if turned < portrait * 1.2 {
-        return false;
+        return TablePage::Inline;
     }
     let here = fit_table(table, portrait, style);
     if here.widths.is_none() {
-        return false;
+        return TablePage::Inline;
     }
     let there = fit_table(table, turned, style);
-    if there.overflow {
-        return false;
+    let here_height = table_height_pt(table, &here, style);
+    let there_height = table_height_pt(table, &there, style);
+    let several_pages = here_height > body_height_pt(page, style);
+    let wraps_much = here.lines >= there.lines * 1.3;
+    // Plusieurs pages en portrait, une seule en paysage (à 15 % près : un
+    // tableau qui déborde de peu est ensuite légèrement resserré).
+    if !there.overflow && several_pages && wraps_much && there_height <= body_height_pt(&turned_page, style) * 1.15 {
+        return TablePage::Landscape;
     }
-    here.overflow || (here.lines >= there.lines * 1.4 && here.lines - there.lines >= 6.0)
+    // Trop grand même en paysage : un papier plus grand, s'il y tient en entier.
+    if larger
+        && several_pages
+        && page.width_mm.is_none()
+        && let Some(paper) = larger_paper(&page.paper)
+    {
+        let big = flipped(&PageSpec { paper: paper.into(), landscape: false, ..page.clone() });
+        let fit = fit_table(table, text_width_pt(&big, style), style);
+        if !fit.overflow
+            && here.lines >= fit.lines * 1.3
+            && table_height_pt(table, &fit, style) <= body_height_pt(&big, style)
+        {
+            return TablePage::Larger(paper.into());
+        }
+    }
+    if columns >= 5
+        && !there.overflow
+        && (here.overflow || (here.lines >= there.lines * 1.4 && here.lines - there.lines >= 6.0))
+    {
+        return TablePage::Landscape;
+    }
+    TablePage::Inline
 }
 
-/// Les tableaux à mettre en paysage, décidés avant toute mise en page.
-pub fn wide_tables(doc: &Document, ops: &HashMap<BlockId, BlockOps>, page: &PageSpec, style: &Style) -> Vec<BlockId> {
+/// Le tableau passe-t-il à la ligne dans cette largeur de page ?
+pub fn table_wraps(table: &Table, page: &PageSpec, style: &Style) -> bool {
+    table.align.len().max(table.header.len()) >= 3
+        && fit_table(table, text_width_pt(page, style), style).widths.is_some()
+}
+
+/// Compatibilité : le tableau irait-il sur une page paysage ?
+pub fn table_wants_landscape(table: &Table, page: &PageSpec, style: &Style) -> bool {
+    table_page(table, page, style, true) != TablePage::Inline
+}
+
+/// Les tableaux à mettre en paysage, décidés avant toute mise en page, et
+/// le papier plus grand de ceux qui en ont besoin.
+pub fn wide_tables(
+    doc: &Document,
+    ops: &HashMap<BlockId, BlockOps>,
+    page: &PageSpec,
+    style: &Style,
+) -> Vec<(BlockId, Option<String>)> {
     doc.blocks
         .iter()
         .filter(|b| allowed(ops.get(&b.id)) && ops.get(&b.id).is_none_or(|o| o.table.is_none()))
-        .filter(|b| matches!(&b.node, Node::Table(t) if table_wants_landscape(t, page, style)))
-        .map(|b| b.id.clone())
+        .filter_map(|b| match &b.node {
+            // Le papier plus grand se décide sur pièces, une fois les pages composées.
+            Node::Table(t) => match table_page(t, page, style, false) {
+                TablePage::Inline => None,
+                TablePage::Landscape => Some((b.id.clone(), None)),
+                TablePage::Larger(paper) => Some((b.id.clone(), Some(paper))),
+            },
+            _ => None,
+        })
         .collect()
 }
 

@@ -215,6 +215,13 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
         );
         ui.checkbox(&mut s.pagination.auto_landscape, "Tableaux et schémas trop larges : page paysage automatique")
             .on_hover_text("Le texte reprend ensuite en portrait. Une image verticale reste toujours en portrait.");
+        ui.checkbox(
+            &mut s.pagination.lonely_landscape,
+            "Image horizontale seule sur sa page : page paysage, en plus grand",
+        )
+        .on_hover_text("Avec son titre et sa légende ; jamais si cela ajoute une page.");
+        ui.checkbox(&mut s.pagination.larger_paper, "Très grand tableau : page A3 paysage s'il y tient en entier")
+            .on_hover_text("Seulement s'il ne tient pas sur une page A4 paysage.");
         ui.checkbox(&mut s.pagination.fit_images, "Réduire un peu une image plutôt que laisser un trou en bas de page")
             .on_hover_text("Jamais en dessous de 55 % de sa taille.");
         ui.checkbox(

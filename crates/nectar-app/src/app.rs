@@ -1120,6 +1120,12 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
                 "Tableaux et schémas trop larges :",
                 "sur une page paysage, avec leur titre ; le texte reprend en portrait.",
             ),
+            ("Très grand tableau :", "sur une page A3 paysage s'il y tient en entier, et pas sur une A4 paysage."),
+            ("Image horizontale seule sur sa page :", "la page passe en paysage (image plus grande, moins de vide)."),
+            (
+                "Légende sous une image :",
+                "« Capture : … », « Figure … » ou en italique : elle ne quitte jamais son image.",
+            ),
             ("Image un peu trop haute :", "légèrement réduite plutôt que de laisser un trou en bas de page."),
             ("Tableau qui déborde de 2 ou 3 lignes :", "un peu resserré pour tenir sur sa page."),
             ("Dernière page de quelques lignes :", "les paragraphes se resserrent un peu pour la supprimer."),

@@ -30,7 +30,10 @@
   height-px: none,
   max-height: 100%,
   fit-height: none,
+  reserve: 0pt,
   portrait-cap: false,
+  // Pleine page ou page paysage : l'image est à la taille de la page, voulu.
+  quiet: false,
   scale: 0.75,
   inline: false,
   page: none,
@@ -74,11 +77,11 @@
     if fit-height != none and w * ratio > fit-height { w = fit-height / ratio }
     let wanted = w
     if region.height < 10000pt {
-      let max-h = region.height * max-height
+      let max-h = calc.max(region.height * max-height - reserve, region.height * 0.3)
       if w * ratio > max-h { w = max-h / ratio }
     }
     // Réduite pour tenir en hauteur : l'assistant le signalera.
-    if w < wanted * 0.9 {
+    if w < wanted * 0.9 and not quiet {
       [#metadata((kind: "shrunk", value: w / wanted)) <nectar-issue>]
     }
     img(width: w)
@@ -99,6 +102,8 @@
   page: none,
   fit-height: none,
   photo: false,
+  // Place laissée sur une page paysage aux titres et légendes qui l'accompagnent.
+  reserve: 0pt,
 ) = {
   let sized(max-height) = nectar-image(
     src,
@@ -115,13 +120,30 @@
   let body(max-height) = if caption == none { sized(max-height) } else { figure(sized(max-height), caption: caption) }
   if placement == "full-page" {
     pagebreak(weak: true)
-    let big = nectar-image(src, alt: alt, page: page, width-ratio: 1.0, max-height: if caption == none { 100% } else { 90% })
+    let big = nectar-image(
+      src,
+      alt: alt,
+      page: page,
+      width-ratio: 1.0,
+      max-height: if caption == none { 100% } else { 90% },
+      quiet: true,
+    )
     align(center + horizon, if caption == none { big } else { figure(big, caption: caption) })
     pagebreak(weak: true)
   } else if placement == "landscape" {
     // La page paysage elle-même est ouverte par la source générée.
-    let big = nectar-image(src, alt: alt, page: page, width-ratio: 1.0, max-height: if caption == none { 100% } else { 92% })
-    align(center + horizon, if caption == none { big } else { figure(big, caption: caption) })
+    let big = nectar-image(
+      src,
+      alt: alt,
+      page: page,
+      width-ratio: 1.0,
+      max-height: if caption == none { 100% } else { 92% },
+      reserve: reserve,
+      quiet: true,
+    )
+    let body = if caption == none { big } else { figure(big, caption: caption) }
+    // Seule sur sa page : centrée ; avec un titre ou une légende : à sa place.
+    if reserve == 0pt { align(center + horizon, body) } else { align(center, body) }
   } else if placement == "top" or placement == "bottom" {
     place(
       (if placement == "top" { top } else { bottom }) + align-to,

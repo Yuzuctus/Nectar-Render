@@ -288,3 +288,96 @@ fn a_last_page_of_a_few_lines_is_absorbed() {
     assert_eq!(laid.compiled.unwrap().page_count(), 1, "{count} paragraphes : une seule page");
     assert!(laid.choices.iter().any(|c| c.kind == ChoiceKind::Tightened));
 }
+
+/// Une photo (JPEG) unie de `w` × `h` pixels.
+fn photo(dir: &std::path::Path, name: &str, w: u32, h: u32) {
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb([90, 120, 160]));
+    img.save(dir.join(name)).unwrap();
+}
+
+#[test]
+fn a_caption_never_leaves_its_image() {
+    let dir = tempfile::tempdir().unwrap();
+    photo(dir.path(), "vue.jpg", 1600, 1000);
+    let options = ParseOptions { note_dir: Some(dir.path()), ..Default::default() };
+    let engine = Engine::new(FontSources::Bundled);
+    let paragraph = "Un paragraphe de texte ordinaire, assez long pour occuper deux lignes de la page en cours.\n\n";
+    let mut style = Style::default();
+    style.pagination.fit_images = false;
+    for n in 10..30 {
+        let text =
+            format!("# Essai\n\n{}![[vue.jpg]]\n\n*Capture : la vue d'ensemble.*\n\nSuite.\n", paragraph.repeat(n));
+        let doc = parse(&text, &options);
+        let compiled = lay_out(&engine, &doc, &Layout::default(), &style).compiled.unwrap();
+        let positions = compiled.block_positions();
+        let page = |prefix: &str| positions.iter().find(|p| p.id.as_str().starts_with(prefix)).unwrap().page;
+        let caption = doc.blocks.iter().find(|b| b.excerpt.starts_with("Capture")).unwrap();
+        let caption_page = positions.iter().find(|p| p.id == caption.id).unwrap().page;
+        assert_eq!(page("fig-"), caption_page, "{n} paragraphes : la légende suit son image");
+    }
+}
+
+#[test]
+fn a_lonely_wide_photo_gets_a_landscape_page_a_tall_one_does_not() {
+    let dir = tempfile::tempdir().unwrap();
+    photo(dir.path(), "large.jpg", 3200, 1800);
+    photo(dir.path(), "haute.jpg", 1800, 3200);
+    let options = ParseOptions { note_dir: Some(dir.path()), ..Default::default() };
+    let engine = Engine::new(FontSources::Bundled);
+    for (file, landscape) in [("large.jpg", true), ("haute.jpg", false)] {
+        let text = format!(
+            "# Rapport\n\nIntroduction.\n\n# Annexe\n\n## E.1 Test de débit\n\n![[{file}]]\n\n*Capture : résultat autour de 9,63 Mbit/s.*\n\n# Fin\n\nConclusion.\n"
+        );
+        let mut layout = Layout::default();
+        let doc = parse(&text, &options);
+        // Chaque partie commence une page : l'image est seule sur la sienne.
+        for anchor in doc.anchors().into_iter().filter(|a| a.excerpt == "Annexe" || a.excerpt == "Fin") {
+            layout.ops_mut(anchor).break_before = true;
+        }
+        let laid = lay_out(&engine, &doc, &layout, &Style::default());
+        let compiled = laid.compiled.unwrap();
+        let positions = compiled.block_positions();
+        let figure = positions.iter().find(|p| p.id.as_str().starts_with("fig-")).unwrap();
+        let (w, h) = compiled.page_size(figure.page).unwrap();
+        assert_eq!(w > h, landscape, "{file}");
+        // Son titre et sa légende sont sur la même page ; rien n'est ajouté.
+        let caption = doc.blocks.iter().find(|b| b.excerpt.starts_with("Capture")).unwrap();
+        assert_eq!(positions.iter().find(|p| p.id == caption.id).unwrap().page, figure.page);
+        assert_eq!(compiled.page_count(), 3, "{file}");
+    }
+}
+
+#[test]
+fn a_long_table_goes_a3_landscape_only_when_a4_landscape_is_not_enough() {
+    let row = "| Exigence du sujet assez longue | Mise en œuvre retenue, décrite en une phrase assez longue pour passer à la ligne | Preuve et validation, avec les sections du rapport concernées | Limite éventuelle, elle aussi décrite en une phrase complète |\n";
+    let engine = Engine::new(FontSources::Bundled);
+    let doc_for = |rows: usize| {
+        let text = format!(
+            "# Annexe\n\n## D.1 Tableau de couverture\n\n| Exigence | Mise en œuvre | Preuve | Limite |\n|---|---|---|---|\n{}\nSuite.\n",
+            row.repeat(rows)
+        );
+        parse(&text, &ParseOptions::default())
+    };
+    let margin = f64::from(Style::default().page.margin_bottom_mm) * 72.0 / 25.4;
+    let mut seen = std::collections::HashSet::new();
+    for rows in [8, 14, 22] {
+        let doc = doc_for(rows);
+        let laid = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+        let table = doc.blocks.iter().find(|b| b.id.as_str().starts_with("table-")).unwrap();
+        let larger = laid.choices.iter().any(|c| c.block == table.id && c.kind == ChoiceKind::LargerPaper);
+        let landscape = laid.choices.iter().any(|c| c.block == table.id && c.kind == ChoiceKind::Landscape);
+        let compiled = laid.compiled.unwrap();
+        let parts = compiled.block_boxes(margin).iter().filter(|b| b.id == table.id).count();
+        if landscape {
+            assert_eq!(parts, 1, "{rows} lignes : en paysage, le tableau tient sur une page");
+            let page = compiled.block_positions().into_iter().find(|p| p.id == table.id).unwrap().page;
+            let (w, h) = compiled.page_size(page).unwrap();
+            assert!(w > h);
+            if larger {
+                assert!(w > 1100.0, "A3 paysage : {w} pt");
+            }
+        }
+        seen.insert((landscape, larger));
+    }
+    assert!(seen.contains(&(true, true)), "un tableau a eu besoin de l'A3 : {seen:?}");
+}
