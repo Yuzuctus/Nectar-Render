@@ -110,8 +110,11 @@ impl Tuning {
             if self.relaxed.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Split });
             }
-            if self.compact.contains(id) || self.squeeze.contains(id) {
+            if self.compact.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Compacted });
+            }
+            if self.squeeze.contains(id) || self.fluid.contains(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Narrowed });
             }
             if let Some(percent) = self.fit_percent.get(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Fitted(*percent) });
@@ -151,6 +154,7 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         trails: HashMap::new(),
         close_after: None,
         page_fresh: false,
+        returned: None,
         reserve: HashMap::new(),
         persistent: layout.page.clone(),
         current: layout.page.clone(),
@@ -191,7 +195,7 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         // Un saut de page avant un titre ne gêne pas : la page paysage en ouvre une.
         // Mais un saut demandé sur le bloc lui-même le sépare de ce qui précède.
         let separated = g.ops.get(&block.id).is_some_and(|o| o.break_before);
-        let lead = |b: &Block| !separated && leads_freely(g.ops.get(&b.id)) && !g.returns.contains(&b.id);
+        let lead = |b: &Block| !separated && leads_freely(g.ops.get(&b.id));
         if start > 0 && announces(&emitted[start - 1].node, Some(block)) && lead(emitted[start - 1]) {
             start -= 1;
         }
@@ -234,6 +238,12 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         if let Some(owner) = opens.get(&index)
             && !g.open_landscape
         {
+            // Le format revient avant la page paysage (pas dedans).
+            if g.returns.contains(&block.id) && g.ops.get(&block.id).is_none_or(|o| o.page.is_none()) {
+                let _ = writeln!(g.out, "#set page({})", page_args(&g.persistent, style));
+                g.current = g.persistent.clone();
+                g.returned = Some(block.id.clone());
+            }
             let open = g.landscape_open(owner);
             g.out.push_str(&open);
             g.open_landscape = true;
@@ -312,6 +322,8 @@ struct Gen<'a> {
     /// Une page paysage vient de s'ouvrir : un saut de page y créerait une
     /// page blanche.
     page_fresh: bool,
+    /// Le format est déjà revenu devant ce bloc (avant sa page paysage).
+    returned: Option<BlockId>,
     /// Hauteur (en points) à laisser, sur une page paysage, aux titres,
     /// phrases d'annonce et légendes qui accompagnent son image.
     reserve: HashMap<BlockId, f32>,
@@ -366,7 +378,7 @@ impl Gen<'_> {
             self.heading_index - 1
         });
         // Fin d'une page au format propre : on revient au format courant.
-        if self.returns.contains(&block.id) && ops.page.is_none() {
+        if self.returns.contains(&block.id) && ops.page.is_none() && self.returned.take().as_ref() != Some(&block.id) {
             let _ = writeln!(self.out, "#set page({})", page_args(&self.persistent, self.style));
             self.current = self.persistent.clone();
         }

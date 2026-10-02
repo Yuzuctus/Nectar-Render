@@ -34,6 +34,16 @@ pub enum ChoiceKind {
     Compacted,
     /// Page paysage sur un papier plus grand (A3), pour tenir sur une page.
     LargerPaper,
+    /// Tableau resserré (texte plus petit, colonnes réparties) pour ne pas
+    /// dépasser la marge.
+    Narrowed,
+}
+
+impl ChoiceKind {
+    /// La décision vaut pour tout le document (pas pour un bloc).
+    pub fn global(self) -> bool {
+        matches!(self, ChoiceKind::Tightened)
+    }
 }
 
 impl Choice {
@@ -50,6 +60,7 @@ impl Choice {
                 "Espacements légèrement resserrés pour éviter une dernière page presque vide".into()
             }
             ChoiceKind::LargerPaper => "Sur une page A3 paysage, pour tenir en entier sur une seule page".into(),
+            ChoiceKind::Narrowed => "Tableau resserré (texte un peu plus petit) pour ne pas dépasser la marge".into(),
             ChoiceKind::Compacted => {
                 "Tableau légèrement resserré pour ne pas déborder de quelques lignes sur une page de plus".into()
             }

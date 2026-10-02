@@ -179,7 +179,13 @@ impl Server {
         let automatic: Vec<Value> = laid
             .choices
             .iter()
-            .map(|c| json!({ "block": c.block.as_str(), "decision": c.describe(), "refuse_with": "as-is" }))
+            .map(|c| {
+                if c.kind.global() {
+                    json!({ "decision": c.describe(), "refuse_with": "set_style pagination.avoid_short_last_page = false" })
+                } else {
+                    json!({ "block": c.block.as_str(), "decision": c.describe(), "refuse_with": "set_block tel-quel" })
+                }
+            })
             .collect();
         let list: Vec<Value> = issues
             .iter()

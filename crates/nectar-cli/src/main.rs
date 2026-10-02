@@ -221,6 +221,10 @@ fn check(note: &Path) -> Result<()> {
         println!("Décidé automatiquement (« nectar set … tel-quel » pour refuser) :");
         let anchors = project.document.anchors();
         for choice in &laid.choices {
+            if choice.kind.global() {
+                println!("  ✓ {} (Style → Placement automatique pour refuser)", choice.describe());
+                continue;
+            }
             let excerpt = anchors.iter().find(|a| a.id == &choice.block).map(|a| a.excerpt).unwrap_or("");
             println!(
                 "  ✓ {} — {} « {} »",

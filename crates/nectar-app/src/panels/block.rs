@@ -94,7 +94,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let choices: Vec<nectar_core::auto::Choice> = app
         .rendered
         .as_ref()
-        .map(|r| r.choices.iter().filter(|c| c.block == id).cloned().collect())
+        .map(|r| r.choices.iter().filter(|c| c.block == id && !c.kind.global()).cloned().collect())
         .unwrap_or_default();
     if !choices.is_empty() || ops.manual {
         egui::Frame::new().fill(t.surface).stroke(egui::Stroke::new(1.0, t.rule)).inner_margin(8).show(ui, |ui| {

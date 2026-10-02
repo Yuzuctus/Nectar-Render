@@ -7,10 +7,60 @@ use nectar_core::layout::Placement;
 use crate::app::NectarApp;
 use crate::theme::{self, kicker};
 
+/// Ce que le placement automatique a décidé seul, bloc par bloc.
+fn automatic(app: &mut NectarApp, ui: &mut egui::Ui, choices: &[nectar_core::auto::Choice]) {
+    let t = theme::tokens(ui.ctx());
+    egui::CollapsingHeader::new(
+        RichText::new(format!("Fait automatiquement ({})", choices.len())).font(FontId::new(14.0, theme::strong())),
+    )
+    .id_salt("fait-automatiquement")
+    .default_open(false)
+    .show(ui, |ui| {
+        ui.label(
+            RichText::new(
+                "Nectar a pris ces décisions seul. Pour en refuser une : « Voir », puis « Laisser ce bloc tel quel » ; pour toutes : Style → Placement automatique.",
+            )
+            .small()
+            .color(t.faint),
+        );
+        ui.add_space(4.0);
+        let anchors: Vec<(nectar_core::BlockId, String)> = app
+            .project
+            .as_ref()
+            .map(|p| p.document.anchors().iter().map(|a| (a.id.clone(), a.excerpt.to_string())).collect())
+            .unwrap_or_default();
+        let mut select = None;
+        for choice in choices {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("✓").color(t.identity));
+                if choice.kind.global() {
+                    ui.label(choice.describe());
+                    return;
+                }
+                let excerpt = anchors.iter().find(|(id, _)| id == &choice.block).map(|(_, e)| e.as_str()).unwrap_or("");
+                let short: String = excerpt.chars().take(40).collect();
+                ui.label(format!("{} — « {short}{} »", choice.describe(), if excerpt.chars().count() > 40 { "…" } else { "" }));
+                if ui.small_button("Voir").clicked() {
+                    select = Some(choice.block.clone());
+                }
+            });
+        }
+        if let Some(block) = select {
+            app.select(Some(block), true);
+        }
+    });
+    theme::rule(ui, 1.0, false);
+}
+
 pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let t = theme::tokens(ui.ctx());
     let ctx = ui.ctx().clone();
     let issues: Vec<Issue> = app.rendered.as_ref().map(|r| r.issues.clone()).unwrap_or_default();
+    let choices: Vec<nectar_core::auto::Choice> = app.rendered.as_ref().map(|r| r.choices.clone()).unwrap_or_default();
+    if !choices.is_empty() {
+        automatic(app, ui, &choices);
+        ui.add_space(10.0);
+    }
     kicker(ui, "Assistant de mise en page");
     ui.add_space(4.0);
     if issues.is_empty() {
