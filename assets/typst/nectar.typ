@@ -77,7 +77,8 @@
     if fit-height != none and w * ratio > fit-height { w = fit-height / ratio }
     let wanted = w
     if region.height < 10000pt {
-      let max-h = calc.max(region.height * max-height - reserve, region.height * 0.3)
+      // Jamais plus que la page moins ce qui doit rester avec l'image.
+      let max-h = calc.max(calc.min(region.height * max-height, region.height - reserve), region.height * 0.3)
       if w * ratio > max-h { w = max-h / ratio }
     }
     // Réduite pour tenir en hauteur : l'assistant le signalera.
@@ -113,6 +114,7 @@
     width-px: width-px,
     height-px: height-px,
     max-height: max-height,
+    reserve: reserve,
     fit-height: fit-height,
     portrait-cap: photo and placement == "inline",
     scale: scale,

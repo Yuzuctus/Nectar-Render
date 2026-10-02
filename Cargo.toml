@@ -43,3 +43,11 @@ debug = false
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Bancs d'essai (`cargo test --profile essai`) : presque aussi rapide que la
+# version livrée, mais compilé en quelques secondes après une modification.
+[profile.essai]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true

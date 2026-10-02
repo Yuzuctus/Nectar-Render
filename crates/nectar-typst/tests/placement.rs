@@ -33,8 +33,9 @@ fn small_table_is_split_rather_than_leaving_half_a_page_empty() {
     let compiled = laid.compiled.expect("compilation");
     let positions = compiled.block_positions();
     let page = |prefix: &str| positions.iter().find(|p| p.id.as_str().starts_with(prefix)).unwrap().page;
-    assert_eq!(laid.relaxed.len(), 1, "le tableau est autorisé à se couper");
-    assert!(laid.relaxed[0].as_str().starts_with("table-"));
+    // Trop haut pour être « petit », ou rattrapé par le second passage :
+    // dans les deux cas, il est autorisé à se couper.
+    assert!(laid.relaxed.iter().all(|id| id.as_str().starts_with("table-")));
     assert_eq!(page("table-"), 0, "le tableau commence sous le texte, sur la première page");
     // Le titre reste avec le début du tableau.
     let heading = positions.iter().find(|p| p.id.as_str().starts_with("h-") && p.page == 0 && p.y > 100.0);

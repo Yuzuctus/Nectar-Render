@@ -150,6 +150,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                 let generated = laid.generated;
                 let tuning = laid.tuning;
                 let choices = laid.choices;
+                let passes = laid.passes;
                 let missing_fonts = engine.missing_fonts(&generated.fonts);
                 let mut error = None;
                 match laid.compiled {
@@ -200,7 +201,7 @@ fn run(ctx: egui::Context, requests: Receiver<Request>, responses: Sender<Respon
                 };
                 if started.elapsed() > std::time::Duration::from_secs(3) {
                     crate::journal::write(&format!(
-                        "mise en page lente : {} ms pour {} pages",
+                        "mise en page lente : {} ms pour {} pages ({passes} compositions)",
                         started.elapsed().as_millis(),
                         laid.pages.len()
                     ));

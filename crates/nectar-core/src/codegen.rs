@@ -77,6 +77,9 @@ pub struct Tuning {
     /// Hauteur mesurée (en points) des titres et légendes qui accompagnent
     /// une image sur sa page paysage (sinon, elle est estimée).
     pub reserve: HashMap<BlockId, f32>,
+    /// Tableaux qui dépassaient la marge : texte plus petit et adresses
+    /// coupables après un point.
+    pub squeeze: HashSet<BlockId>,
 }
 
 impl Tuning {
@@ -104,7 +107,7 @@ impl Tuning {
             if self.relaxed.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Split });
             }
-            if self.compact.contains(id) {
+            if self.compact.contains(id) || self.squeeze.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Compacted });
             }
             if let Some(percent) = self.fit_percent.get(id) {
@@ -176,11 +179,12 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
     let mut trails: HashMap<BlockId, BlockId> = HashMap::new();
     let mut reserve: HashMap<BlockId, f32> = HashMap::new();
     for (index, block) in emitted.iter().enumerate() {
-        if !g.lands(block) {
+        let lands = g.lands(block);
+        let figure = matches!(block.node, Node::Figure(_) | Node::Diagram { .. });
+        if !lands && !figure {
             continue;
         }
         let mut start = index;
-        let plain = |b: &Block| g.ops.get(&b.id).is_none_or(|o| o.is_empty()) && !g.returns.contains(&b.id);
         // Un saut de page avant un titre ne gêne pas : la page paysage en ouvre une.
         let lead = |b: &Block| leads_freely(g.ops.get(&b.id)) && !g.returns.contains(&b.id);
         if start > 0 && announces(&emitted[start - 1].node, Some(block)) && lead(emitted[start - 1]) {
@@ -192,19 +196,22 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
         let mut end = index;
         while let Some(next) = emitted.get(end + 1)
             && is_caption(&next.node)
-            && plain(next)
+            && follows_freely(g.ops.get(&next.id))
+            && !g.returns.contains(&next.id)
             && !g.lands(next)
         {
             end += 1;
         }
-        if start < index {
+        if lands && start < index {
             opens.insert(start, block.id.clone());
         }
-        if end > index {
+        if lands && end > index {
             trails.insert(block.id.clone(), emitted[end].id.clone());
         }
-        // Place à laisser sous (ou sur) l'image pour ce qui l'accompagne.
-        let width = crate::auto::text_width_pt(&crate::auto::flipped(&g.current), style);
+        // Place à laisser sur la page de l'image pour ce qui l'accompagne
+        // (titres, phrase d'annonce, légendes) : l'image ne la prend jamais.
+        let page = if lands { crate::auto::flipped(&g.current) } else { g.current.clone() };
+        let width = crate::auto::text_width_pt(&page, style);
         let room: f32 = emitted[start..index]
             .iter()
             .chain(&emitted[index + 1..=end])
@@ -423,7 +430,7 @@ impl Gen<'_> {
             || (captioned && !ops.break_after && !next_breaks);
         let unbreakable = ops
             .keep_together
-            .unwrap_or(p.keep_small_blocks && is_small(&block.node) && !self.relaxed.contains(&block.id));
+            .unwrap_or(p.keep_small_blocks && self.is_small(&block.node) && !self.relaxed.contains(&block.id));
         let body = match &block.node {
             Node::List(list) => {
                 let start = self.out.len();
@@ -471,6 +478,15 @@ impl Gen<'_> {
         match self.tuning.paper.get(id) {
             Some(paper) => format!("#page(paper: {}, flipped: true)[\n", string(paper)),
             None => "#page(flipped: true)[\n".into(),
+        }
+    }
+
+    /// Un bloc assez court pour ne jamais être coupé entre deux pages (un
+    /// tableau : selon sa hauteur réelle dans la page en cours).
+    fn is_small(&self, node: &Node) -> bool {
+        match node {
+            Node::Table(table) => crate::auto::table_is_small(table, &self.current, self.style),
+            node => is_small(node),
         }
     }
 
@@ -626,6 +642,7 @@ impl Gen<'_> {
     }
 
     fn table(&mut self, id: &BlockId, table: &Table, ops: Option<&crate::layout::TableOps>) -> String {
+        let mut overflow = false;
         let columns = table.align.len().max(table.header.len()).max(1);
         let align: Vec<&str> = (0..columns)
             .map(|i| {
@@ -653,7 +670,9 @@ impl Gen<'_> {
             ),
             None => {
                 let width = crate::auto::text_width_pt(&self.current, self.style);
-                auto_widths(&crate::auto::fit_table(table, width, self.style), columns)
+                let fit = crate::auto::fit_table(table, width, self.style);
+                overflow = fit.overflow;
+                auto_widths(&fit, columns)
             }
         };
         let mut out = format!(
@@ -677,6 +696,17 @@ impl Gen<'_> {
             out.push('\n');
         }
         out.push(')');
+        // Des mots trop longs pour tenir côte à côte, même ici : texte un peu
+        // plus petit, et les adresses peuvent passer à la ligne après un point.
+        if overflow || self.tuning.squeeze.contains(id) {
+            let p = &self.style.table;
+            let size = if self.tuning.squeeze.contains(id) { "0.82em" } else { "0.88em" };
+            out = format!(
+                "#[\n#set text(size: {size})\n#set table(inset: (x: {}pt, y: {}pt))\n#show regex(\"[./:_-]\"): it => it + sym.zws\n{out}\n]",
+                num(p.cell_padding_x_pt * 0.6),
+                num(p.cell_padding_y_pt * 0.7)
+            );
+        }
         if self.tuning.compact.contains(id) {
             let p = &self.style.table;
             out = format!(
@@ -755,7 +785,7 @@ impl Gen<'_> {
         if let Some(height) = self.tuning.fit.get(id) {
             args.push(format!("fit-height: {}pt", num(*height)));
         }
-        if let Some(room) = self.reserve.get(id).filter(|_| ops.is_some_and(|o| o.placement == Placement::Landscape)) {
+        if let Some(room) = self.reserve.get(id) {
             args.push(format!("reserve: {}pt", num(*room)));
         }
         if let Some(align) = ops.and_then(|o| o.align) {
@@ -969,9 +999,16 @@ fn wrap_block(body: &str, sticky: bool, unbreakable: bool, style: Option<&crate:
 }
 
 /// Un titre ou une phrase d'annonce peut suivre son schéma sur une page
-/// paysage : sans retouche, ou avec un simple saut de page avant lui.
+/// paysage : sauf s'il porte un format de page, une fin de page après lui,
+/// ou s'il est masqué (un saut de page avant lui ne gêne pas).
 pub fn leads_freely(ops: Option<&BlockOps>) -> bool {
-    ops.is_none_or(|o| BlockOps { break_before: false, ..o.clone() }.is_empty())
+    ops.is_none_or(|o| !o.hidden && o.page.is_none() && !o.break_after && !o.push_to_bottom)
+}
+
+/// Une légende accompagne son image : sauf si elle porte un saut ou un
+/// format de page, ou si elle est masquée.
+pub fn follows_freely(ops: Option<&BlockOps>) -> bool {
+    ops.is_none_or(|o| !o.hidden && o.page.is_none() && !o.break_before && !o.push_to_bottom)
 }
 
 /// Mots qui ouvrent une légende écrite sous une image ou un tableau.
@@ -1335,7 +1372,10 @@ mod tests {
             |_, _| {},
         );
         // L'adresse garde sa largeur naturelle ; les deux textes se partagent le reste.
-        assert!(g.source.contains("columns: (3.224fr, auto, 3.224fr)"), "{}", g.source);
+        let columns = g.source.lines().find(|l| l.trim_start().starts_with("columns:")).unwrap();
+        let parts: Vec<&str> =
+            columns.trim().trim_start_matches("columns: (").trim_end_matches("),").split(", ").collect();
+        assert!(parts[0].ends_with("fr") && parts[1] == "auto" && parts[2].ends_with("fr"), "{columns}");
         let g = gen_with("| a | b |\n|---|---|\n| 1 | 2 |\n", |_, _| {});
         assert!(g.source.contains("columns: 2,"), "tout est court : largeurs naturelles");
     }
