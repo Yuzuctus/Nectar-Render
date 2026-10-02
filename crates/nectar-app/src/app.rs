@@ -1151,7 +1151,13 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Placer et déplacer",
         &[
-            ("Glisser un bloc", "vers le haut ou le bas : il se rapproche ou s'éloigne de ce qui le précède."),
+            (
+                "Glisser un bloc",
+                "vers le haut ou le bas : il se rapproche ou s'éloigne de ce qui le précède (jamais par-dessus).",
+            ),
+            ("Glisser sous le bas de la page :", "le bloc et la suite passent en haut de la page suivante."),
+            ("Glisser au-dessus d'un saut de page :", "le saut est retiré, le bloc revient à la suite."),
+            ("Défiler :", "molette, ↑ / ↓ (sans bloc sélectionné), Page préc. / Page suiv., Début / Fin."),
             ("Alt + ↑ / ↓ :", "même chose au millimètre (avec Maj : 5 mm)."),
             (
                 "↓ Page suivante (Ctrl + Entrée) :",
@@ -1179,6 +1185,14 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             (
                 "Légende sous une image :",
                 "« Capture : … », « Figure … » ou en italique : elle ne quitte jamais son image.",
+            ),
+            (
+                "Titre en bas de page :",
+                "s'il ne reste que quelques lignes de son contenu sous lui, il passe page suivante.",
+            ),
+            (
+                "Taille des images :",
+                "réduites un peu pour faire tenir la suite, agrandies pour combler un blanc (sauf taille fixée dans la note).",
             ),
             ("Image un peu trop haute :", "légèrement réduite plutôt que de laisser un trou en bas de page."),
             ("Tableau qui déborde de 2 ou 3 lignes :", "un peu resserré pour tenir sur sa page."),

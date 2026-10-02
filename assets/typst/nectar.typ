@@ -30,6 +30,7 @@
   height-px: none,
   max-height: 100%,
   fit-height: none,
+  grow-height: none,
   reserve: 0pt,
   portrait-cap: false,
   // Pleine page ou page paysage : l'image est à la taille de la page, voulu.
@@ -72,6 +73,9 @@
       let cap = region.height * S.images.portrait_max_percent / 100
       if w * ratio > cap { w = cap / ratio }
     }
+    // Agrandie par le placement automatique pour combler un blanc en bas de
+    // page (jamais plus large que le texte).
+    if grow-height != none { w = calc.min(region.width, grow-height / ratio) }
     // Réduite d'office par le placement automatique pour tenir dans la
     // place restante : voulu, donc pas signalé.
     if fit-height != none and w * ratio > fit-height { w = fit-height / ratio }
@@ -102,6 +106,7 @@
   scale: 0.75,
   page: none,
   fit-height: none,
+  grow-height: none,
   photo: false,
   // Place laissée sur une page paysage aux titres et légendes qui l'accompagnent.
   reserve: 0pt,
@@ -116,6 +121,7 @@
     max-height: max-height,
     reserve: reserve,
     fit-height: fit-height,
+    grow-height: grow-height,
     portrait-cap: photo and placement == "inline",
     scale: scale,
   )

@@ -600,6 +600,41 @@ pub fn lay_out(
 
     if trace {
         eprintln!(
+            "[{:>5} ms, {} compositions] 1 quater. Place pour le bloc suivant",
+            started.elapsed().as_millis(),
+            passes.get()
+        );
+    }
+    // 1 quater. Un bloc (code, tableau, image…) qui ne tient pas en bas d'une
+    // page contenant une image : l'image est un peu réduite pour lui faire
+    // place, plutôt que de couper le bloc ou de laisser un blanc.
+    if rules.fit_images {
+        let mut tried: HashSet<BlockId> = HashSet::new();
+        for _ in 0..6 {
+            let Ok(current) = &compiled else { break };
+            let Some((image, height, ratio, page, target)) =
+                room_for_next(current, document, style, &ops, &tuning, &tried)
+            else {
+                break;
+            };
+            tried.insert(image.clone());
+            let previous = tuning.clone();
+            tuning.fit.insert(image.clone(), height as f32);
+            tuning.fit_percent.insert(image.clone(), (ratio * 100.0).round() as u8);
+            tuning.room_made.insert(image.clone());
+            let moved = retry(&tuning, &mut generated, &mut compiled)
+                && compiled
+                    .as_ref()
+                    .is_ok_and(|c| c.block_positions().iter().any(|p| p.id == target && p.page == page));
+            if !moved {
+                tuning = previous;
+                retry(&tuning, &mut generated, &mut compiled);
+            }
+        }
+    }
+
+    if trace {
+        eprintln!(
             "[{:>5} ms, {} compositions] 2. Blocs insécables qui laissent un trou",
             started.elapsed().as_millis(),
             passes.get()
@@ -866,23 +901,72 @@ pub fn lay_out(
         let fits = |c: &Result<Compiled, EngineError>| c.as_ref().is_ok_and(|c| c.page_count() <= count);
         if !lonely.is_empty() {
             let previous = tuning.clone();
-            for (figure, room) in &lonely {
+            for (figure, room, until) in &lonely {
                 tuning.landscape.insert(figure.clone());
                 tuning.reserve.insert(figure.clone(), *room);
+                if let Some(until) = until {
+                    tuning.until.insert(figure.clone(), until.clone());
+                }
             }
             if !(retry(&tuning, &mut generated, &mut compiled) && fits(&compiled)) {
                 // Ensemble, ça déborde : une par une, en gardant celles qui passent.
                 tuning = previous;
                 retry(&tuning, &mut generated, &mut compiled);
-                for (figure, room) in lonely.iter().take(6) {
+                for (figure, room, until) in lonely.iter().take(6) {
                     let before = tuning.clone();
                     tuning.landscape.insert(figure.clone());
                     tuning.reserve.insert(figure.clone(), *room);
+                    if let Some(until) = until {
+                        tuning.until.insert(figure.clone(), until.clone());
+                    }
                     if !(retry(&tuning, &mut generated, &mut compiled) && fits(&compiled)) {
                         tuning = before;
                         retry(&tuning, &mut generated, &mut compiled);
                     }
                 }
+            }
+        }
+    }
+
+    if trace {
+        eprintln!(
+            "[{:>5} ms, {} compositions] 3 quater. Images agrandies",
+            started.elapsed().as_millis(),
+            passes.get()
+        );
+    }
+    // 3 quater. Un blanc en bas de page que rien ne peut remplir : une image
+    // de la page grandit pour le combler (si sa résolution le permet), sans
+    // rien changer à la pagination.
+    if rules.fit_images {
+        let mut tried: HashSet<BlockId> = HashSet::new();
+        for _ in 0..4 {
+            let Ok(current) = &compiled else { break };
+            let Some((image, height, percent, page)) = grow_candidate(current, document, style, &ops, &tuning, &tried)
+            else {
+                break;
+            };
+            tried.insert(image.clone());
+            let before_count = current.page_count();
+            let margin = f64::from(style.page.margin_bottom_mm) * 72.0 / 25.4;
+            let on_page = |c: &Compiled| -> Vec<BlockId> {
+                let mut ids: Vec<BlockId> = c
+                    .block_boxes(margin)
+                    .into_iter()
+                    .filter(|b| b.page == page || b.page == page + 1)
+                    .map(|b| b.id)
+                    .collect();
+                ids.dedup();
+                ids
+            };
+            let layout_before = on_page(current);
+            let previous = tuning.clone();
+            tuning.grow.insert(image.clone(), (height as f32, percent));
+            let same = retry(&tuning, &mut generated, &mut compiled)
+                && compiled.as_ref().is_ok_and(|c| c.page_count() == before_count && on_page(c) == layout_before);
+            if !same {
+                tuning = previous;
+                retry(&tuning, &mut generated, &mut compiled);
             }
         }
     }
@@ -932,6 +1016,7 @@ pub fn lay_out(
         .filter(|(_, b)| tuning.is_landscape(ops.get(&b.id), &b.id))
         .filter(|(i, b)| *i == 0 || !nectar_core::codegen::leads_into(&document.blocks[i - 1], b))
         .filter(|(i, _)| document.blocks.get(i + 1).is_none_or(|n| !nectar_core::codegen::is_caption(&n.node)))
+        .filter(|(_, b)| !tuning.until.contains_key(&b.id))
         .map(|(_, b)| b.id.clone())
         .collect();
     for figure in landscapes.iter().rev().take(10) {
@@ -1122,6 +1207,142 @@ fn overflowing_tables(
         .collect()
 }
 
+/// Une image dont la note fixe la taille (`![[image.png|400]]`) : un choix
+/// de la personne, que le placement automatique ne change pas.
+fn sized_by_hand(document: &nectar_core::Document, id: &BlockId) -> bool {
+    document.blocks.iter().any(|b| {
+        &b.id == id
+            && matches!(&b.node, nectar_core::model::Node::Figure(image) if image.width_px.is_some() || image.height_px.is_some())
+    })
+}
+
+/// Une page qui finit sur un blanc parce que le bloc suivant (avec son titre
+/// et sa phrase d'annonce) n'y tenait pas, alors qu'elle contient une image
+/// qu'un peu de réduction suffirait à rendre assez petite : (image, hauteur
+/// visée, rapport, page, bloc qui doit remonter).
+fn room_for_next(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    style: &nectar_core::Style,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+    tuning: &nectar_core::Tuning,
+    tried: &HashSet<BlockId>,
+) -> Option<(BlockId, f64, f64, usize, BlockId)> {
+    use nectar_core::codegen::leads_into;
+    let mm = 72.0 / 25.4;
+    let (top, bottom) = (f64::from(style.page.margin_top_mm) * mm, f64::from(style.page.margin_bottom_mm) * mm);
+    let positions = compiled.block_positions();
+    let boxes = compiled.block_boxes(bottom);
+    let metrics = compiled.page_metrics(bottom);
+    let figures = compiled.figures();
+    let gap = f64::from(style.text.size_pt) * f64::from(1.0 + style.text.paragraph_spacing_em) + 8.0;
+    for page in 0..compiled.page_count().saturating_sub(1) {
+        let here = metrics.get(page)?;
+        if here.width > here.height {
+            continue;
+        }
+        let content_bottom = here.content.map(|c| c[3]).unwrap_or(top);
+        let room = here.height - bottom - content_bottom - gap;
+        if room < 30.0 {
+            continue;
+        }
+        // Le premier bloc de la page suivante ne doit pas être la suite d'un
+        // bloc commencé ici.
+        let Some(first) = positions.iter().find(|p| p.page == page + 1) else { continue };
+        if boxes.iter().any(|b| b.page == page + 1 && b.rect[1] < first.y - 2.0) {
+            continue;
+        }
+        let start = document.blocks.iter().position(|b| b.id == first.id)?;
+        // Ce qui doit remonter ensemble : titres et phrase d'annonce, puis le bloc.
+        let mut target = start;
+        while target + 1 < document.blocks.len() && leads_into(&document.blocks[target], &document.blocks[target + 1]) {
+            target += 1;
+        }
+        let target_id = &document.blocks[target].id;
+        let parts: Vec<&BlockBox> = boxes.iter().filter(|b| &b.id == target_id).collect();
+        if parts.len() != 1 || parts[0].page != page + 1 {
+            continue;
+        }
+        let needed = parts[0].rect[3] - first.y + 4.0;
+        let deficit = needed - room;
+        if deficit <= 0.0 {
+            continue;
+        }
+        // La plus grande image de la page, si la réduire un peu suffit.
+        let candidate = figures
+            .iter()
+            .filter(|f| {
+                f.page == page
+                    && nectar_core::auto::allowed(ops.get(&f.id))
+                    && !tuning.is_landscape(ops.get(&f.id), &f.id)
+                    && !tuning.fit.contains_key(&f.id)
+                    && !tuning.grow.contains_key(&f.id)
+                    && !tried.contains(&f.id)
+                    && !sized_by_hand(document, &f.id)
+                    && figures.iter().filter(|g| g.id == f.id).count() == 1
+            })
+            .max_by(|a, b| a.height.total_cmp(&b.height))?;
+        let height = candidate.height - deficit - 2.0;
+        let ratio = height / candidate.height;
+        if ratio >= 0.75 && height >= 100.0 {
+            return Some((candidate.id.clone(), height, ratio, page, target_id.clone()));
+        }
+    }
+    None
+}
+
+/// Une image d'une page qui finit sur un blanc, qui peut grandir pour le
+/// combler (plus étroite que le texte, assez de pixels) : (image, hauteur
+/// visée, pourcentage, page).
+fn grow_candidate(
+    compiled: &Compiled,
+    document: &nectar_core::Document,
+    style: &nectar_core::Style,
+    ops: &HashMap<BlockId, nectar_core::BlockOps>,
+    tuning: &nectar_core::Tuning,
+    tried: &HashSet<BlockId>,
+) -> Option<(BlockId, f64, u16, usize)> {
+    let mm = 72.0 / 25.4;
+    let p = &style.page;
+    let (top, bottom) = (f64::from(p.margin_top_mm) * mm, f64::from(p.margin_bottom_mm) * mm);
+    let (left, right) = (f64::from(p.margin_left_mm) * mm, f64::from(p.margin_right_mm) * mm);
+    let metrics = compiled.page_metrics(bottom);
+    let figures = compiled.figures();
+    for page in 0..compiled.page_count().saturating_sub(1) {
+        let here = metrics.get(page)?;
+        let body = here.height - top - bottom;
+        let content_bottom = here.content.map(|c| c[3]).unwrap_or(top);
+        let room = here.height - bottom - content_bottom - 10.0;
+        if room < body * 0.12 {
+            continue;
+        }
+        let text_width = here.width - left - right;
+        for f in figures.iter().filter(|f| {
+            f.page == page
+                && f.height > 0.0
+                && nectar_core::auto::allowed(ops.get(&f.id))
+                && !tuning.is_landscape(ops.get(&f.id), &f.id)
+                && !tuning.fit.contains_key(&f.id)
+                && !tuning.grow.contains_key(&f.id)
+                && !tried.contains(&f.id)
+                && !sized_by_hand(document, &f.id)
+                && figures.iter().filter(|g| g.id == f.id).count() == 1
+        }) {
+            let ratio = f.height / f.width;
+            let target = (f.height + room - 6.0).min(text_width * ratio).min(body * 0.8);
+            if target < f.height * 1.1 || target - f.height < 30.0 {
+                continue;
+            }
+            // Assez de pixels pour l'agrandir (110 ppp au moins).
+            if f.pixels.is_some_and(|(px, _)| px / (target / ratio / 72.0) < 110.0) {
+                continue;
+            }
+            return Some((f.id.clone(), target, (target / f.height * 100.0).round() as u16, page));
+        }
+    }
+    None
+}
+
 /// Une image dont la légende est passée seule à la page suivante : son id,
 /// la hauteur qui laisse la place à la légende, et le rapport de réduction.
 fn orphan_caption(
@@ -1164,16 +1385,18 @@ fn orphan_caption(
     None
 }
 
-/// Images horizontales seules sur leur page portrait (avec, au plus, leur
-/// titre, leur phrase d'annonce et leurs légendes), qui seraient nettement
-/// plus grandes sur une page paysage.
+/// Images horizontales en tête de leur page portrait (avec leur titre, leur
+/// phrase d'annonce et leurs légendes), seules sur la page ou suivies de
+/// quelques blocs qui y tiennent avant un blanc : sur une page paysage,
+/// l'image serait nettement plus grande et le blanc disparaîtrait. Rend
+/// (image, place à garder pour ce qui l'accompagne, dernier bloc emporté).
 fn lonely_figures(
     compiled: &Compiled,
     document: &nectar_core::Document,
     ops: &HashMap<BlockId, nectar_core::BlockOps>,
     style: &nectar_core::Style,
     tuning: &nectar_core::Tuning,
-) -> Vec<(BlockId, f32)> {
+) -> Vec<(BlockId, f32, Option<BlockId>)> {
     use nectar_core::codegen::{is_caption, leads_into};
     use nectar_core::model::Node;
     let mm = 72.0 / 25.4;
@@ -1218,18 +1441,40 @@ fn lonely_figures(
         {
             end += 1;
         }
-        let group: HashSet<&BlockId> = blocks[start..=end].iter().map(|b| &b.id).collect();
-        // Rien d'autre sur la page (ni bloc qui commence, ni fin d'un bloc d'avant).
-        // (L'en-tête courant, dans la marge du haut, ne compte pas.)
-        if boxes.iter().any(|b| b.page == view.page && !group.contains(&b.id) && b.rect[3] > top - 2.0)
-            || positions.iter().any(|p| p.page == view.page && !group.contains(&p.id))
-            || positions.iter().any(|p| group.contains(&p.id) && p.page != view.page)
+        // L'image ouvre sa page (avec son titre).
+        if positions.iter().find(|p| p.page == view.page).map(|p| &p.id) != Some(&blocks[start].id)
+            || positions.iter().any(|p| p.page != view.page && blocks[start..=end].iter().any(|b| b.id == p.id))
         {
             continue;
         }
-        // Taille sur la page tournée, la place des légendes gardée.
-        // Ce que prennent titres, légendes et espaces : la hauteur occupée
-        // par le groupe sur la page, moins l'image.
+        // Les blocs qui la suivent sur la page doivent y tenir en entier, sans
+        // retouche de page ni décision automatique à eux.
+        let mut last = end;
+        let mut tail_ok = true;
+        while let Some(next) = blocks.get(last + 1)
+            && positions.iter().any(|p| p.id == next.id && p.page == view.page)
+        {
+            let whole = !boxes.iter().any(|b| b.id == next.id && b.page != view.page);
+            let plain = ops.get(&next.id).is_none_or(|o| o.page.is_none() && !o.break_after && !o.hidden)
+                && !tuning.is_landscape(ops.get(&next.id), &next.id);
+            if !whole || !plain || matches!(next.node, Node::Figure(_) | Node::Diagram { .. } | Node::Table(_)) {
+                tail_ok = false;
+                break;
+            }
+            last += 1;
+        }
+        let group: HashSet<&BlockId> = blocks[start..=last].iter().map(|b| &b.id).collect();
+        // Rien d'autre sur la page (ni bloc qui commence, ni fin d'un bloc
+        // d'avant ; l'en-tête courant, dans la marge du haut, ne compte pas).
+        if !tail_ok
+            || boxes.iter().any(|b| b.page == view.page && !group.contains(&b.id) && b.rect[3] > top - 2.0)
+            || positions.iter().any(|p| p.page == view.page && !group.contains(&p.id))
+        {
+            continue;
+        }
+        // Ce que prennent titres, légendes, texte et espaces : la hauteur
+        // occupée par le groupe sur la page, moins l'image (le texte, plus
+        // large en paysage, y prendra un peu moins de place).
         let group_bottom = boxes
             .iter()
             .filter(|b| b.page == view.page && group.contains(&b.id))
@@ -1240,16 +1485,19 @@ fn lonely_figures(
         let landscape = (height - left - right).min(room_height * view.width / view.height);
         // Une photo n'est agrandie que si elle a les pixels pour (100 ppp).
         let sharp = view.pixels.is_none_or(|(px, _)| px / (landscape / 72.0) >= 100.0);
-        // Nettement plus grande ; ou un peu plus grande, sur une page restée
-        // à moitié vide (la page paysage en efface le vide).
         let fill = metrics
             .get(view.page)
             .and_then(|m| m.content)
             .map(|c| (c[3] - top) / (height - top - bottom))
             .unwrap_or(1.0);
         let gain = landscape / view.width;
-        if sharp && (gain >= 1.2 || (gain >= 1.05 && fill < 0.65)) {
-            out.push((id.clone(), others as f32 + 6.0));
+        let extra = last > end;
+        // Seule sur sa page : nettement plus grande, ou un peu sur une page à
+        // moitié vide. Suivie de texte : il faut un blanc à effacer en bas de
+        // page, et une image qui y gagne vraiment.
+        let worth = if extra { fill < 0.8 && gain >= 1.1 } else { gain >= 1.2 || (gain >= 1.05 && fill < 0.65) };
+        if sharp && worth {
+            out.push((id.clone(), others as f32 + 6.0, extra.then(|| blocks[last].id.clone())));
         }
     }
     out

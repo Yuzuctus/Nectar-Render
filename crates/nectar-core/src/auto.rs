@@ -39,6 +39,12 @@ pub enum ChoiceKind {
     Narrowed,
     /// Titre passé en haut de la page suivante pour rester avec son contenu.
     KeptWithContent,
+    /// Image agrandie (pourcentage de sa taille d'avant) pour combler un
+    /// blanc en bas de page.
+    Grown(u16),
+    /// Image réduite (pourcentage gardé) pour que le bloc suivant tienne sur
+    /// la même page.
+    MadeRoom(u8),
 }
 
 impl ChoiceKind {
@@ -62,6 +68,12 @@ impl Choice {
                 "Espacements légèrement resserrés pour éviter une dernière page presque vide".into()
             }
             ChoiceKind::LargerPaper => "Sur une page A3 paysage, pour tenir en entier sur une seule page".into(),
+            ChoiceKind::MadeRoom(percent) => {
+                format!("Image réduite à {percent} % pour que la suite tienne sur la page (au lieu d'un blanc)")
+            }
+            ChoiceKind::Grown(percent) => {
+                format!("Image agrandie à {percent} % pour combler le blanc en bas de page")
+            }
             ChoiceKind::KeptWithContent => {
                 "Titre passé en haut de la page suivante pour rester avec son contenu".into()
             }

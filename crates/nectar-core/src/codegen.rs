@@ -86,6 +86,14 @@ pub struct Tuning {
     /// Titres envoyés en haut de la page suivante : en bas de page, il ne
     /// restait que quelques lignes de leur contenu.
     pub pushed: HashSet<BlockId>,
+    /// Page paysage d'une image qui emporte aussi le texte qui la suit sur sa
+    /// page : image → dernier bloc emporté.
+    pub until: HashMap<BlockId, BlockId>,
+    /// Images agrandies pour combler un blanc en bas de page : hauteur visée
+    /// en points, et le pourcentage gagné.
+    pub grow: HashMap<BlockId, (f32, u16)>,
+    /// Images réduites (dans `fit`) pour faire tenir le bloc suivant.
+    pub room_made: HashSet<BlockId>,
 }
 
 impl Tuning {
@@ -116,6 +124,9 @@ impl Tuning {
             if self.compact.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Compacted });
             }
+            if let Some((_, percent)) = self.grow.get(id) {
+                out.push(Choice { block: id.clone(), kind: ChoiceKind::Grown(*percent) });
+            }
             if self.pushed.contains(id) {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::KeptWithContent });
             }
@@ -123,7 +134,12 @@ impl Tuning {
                 out.push(Choice { block: id.clone(), kind: ChoiceKind::Narrowed });
             }
             if let Some(percent) = self.fit_percent.get(id) {
-                out.push(Choice { block: id.clone(), kind: ChoiceKind::Fitted(*percent) });
+                let kind = if self.room_made.contains(id) {
+                    ChoiceKind::MadeRoom(*percent)
+                } else {
+                    ChoiceKind::Fitted(*percent)
+                };
+                out.push(Choice { block: id.clone(), kind });
             }
         }
         if self.tighten.is_some()
@@ -216,6 +232,15 @@ pub fn generate_tuned(doc: &Document, layout: &Layout, style: &Style, tuning: &T
             && !g.lands(next)
         {
             end += 1;
+        }
+        // La page paysage emporte aussi le texte qui suit l'image sur sa page.
+        if lands
+            && let Some(until) = tuning.until.get(&block.id)
+            && let Some(last) = emitted.iter().position(|b| &b.id == until)
+            && last > end
+            && emitted[end + 1..=last].iter().all(|b| !g.lands(b) && !g.returns.contains(&b.id))
+        {
+            end = last;
         }
         if lands && start < index {
             opens.insert(start, block.id.clone());
@@ -820,6 +845,9 @@ impl Gen<'_> {
         }
         if let Some(px) = image.height_px {
             args.push(format!("height-px: {px}"));
+        }
+        if let Some((height, _)) = self.tuning.grow.get(id) {
+            args.push(format!("grow-height: {}pt", num(*height)));
         }
         if let Some(height) = self.tuning.fit.get(id) {
             args.push(format!("fit-height: {}pt", num(*height)));
