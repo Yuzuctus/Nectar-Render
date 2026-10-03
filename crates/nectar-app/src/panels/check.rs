@@ -18,7 +18,7 @@ fn automatic(app: &mut NectarApp, ui: &mut egui::Ui, choices: &[nectar_core::aut
     .show(ui, |ui| {
         ui.label(
             RichText::new(
-                "Nectar a pris ces décisions seul. Pour en refuser une : « Voir », puis « Laisser ce bloc tel quel » ; pour toutes : Style → Placement automatique.",
+                "Nectar a pris ces décisions seul. Pour en refuser une : « Voir », puis « Garder tel quel » ; pour toutes : Style › Placement automatique.",
             )
             .small()
             .color(t.faint),
@@ -54,25 +54,42 @@ fn automatic(app: &mut NectarApp, ui: &mut egui::Ui, choices: &[nectar_core::aut
 
 pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let t = theme::tokens(ui.ctx());
-    let ctx = ui.ctx().clone();
     let issues: Vec<Issue> = app.rendered.as_ref().map(|r| r.issues.clone()).unwrap_or_default();
     let choices: Vec<nectar_core::auto::Choice> = app.rendered.as_ref().map(|r| r.choices.clone()).unwrap_or_default();
-    if !choices.is_empty() {
-        automatic(app, ui, &choices);
+    let remarks = issues.iter().filter(|i| i.severity > Severity::Info).count();
+    if remarks == 0 {
+        // Rien à corriger : on le dit franchement, et la suite logique est là.
+        egui::Frame::new().fill(t.surface).stroke(egui::Stroke::new(1.0, t.identity)).inner_margin(12).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new("✓ Les pages sont propres").font(FontId::new(15.0, theme::strong())).color(t.identity),
+            );
+            ui.label(RichText::new("Rien à corriger : le PDF est prêt.").color(t.muted));
+            ui.add_space(4.0);
+            let export = egui::Button::new(RichText::new("Exporter le PDF").color(t.paper)).fill(t.ink);
+            if ui.add(export).on_hover_text("Ctrl + E").clicked() {
+                app.export();
+            }
+        });
         ui.add_space(10.0);
     }
-    kicker(ui, "Assistant de mise en page");
-    ui.add_space(4.0);
-    if issues.is_empty() {
-        ui.label(RichText::new("Rien à signaler : les pages sont propres.").color(t.identity));
-        return;
+    if !issues.is_empty() {
+        kicker(ui, &if remarks > 0 { format!("À voir ({remarks})") } else { "Remarques".to_string() });
+        ui.add_space(2.0);
+        ui.label(RichText::new("« Voir » montre le bloc ; l'autre bouton corrige (annulable).").small().color(t.faint));
+        ui.add_space(6.0);
+        list(app, ui, &issues);
+        ui.add_space(10.0);
     }
-    ui.label(
-        RichText::new("Ce que Nectar a repéré dans les pages. « Voir » sélectionne le bloc ; les boutons appliquent une retouche (annulable).")
-            .small()
-            .color(t.faint),
-    );
-    ui.add_space(8.0);
+    if !choices.is_empty() {
+        automatic(app, ui, &choices);
+    }
+}
+
+/// Les remarques de l'assistant, chacune avec ses corrections.
+fn list(app: &mut NectarApp, ui: &mut egui::Ui, issues: &[Issue]) {
+    let t = theme::tokens(ui.ctx());
+    let ctx = ui.ctx().clone();
     // Plusieurs schémas à lire en grand : tous d'un coup.
     let landscapes: Vec<nectar_core::assistant::Fix> = issues
         .iter()
@@ -82,13 +99,21 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         .collect();
     if landscapes.len() > 1
         && ui
-            .button(format!("Mettre les {} schémas en paysage", landscapes.len()))
+            .add(
+                egui::Button::new(
+                    RichText::new(format!("Mettre les {} schémas en paysage", landscapes.len())).color(t.accent_ink),
+                )
+                .fill(t.accent),
+            )
             .on_hover_text("Chacun sur sa page paysage, en grand ; le texte continue autour")
             .clicked()
     {
-        for fix in &landscapes {
-            app.edit_block(&ctx, &fix.block, |ops| fix.apply(ops));
-        }
+        let ids: Vec<nectar_core::BlockId> = landscapes.iter().map(|f| f.block.clone()).collect();
+        app.edit_blocks(&ctx, &ids, |id, ops| {
+            if let Some(fix) = landscapes.iter().find(|f| &f.block == id) {
+                fix.apply(ops);
+            }
+        });
         app.notify_done(format!("{} schémas mis en paysage", landscapes.len()));
         return;
     }
@@ -115,7 +140,9 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
                             select = Some(block.clone());
                         }
                         for (k, fix) in issue.fixes.iter().enumerate() {
-                            if ui.small_button(&fix.label).clicked() {
+                            let button =
+                                egui::Button::new(RichText::new(&fix.label).color(t.accent_ink)).fill(t.accent);
+                            if ui.add(button).clicked() {
                                 apply = Some((index, k));
                             }
                         }

@@ -25,8 +25,8 @@
 - **Format d'une page** : la page prend ce format, se remplit avec la suite, puis le document reprend tout seul son format. Cocher « Et les pages suivantes » pour le garder jusqu'au prochain changement.
 - **Plan** dans la barre du haut : aller directement à un titre.
 - **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
-- Onglet **Style** : un modèle (preset) en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme modèle… ».
-- Onglet **Vérifier** : l'assistant de mise en page (voir plus bas).
+- Onglet **Style** : en haut, **Chercher un réglage** (« marges », « liens », « interligne »… : seuls les réglages trouvés s'affichent) ; puis les **modèles** en cartes (couleurs et usage : « Mémoire, rapport », « Notes de cours »…), ce qui a été **changé à la main** par-dessus le modèle (avec « Revenir au modèle »), l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire) et les réglages détaillés repliés ; « Enregistrer comme modèle… ».
+- Onglet **Vérifier** : d'abord ce qui est à voir (avec la correction en un clic, annulable en une fois même groupée), sinon « Les pages sont propres » avec **Exporter le PDF** ; ensuite ce que Nectar a fait seul.
 - Retouches visibles tout de suite : sur une longue note, la page s'affiche d'abord avec les décisions automatiques précédentes, puis le placement automatique la complète (« Placement automatique… ») ; une nouvelle retouche interrompt le calcul en cours.
 - Annuler et rétablir immédiats (les dernières mises en page sont gardées ; un glisser = une seule étape), export PDF, zoom (Ctrl + molette), notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.
 - Chaque option dit ce qu'elle fait, en une phrase ; **Aide** (F1) résume gestes et raccourcis ; **Affichage** règle la taille de l'interface (90 à 150 %).

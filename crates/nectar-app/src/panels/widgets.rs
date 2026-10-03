@@ -55,7 +55,7 @@ pub fn parse_hex(value: &str) -> Option<[u8; 3]> {
 pub fn font(ui: &mut egui::Ui, id: &str, value: &mut String, families: &[String]) -> bool {
     let mut changed = false;
     let mut filter = ui.data_mut(|d| d.get_temp::<String>(egui::Id::new((id, "filtre"))).unwrap_or_default());
-    egui::ComboBox::from_id_salt(id).selected_text(value.as_str()).width(165.0).height(320.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(value.as_str()).width(155.0).height(320.0).show_ui(ui, |ui| {
         ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Chercher…").desired_width(170.0));
         let needle = filter.to_lowercase();
         let suggested =
@@ -79,7 +79,7 @@ pub fn font(ui: &mut egui::Ui, id: &str, value: &mut String, families: &[String]
 pub fn choice<T: PartialEq + Clone>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool {
     let mut changed = false;
     let current = options.iter().find(|(v, _)| v == value).map(|(_, l)| *l).unwrap_or("—");
-    egui::ComboBox::from_id_salt(id).selected_text(current).width(165.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(current).width(155.0).show_ui(ui, |ui| {
         for (option, label) in options {
             if ui.selectable_label(option == value, *label).clicked() && option != value {
                 *value = option.clone();
@@ -132,7 +132,11 @@ pub fn grid(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
 }
 
 pub fn label(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).color(theme::tokens(ui.ctx()).muted));
+    // Un libellé long passe à la ligne plutôt que d'élargir le panneau.
+    ui.scope(|ui| {
+        ui.set_max_width(118.0);
+        ui.add(egui::Label::new(RichText::new(text).color(theme::tokens(ui.ctx()).muted)).wrap());
+    });
 }
 
 /// Choix exclusif en boutons côte à côte (plus rapide qu'une liste).

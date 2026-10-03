@@ -314,6 +314,36 @@ impl NectarApp {
         self.notify_done(told);
     }
 
+    /// Modifie plusieurs blocs d'un coup : une seule étape d'annulation.
+    pub fn edit_blocks(
+        &mut self,
+        ctx: &egui::Context,
+        ids: &[BlockId],
+        edit: impl Fn(&BlockId, &mut nectar_core::BlockOps),
+    ) {
+        let Some(project) = &self.project else { return };
+        let anchors: Vec<(BlockId, nectar_core::model::BlockKind, usize, String)> = project
+            .document
+            .anchors()
+            .into_iter()
+            .filter(|a| ids.contains(a.id))
+            .map(|a| (a.id.clone(), a.kind, a.line, a.excerpt.to_string()))
+            .collect();
+        let edited: Vec<_> = anchors
+            .into_iter()
+            .map(|(id, kind, line, excerpt)| {
+                let mut ops = project.layout.ops_for(&project.document, &id);
+                edit(&id, &mut ops);
+                (id, kind, line, excerpt, ops)
+            })
+            .collect();
+        self.edit_layout(ctx, move |layout| {
+            for (id, kind, line, excerpt, ops) in &edited {
+                *layout.ops_mut(nectar_core::model::AnchorInfo { id, kind: *kind, line: *line, excerpt }) = ops.clone();
+            }
+        });
+    }
+
     /// Décale un bloc verticalement (espace avant, en millimètres). Il ne
     /// remonte jamais plus haut que le bas de ce qui le précède.
     pub fn nudge(&mut self, ctx: &egui::Context, id: &BlockId, mm: f32) {
@@ -392,7 +422,7 @@ impl NectarApp {
         }
     }
 
-    fn export(&mut self) {
+    pub fn export(&mut self) {
         let Some(project) = &self.project else { return };
         let name = project.note.with_extension("pdf");
         let mut dialog = rfd::FileDialog::new().add_filter("PDF", &["pdf"]);
@@ -1333,7 +1363,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Style et vérification",
         &[
-            ("Style :", "un modèle en un clic, puis l'essentiel ; tout le reste dans « Réglages détaillés »."),
+            ("Style :", "un modèle en un clic, puis l'essentiel ; pour le reste, « Chercher un réglage » en haut."),
             (
                 "Vérifier :",
                 "ce que l'assistant a repéré (page à moitié vide, schéma à agrandir…), corrigeable en un clic.",
