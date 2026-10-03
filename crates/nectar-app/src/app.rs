@@ -536,6 +536,7 @@ impl NectarApp {
                     // La mise en page précédente reste affichée ; l'attente s'arrête.
                     if let Some(rendered) = &mut self.rendered {
                         rendered.generation = self.generation;
+                        rendered.provisional = false;
                     }
                     self.requested.clear();
                     crate::journal::write(&format!("erreur du moteur : {message}"));
@@ -1408,9 +1409,17 @@ impl NectarApp {
 
             // Le moteur travaille : on le dit, plutôt que de laisser croire à un gel.
             let laying_out = self.rendered.as_ref().is_some_and(|r| r.generation < self.generation);
+            // Retouche déjà visible, placement automatique encore en calcul.
+            let adjusting = self.rendered.as_ref().is_some_and(|r| r.provisional);
             let drawing = action.visible.iter().any(|i| views.get(*i).is_some_and(|v| !v.fresh));
-            if laying_out || drawing {
-                let text = if laying_out { "Mise en page…" } else { "Rendu des pages…" };
+            if laying_out || adjusting || drawing {
+                let text = if laying_out {
+                    "Mise en page…"
+                } else if adjusting {
+                    "Placement automatique…"
+                } else {
+                    "Rendu des pages…"
+                };
                 let at = egui::pos2(ui.max_rect().center().x, ui.max_rect().top() + 12.0);
                 egui::Area::new(egui::Id::new("chargement"))
                     .fixed_pos(at)

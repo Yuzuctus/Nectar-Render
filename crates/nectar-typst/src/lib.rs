@@ -442,6 +442,9 @@ pub struct LaidOut {
     pub choices: Vec<nectar_core::auto::Choice>,
     /// Nombre de compositions faites (une, plus une par ajustement essayé).
     pub passes: usize,
+    /// Calcul abandonné en route (voir [`lay_out_with`]) : le résultat est
+    /// incomplet et ne doit pas être montré.
+    pub stopped: bool,
 }
 
 /// Met en page un document avec le placement automatique.
@@ -473,6 +476,19 @@ pub fn lay_out(
     layout: &nectar_core::Layout,
     style: &nectar_core::Style,
 ) -> LaidOut {
+    lay_out_with(engine, document, layout, style, &|| false)
+}
+
+/// [`lay_out`], abandonné dès que `stop` répond oui (consulté avant chaque
+/// recomposition) : l'atelier n'achève pas un calcul déjà périmé par une
+/// nouvelle retouche.
+pub fn lay_out_with(
+    engine: &Engine,
+    document: &nectar_core::Document,
+    layout: &nectar_core::Layout,
+    style: &nectar_core::Style,
+    stop: &dyn Fn() -> bool,
+) -> LaidOut {
     use nectar_core::assistant::FixAction;
     use nectar_core::layout::{PageChange, Placement};
     let ops = layout.resolve(document).ops;
@@ -489,12 +505,18 @@ pub fn lay_out(
     let started = std::time::Instant::now();
     let trace = std::env::var_os("NECTAR_TRACE").is_some();
     let passes = std::cell::Cell::new(1usize);
+    let stopped = std::cell::Cell::new(false);
     let mut generated = nectar_core::generate_tuned(document, layout, style, &tuning);
     let mut compiled = engine.compile(&generated);
     // Recompose avec de nouveaux réglages ; garde l'ancienne mise en page si
     // la nouvelle échoue (et rend alors `false`).
     let retry =
         |tuning: &nectar_core::Tuning, generated: &mut Generated, compiled: &mut Result<Compiled, EngineError>| {
+            // Abandon : plus aucune recomposition, les étapes restantes passent.
+            if stopped.get() || stop() {
+                stopped.set(true);
+                return false;
+            }
             passes.set(passes.get() + 1);
             let attempt = nectar_core::generate_tuned(document, layout, style, tuning);
             match engine.compile(&attempt) {
@@ -1097,7 +1119,7 @@ pub fn lay_out(
     if trace {
         eprintln!("[{:>5} ms, {} compositions] fin", started.elapsed().as_millis(), passes.get());
     }
-    LaidOut { generated, compiled, relaxed, tuning, choices, passes: passes.get() }
+    LaidOut { generated, compiled, relaxed, tuning, choices, passes: passes.get(), stopped: stopped.get() }
 }
 
 /// Hauteur à donner à l'image `figure`, rejetée en tête de la page

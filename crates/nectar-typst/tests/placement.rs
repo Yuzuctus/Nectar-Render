@@ -382,3 +382,16 @@ fn a_long_table_goes_a3_landscape_only_when_a4_landscape_is_not_enough() {
     }
     assert!(seen.contains(&(true, true)), "un tableau a eu besoin de l'A3 : {seen:?}");
 }
+
+#[test]
+fn a_stopped_lay_out_says_so_and_stops_recomposing() {
+    let engine = Engine::new(FontSources::Bundled);
+    let doc = parse(&note(9), &ParseOptions::default());
+    let full = lay_out(&engine, &doc, &Layout::default(), &Style::default());
+    assert!(!full.stopped);
+    assert!(full.passes > 1, "la note demande des ajustements");
+    // Une nouvelle retouche arrive dès le premier ajustement.
+    let laid = nectar_typst::lay_out_with(&engine, &doc, &Layout::default(), &Style::default(), &|| true);
+    assert!(laid.stopped);
+    assert_eq!(laid.passes, 1, "aucune recomposition après l'arrêt");
+}
