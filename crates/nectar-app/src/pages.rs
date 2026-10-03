@@ -269,7 +269,7 @@ pub fn show(app: &NectarApp, ui: &mut egui::Ui, views: &[PageView], zoom: f32, n
                         }
                     }
                     ui.separator();
-                    if ui.button("Toutes les retouches…").clicked() {
+                    if ui.button("Plus d'options…").clicked() {
                         action.more = true;
                         ui.close();
                     }
@@ -428,7 +428,7 @@ pub fn show(app: &NectarApp, ui: &mut egui::Ui, views: &[PageView], zoom: f32, n
                 let ops = &app.resolved;
                 for position in positions {
                     let Some(block_ops) = ops.get(&position.id) else { continue };
-                    let summary = summary(block_ops);
+                    let summary = actions::summary(block_ops);
                     if summary.is_empty() {
                         continue;
                     }
@@ -512,25 +512,27 @@ pub fn show(app: &NectarApp, ui: &mut egui::Ui, views: &[PageView], zoom: f32, n
                     bands(rendered, id, &children, views, &margins).into_iter().next()
                 && let Some(page_rect) = page_rects.get(page)
             {
-                // La barre ne recouvre jamais un autre bloc (un clic destiné au
-                // voisin tomberait sur un de ses boutons) : elle se pose dans le
-                // bloc lui-même s'il est assez haut, sinon à côté de la page.
+                // La barre se pose juste au-dessus du bloc (ou dessous s'il est en
+                // haut de l'écran) : le bloc retouché reste entièrement visible.
                 let clip = ui.clip_rect();
                 let right = (page_rect.left() + (x1 + 5.0).max(margins.left + 120.0) * scale).min(clip.right() - 4.0);
                 let band_top = page_rect.top() + (top - 4.0) * scale;
                 let band_bottom = page_rect.top() + (bottom + 3.0) * scale;
-                let visible_top = band_top.max(clip.top() + 4.0);
-                // Sans place sûre, pas de barre : le panneau et le clic droit restent.
-                let placed = if band_bottom - visible_top >= 44.0 {
-                    Some((egui::pos2(right - 4.0, visible_top + 4.0), egui::Align2::RIGHT_TOP))
-                } else if clip.right() - page_rect.right() >= 380.0 {
-                    Some((egui::pos2(page_rect.right() + 40.0, visible_top), egui::Align2::LEFT_TOP))
-                } else {
+                const BAR: f32 = 36.0;
+                let placed = if band_bottom < clip.top() || band_top > clip.bottom() {
+                    // Bloc hors de l'écran : pas de barre.
                     None
+                } else if band_top - BAR >= clip.top() {
+                    Some((egui::pos2(right, band_top - 4.0), egui::Align2::RIGHT_BOTTOM))
+                } else if band_bottom + BAR <= clip.bottom() {
+                    Some((egui::pos2(right, band_bottom + 4.0), egui::Align2::RIGHT_TOP))
+                } else if clip.right() - page_rect.right() >= 380.0 {
+                    Some((egui::pos2(page_rect.right() + 40.0, clip.top() + 8.0), egui::Align2::LEFT_TOP))
+                } else {
+                    // Bloc plus haut que l'écran : dans son coin, en haut.
+                    Some((egui::pos2(right - 4.0, clip.top() + 8.0), egui::Align2::RIGHT_TOP))
                 };
-                if let Some((pos, pivot)) = placed
-                    && clip.contains(pos)
-                {
+                if let Some((pos, pivot)) = placed {
                     toolbar(app, ui.ctx(), id, pos, pivot, &mut action);
                 }
             }
@@ -731,7 +733,7 @@ fn toolbar(
                         let more = egui::Button::new(egui::RichText::new("Plus…").size(12.5).color(t.identity))
                             .fill(t.raised)
                             .stroke(Stroke::NONE);
-                        if ui.add(more).on_hover_text("Toutes les retouches de ce bloc").clicked() {
+                        if ui.add(more).on_hover_text("Toutes les options de ce bloc, dans le panneau").clicked() {
                             action.more = true;
                         }
                     });
@@ -780,64 +782,6 @@ fn paint_ghost(
         ui.painter().rect_filled(tag, 0.0, t.accent);
         ui.painter().galley(at + egui::vec2(5.0, 2.0), galley, t.accent_ink);
     }
-}
-
-/// Les retouches d'un bloc, en mots.
-fn summary(ops: &nectar_core::BlockOps) -> Vec<String> {
-    use nectar_core::layout::{PageChange, Placement};
-    let mut out = Vec::new();
-    if ops.break_before {
-        out.push("Nouvelle page avant".into());
-    }
-    if ops.break_after {
-        out.push("Reste de la page vide après".into());
-    }
-    if ops.keep_with_next {
-        out.push("Gardé avec le suivant".into());
-    }
-    match ops.keep_together {
-        Some(true) => out.push("Insécable".into()),
-        Some(false) => out.push("Coupure autorisée".into()),
-        None => {}
-    }
-    if ops.push_to_bottom {
-        out.push("Poussé en bas de page".into());
-    }
-    if let Some(mm) = ops.space_before_mm {
-        out.push(format!("Espace avant {mm} mm"));
-    }
-    match &ops.page {
-        Some(PageChange::Set(spec)) => out.push(format!(
-            "Format {}{} ({})",
-            spec.paper.to_uppercase(),
-            if spec.landscape { " paysage" } else { "" },
-            if ops.page_onward { "et pages suivantes" } else { "cette page" }
-        )),
-        Some(PageChange::Default(_)) => out.push("Retour au format du document".into()),
-        None => {}
-    }
-    if let Some(image) = &ops.image {
-        if let Some(w) = image.width_percent {
-            out.push(format!("Image à {w:.0} %"));
-        }
-        match image.placement {
-            Placement::Top => out.push("Image en haut de page".into()),
-            Placement::Bottom => out.push("Image en bas de page".into()),
-            Placement::FullPage => out.push("Image pleine page".into()),
-            Placement::Landscape => out.push("Image sur une page paysage".into()),
-            Placement::Inline => {}
-        }
-    }
-    if ops.style.is_some() {
-        out.push("Apparence propre".into());
-    }
-    if ops.table.is_some() {
-        out.push("Colonnes réglées".into());
-    }
-    if ops.hidden {
-        out.push("Masqué".into());
-    }
-    out
 }
 
 struct Margins {

@@ -18,12 +18,14 @@
   - la **poignée** à droite d'une image règle sa largeur ;
   - **clic droit** : les mêmes actions rapides ;
   - **clic sur le numéro d'une page** (ou dans sa marge, ou dans le blanc sous le texte) : la page est sélectionnée et on choisit son format en un clic (A4 paysage, A3, A3 paysage, autre).
-- Au clavier : Alt + ↑ / ↓ déplace le bloc d'1 mm (Maj : 5 mm), Ctrl + Entrée lui donne une nouvelle page, Suppr efface ses retouches, ↑ / ↓ passe au bloc voisin.
-- Onglet **Retoucher** : l'essentiel d'abord (actions, décalage, image, colonnes du tableau), le reste dans « Plus d'options » (format de la page du bloc, apparence, masquer, appliquer à tous les titres du même niveau).
+- Au clavier : Alt + ↑ / ↓ déplace le bloc d'1 mm (Maj : 5 mm), Ctrl + Entrée lui donne une nouvelle page, Suppr remet le bloc comme avant, ↑ / ↓ passe au bloc voisin.
+- Onglet **Retoucher** : sans sélection, trois étapes pour bien commencer ; sur un bloc, d'abord « Ce que tu as changé » (avec « Tout remettre comme avant »), puis **Placer** (page suivante, garder avec la suite, ne pas couper…), **Décaler** (Remonter / Descendre), l'image ; le reste dans « Plus d'options » (format de la page du bloc, apparence, ne pas imprimer, appliquer à tous les titres du même niveau). L'aide affichée est celle du choix survolé.
+- Après chaque retouche, une **bulle** en bas des pages dit ce qui a changé, avec **Annuler** (puis **Rétablir**). Si le bloc change de page, la vue le suit.
+- La barre d'actions se pose au-dessus du bloc sélectionné, sans en cacher le contenu ; la barre du bas dit si les pages sont propres ou combien de points sont à voir (un clic ouvre Vérifier).
 - **Format d'une page** : la page prend ce format, se remplit avec la suite, puis le document reprend tout seul son format. Cocher « Et les pages suivantes » pour le garder jusqu'au prochain changement.
 - **Plan** dans la barre du haut : aller directement à un titre.
 - **Repères jaunes dans la marge** sur les blocs retouchés (résumé au survol).
-- Onglet **Style** : un preset en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme preset… ».
+- Onglet **Style** : un modèle (preset) en un clic, l'essentiel (police, taille, marges, thème du code, page de garde, numéros, sommaire), tout le reste dans « Réglages détaillés » ; « Enregistrer comme modèle… ».
 - Onglet **Vérifier** : l'assistant de mise en page (voir plus bas).
 - Retouches visibles tout de suite : sur une longue note, la page s'affiche d'abord avec les décisions automatiques précédentes, puis le placement automatique la complète (« Placement automatique… ») ; une nouvelle retouche interrompt le calcul en cours.
 - Annuler et rétablir immédiats (les dernières mises en page sont gardées ; un glisser = une seule étape), export PDF, zoom (Ctrl + molette), notes récentes, « ouvrir dans Obsidian », thème clair ou sombre au design Agrume.

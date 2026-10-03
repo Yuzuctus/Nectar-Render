@@ -1,4 +1,4 @@
-//! Le style du PDF : un preset, puis tout réglable à la main.
+//! Le style du PDF : un modèle, puis tout réglable à la main.
 
 use eframe::egui::{self, FontId, RichText};
 use nectar_core::Style;
@@ -15,7 +15,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let Some(project) = &app.project else { return };
 
     // Preset.
-    kicker(ui, "Preset");
+    kicker(ui, "Modèle");
     ui.add_space(2.0);
     let presets: Vec<(String, String, bool)> =
         project.presets.presets().iter().map(|p| (p.id.clone(), p.label.clone(), p.builtin)).collect();
@@ -39,10 +39,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
             }
         }
     });
-    super::widgets::help(
-        ui,
-        "Un preset règle tout le style d'un coup. Ce que tu changes ensuite s'ajoute par-dessus ; « Rétablir le preset » l'efface.",
-    );
+    super::widgets::help(ui, "Un modèle règle tout le style d'un coup. Ce que tu changes ensuite s'ajoute par-dessus.");
     if has_overrides {
         ui.label(
             RichText::new(format!("{current_label}, modifié à la main"))
@@ -52,10 +49,10 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     }
     let mut deleted = false;
     ui.horizontal_wrapped(|ui| {
-        if ui.add_enabled(has_overrides, egui::Button::new("Rétablir le preset")).clicked() {
+        if ui.add_enabled(has_overrides, egui::Button::new("Revenir au modèle")).clicked() {
             app.edit_layout(&ctx, |layout| layout.style.overrides.clear());
         }
-        if ui.button("Enregistrer comme preset…").clicked() {
+        if ui.button("Enregistrer comme modèle…").clicked() {
             app.save_preset_dialog = Some(String::new());
         }
         if !current_builtin && ui.button("Supprimer").clicked() {
@@ -569,19 +566,19 @@ fn fields(ui: &mut egui::Ui, s: &mut Style, families: &[String]) {
     });
 }
 
-/// Fenêtre « Enregistrer comme preset ».
+/// Fenêtre « Enregistrer comme modèle ».
 pub fn save_preset_modal(app: &mut NectarApp, ctx: &egui::Context) {
     let Some(mut name) = app.save_preset_dialog.take() else { return };
     let mut keep = true;
     let mut save = false;
     egui::Modal::new(egui::Id::new("enregistrer-preset")).show(ctx, |ui| {
         ui.set_width(340.0);
-        kicker(ui, "Nouveau preset");
+        kicker(ui, "Nouveau modèle");
         ui.add_space(4.0);
-        ui.label("Le style actuel, réglages compris, devient un preset réutilisable pour toutes tes notes.");
+        ui.label("Le style actuel, réglages compris, devient un modèle réutilisable pour toutes tes notes.");
         ui.add_space(8.0);
         let response =
-            ui.add(egui::TextEdit::singleline(&mut name).hint_text("Nom du preset").desired_width(f32::INFINITY));
+            ui.add(egui::TextEdit::singleline(&mut name).hint_text("Nom du modèle").desired_width(f32::INFINITY));
         response.request_focus();
         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             save = true;
@@ -602,9 +599,9 @@ pub fn save_preset_modal(app: &mut NectarApp, ctx: &egui::Context) {
         match result {
             Some(Ok(id)) => {
                 app.edit_layout(ctx, |layout| layout.style = StyleRef { preset: id, overrides: Default::default() });
-                app.notify(format!("Preset « {} » enregistré", name.trim()), false);
+                app.notify(format!("Modèle « {} » enregistré", name.trim()), false);
             }
-            Some(Err(e)) => app.notify(format!("Enregistrement du preset impossible : {e}"), true),
+            Some(Err(e)) => app.notify(format!("Enregistrement du modèle impossible : {e}"), true),
             None => {}
         }
         return;

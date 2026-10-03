@@ -89,7 +89,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         for fix in &landscapes {
             app.edit_block(&ctx, &fix.block, |ops| fix.apply(ops));
         }
-        app.notify(format!("{} schémas mis en paysage", landscapes.len()), false);
+        app.notify_done(format!("{} schémas mis en paysage", landscapes.len()));
         return;
     }
     let mut select = None;
@@ -131,6 +131,6 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     if let Some((index, k)) = apply {
         let fix = issues[index].fixes[k].clone();
         app.edit_block(&ctx, &fix.block, |ops| fix.apply(ops));
-        app.notify(format!("Retouche appliquée : {}", fix.label), false);
+        app.notify_done(format!("Fait : {}", fix.label));
     }
 }

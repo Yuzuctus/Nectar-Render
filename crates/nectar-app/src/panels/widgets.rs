@@ -55,7 +55,7 @@ pub fn parse_hex(value: &str) -> Option<[u8; 3]> {
 pub fn font(ui: &mut egui::Ui, id: &str, value: &mut String, families: &[String]) -> bool {
     let mut changed = false;
     let mut filter = ui.data_mut(|d| d.get_temp::<String>(egui::Id::new((id, "filtre"))).unwrap_or_default());
-    egui::ComboBox::from_id_salt(id).selected_text(value.as_str()).width(190.0).height(320.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(value.as_str()).width(165.0).height(320.0).show_ui(ui, |ui| {
         ui.add(egui::TextEdit::singleline(&mut filter).hint_text("Chercher…").desired_width(170.0));
         let needle = filter.to_lowercase();
         let suggested =
@@ -79,7 +79,7 @@ pub fn font(ui: &mut egui::Ui, id: &str, value: &mut String, families: &[String]
 pub fn choice<T: PartialEq + Clone>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool {
     let mut changed = false;
     let current = options.iter().find(|(v, _)| v == value).map(|(_, l)| *l).unwrap_or("—");
-    egui::ComboBox::from_id_salt(id).selected_text(current).width(190.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(current).width(165.0).show_ui(ui, |ui| {
         for (option, label) in options {
             if ui.selectable_label(option == value, *label).clicked() && option != value {
                 *value = option.clone();
@@ -97,7 +97,20 @@ pub fn number(
     speed: f64,
     suffix: &str,
 ) -> bool {
-    ui.add(egui::DragValue::new(value).range(range).speed(speed).suffix(suffix).max_decimals(2)).changed()
+    // Virgule décimale, à la française : « 10,5 pt ».
+    let drag = egui::DragValue::new(value)
+        .range(range)
+        .speed(speed)
+        .suffix(suffix)
+        .max_decimals(2)
+        .custom_formatter(|v, decimals| {
+            let text = format!("{v:.*}", decimals.end().min(&2).to_owned());
+            let text =
+                if text.contains('.') { text.trim_end_matches('0').trim_end_matches('.').to_string() } else { text };
+            text.replace('.', ",")
+        })
+        .custom_parser(|text| text.trim().replace(',', ".").parse::<f64>().ok());
+    ui.add(drag).changed()
 }
 
 /// Un intertitre de section dans un panneau.
@@ -115,7 +128,7 @@ pub fn section(ui: &mut egui::Ui, title: &str, open: bool, body: impl FnOnce(&mu
 
 /// Grille libellé / champ.
 pub fn grid(ui: &mut egui::Ui, id: &str, body: impl FnOnce(&mut egui::Ui)) {
-    egui::Grid::new(id).num_columns(2).spacing([12.0, 7.0]).min_col_width(110.0).show(ui, body);
+    egui::Grid::new(id).num_columns(2).spacing([10.0, 7.0]).min_col_width(96.0).show(ui, body);
 }
 
 pub fn label(ui: &mut egui::Ui, text: &str) {
@@ -126,8 +139,8 @@ pub fn label(ui: &mut egui::Ui, text: &str) {
 pub fn segmented<T: PartialEq + Clone>(ui: &mut egui::Ui, value: &mut T, options: &[(T, &str)]) -> bool {
     let t = theme::tokens(ui.ctx());
     let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 4.0);
         for (option, label) in options {
             let selected = option == value;
             let text = RichText::new(*label).color(if selected { t.accent_ink } else { t.ink });
@@ -141,22 +154,12 @@ pub fn segmented<T: PartialEq + Clone>(ui: &mut egui::Ui, value: &mut T, options
     changed
 }
 
-/// Bouton à bascule : jaune quand il est actif.
-fn toggle_response(ui: &mut egui::Ui, on: bool, label: &str) -> egui::Response {
+/// Bouton à bascule : jaune (et coché) quand il est actif.
+pub fn toggle(ui: &mut egui::Ui, on: bool, label: &str) -> egui::Response {
     let t = theme::tokens(ui.ctx());
     let text = RichText::new(label).color(if on { t.accent_ink } else { t.ink });
     let text = if on { RichText::new(format!("✔ {label}")).color(t.accent_ink) } else { text };
     ui.add(egui::Button::new(text).fill(if on { t.accent } else { t.raised }))
-}
-
-/// Une option expliquée : le bouton, puis ce qu'elle fait en une phrase.
-/// Rend le bouton (cliqué, survolé…).
-pub fn explained(ui: &mut egui::Ui, on: bool, label: &str, explain: &str) -> egui::Response {
-    // L'explication est écrite dessous : pas d'infobulle en plus.
-    let response = toggle_response(ui, on, label);
-    help(ui, explain);
-    ui.add_space(4.0);
-    response
 }
 
 /// Une case à cocher suivie de son explication.

@@ -16,23 +16,7 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let Some(project) = &app.project else { return };
     let Some(id) = app.selected.clone() else {
-        kicker(ui, "Aucun bloc sélectionné");
-        ui.add_space(4.0);
-        ui.label(RichText::new("Clique sur un bloc dans les pages pour le retoucher.").color(t.muted));
-        ui.add_space(6.0);
-        for tip in [
-            "Glisse un bloc vers le haut ou le bas pour le déplacer",
-            "Clic sur le numéro d'une page (ou dans sa marge) : son format",
-            "Clic à côté des pages : tout désélectionner · F1 : l'aide",
-            "Alt + ↑ / ↓ : déplacer d'1 mm (Maj : 5 mm)",
-            "Clic droit sur un bloc : actions rapides",
-            "Ctrl + Entrée : le bloc passe à la page suivante",
-            "↑ / ↓ : bloc précédent ou suivant",
-        ] {
-            ui.label(RichText::new(format!("·  {tip}")).small().color(t.faint));
-        }
-        ui.add_space(12.0);
-        document_section(app, ui);
+        first_steps(app, ui);
         return;
     };
     let anchors = project.document.anchors();
@@ -89,6 +73,30 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
     ui.add_space(10.0);
 
     let mut ops = current.clone();
+    let mut nudge_mm = 0.0f32;
+
+    // Ce qui a déjà été changé sur ce bloc, et comment tout remettre.
+    let changed = actions::summary(&current);
+    if !changed.is_empty() {
+        card(ui, t, |ui| {
+            ui.label(RichText::new("Ce que tu as changé").font(FontId::new(13.0, theme::strong())));
+            for line in &changed {
+                ui.label(RichText::new(format!("·  {line}")).color(t.muted));
+            }
+            ui.add_space(2.0);
+            if current.manual && ui.button("Laisser Nectar placer ce bloc").clicked() {
+                ops.manual = false;
+            }
+            let reset = ui.button("↺ Tout remettre comme avant").on_hover_text("Suppr");
+            if reset.hovered() {
+                crate::pages::hover_action(&ctx, &id, Quick::Clear);
+            }
+            if reset.clicked() {
+                ops = BlockOps::default();
+            }
+        });
+        ui.add_space(8.0);
+    }
 
     // Ce que le placement automatique a fait de ce bloc, et comment le refuser.
     let choices: Vec<nectar_core::auto::Choice> = app
@@ -96,128 +104,125 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         .as_ref()
         .map(|r| r.choices.iter().filter(|c| c.block == id && !c.kind.global()).cloned().collect())
         .unwrap_or_default();
-    if !choices.is_empty() || ops.manual {
-        egui::Frame::new().fill(t.surface).stroke(egui::Stroke::new(1.0, t.rule)).inner_margin(8).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if ops.manual {
-                ui.label(RichText::new("Tel quel").font(FontId::new(13.0, theme::strong())));
-                widgets::help(
-                    ui,
-                    "Le placement automatique ne touche pas à ce bloc (pas de page paysage, pas de réduction).",
-                );
-                if ui.button("Laisser Nectar décider à nouveau").clicked() {
-                    ops.manual = false;
-                }
-            } else {
-                ui.label(RichText::new("Fait automatiquement").font(FontId::new(13.0, theme::strong())));
-                for choice in &choices {
-                    widgets::help(ui, &format!("·  {}", choice.describe()));
-                }
-                let keep = ui
-                    .button("Laisser ce bloc tel quel")
-                    .on_hover_text("Annule ces décisions pour ce bloc ; les autres blocs ne changent pas.");
-                if keep.hovered() {
-                    crate::pages::hover_action(&ctx, &id, Quick::AsIs);
-                }
-                if keep.clicked() {
-                    ops.manual = true;
-                }
+    if !choices.is_empty() && !current.manual {
+        card(ui, t, |ui| {
+            ui.label(RichText::new("Placé automatiquement").font(FontId::new(13.0, theme::strong())));
+            for choice in &choices {
+                ui.label(RichText::new(format!("·  {}", choice.describe())).color(t.muted));
+            }
+            ui.add_space(2.0);
+            let keep = ui
+                .button("Garder tel quel")
+                .on_hover_text("Nectar n'y touche plus ; les autres blocs ne changent pas.");
+            if keep.hovered() {
+                crate::pages::hover_action(&ctx, &id, Quick::AsIs);
+            }
+            if keep.clicked() {
+                ops.manual = true;
             }
         });
         ui.add_space(8.0);
     }
 
-    // L'essentiel, à un clic, chaque option avec ce qu'elle fait.
-    kicker(ui, "Où placer ce bloc ?");
+    // Placer : l'essentiel, à un clic. L'aide est celle du choix survolé.
+    kicker(ui, "Placer");
     ui.add_space(4.0);
-    for offer in &offers {
-        if matches!(offer.quick, Quick::Clear | Quick::AsIs)
-            || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage))
-        {
-            continue;
+    let mut hint = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for offer in &offers {
+            if matches!(offer.quick, Quick::Clear | Quick::AsIs)
+                || (is_figure && matches!(offer.quick, Quick::Landscape | Quick::FullPage))
+            {
+                continue;
+            }
+            let response = widgets::toggle(ui, offer.active, offer.label);
+            if response.hovered() {
+                crate::pages::hover_action(&ctx, &id, offer.quick);
+                hint = Some(offer.hint);
+            }
+            if response.clicked() {
+                actions::apply(&mut ops, offer.quick);
+            }
         }
-        let response = widgets::explained(ui, offer.active, offer.label, offer.hint);
-        if response.hovered() {
-            crate::pages::hover_action(&ctx, &id, offer.quick);
-        }
-        if response.clicked() {
-            actions::apply(&mut ops, offer.quick);
-        }
-    }
-    ui.add_space(8.0);
-    kicker(ui, "Rapprocher ou éloigner");
-    ui.add_space(2.0);
+    });
+    widgets::help(ui, hint.unwrap_or("Survole un choix : la page montre ce qui va bouger."));
+    ui.add_space(10.0);
+
+    // Décaler : boutons plutôt qu'un nombre à taper.
+    kicker(ui, "Décaler");
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        label(ui, "Espace en plus avant");
-        let mut mm = ops.space_before_mm.unwrap_or(0.0);
-        if widgets::number(ui, &mut mm, -50.0..=200.0, 0.5, " mm") {
-            ops.space_before_mm = (mm.abs() >= 0.25).then_some(mm);
+        if ui.button("↑ Remonter").on_hover_text("2 mm plus haut (Alt + ↑)").clicked() {
+            nudge_mm = -2.0;
         }
-        if ops.space_before_mm.is_some() && ui.small_button("0").on_hover_text("Remettre à sa place").clicked() {
+        if ui.button("↓ Descendre").on_hover_text("2 mm plus bas (Alt + ↓)").clicked() {
+            nudge_mm = 2.0;
+        }
+        let where_ = match current.space_before_mm {
+            Some(mm) if mm > 0.0 => format!("{} mm plus bas", millimetres(mm)),
+            Some(mm) => format!("{} mm plus haut", millimetres(-mm)),
+            None => "à sa place".to_string(),
+        };
+        ui.label(RichText::new(where_).color(t.muted));
+        if current.space_before_mm.is_some() && ui.small_button("Remettre").clicked() {
             ops.space_before_mm = None;
         }
     });
-    widgets::help(
-        ui,
-        "Négatif : le bloc remonte vers le précédent ; positif : il descend. Plus simple : glisse le bloc dans la page, ou Alt + ↑ / ↓.",
-    );
+    widgets::help(ui, "Tu peux aussi glisser le bloc dans la page.");
     ui.add_space(10.0);
 
     if is_figure {
-        kicker(ui, "Taille et place de l'image");
-        ui.add_space(2.0);
+        kicker(ui, "Image");
+        ui.add_space(4.0);
         let image = ops.image.get_or_insert_with(ImageOps::default);
         widgets::segmented(
             ui,
             &mut image.placement,
-            &[(Placement::Inline, "Dans le texte"), (Placement::Top, "En haut"), (Placement::Bottom, "En bas")],
-        );
-        widgets::segmented(
-            ui,
-            &mut image.placement,
-            &[(Placement::FullPage, "Seule sur sa page"), (Placement::Landscape, "Page paysage")],
+            &[
+                (Placement::Inline, "Dans le texte"),
+                (Placement::Top, "En haut"),
+                (Placement::Bottom, "En bas"),
+                (Placement::FullPage, "Seule sur sa page"),
+                (Placement::Landscape, "Page paysage"),
+            ],
         );
         widgets::help(
             ui,
             match image.placement {
-                Placement::Inline => "À sa place dans le texte, entre ce qui la précède et ce qui la suit.",
-                Placement::Top => "En haut de la page : le texte se range dessous, sans trou.",
-                Placement::Bottom => "En bas de la page : le texte se range au-dessus, sans trou.",
+                Placement::Inline => "À sa place dans le texte.",
+                Placement::Top => "En haut de la page ; le texte se range dessous.",
+                Placement::Bottom => "En bas de la page ; le texte se range au-dessus.",
                 Placement::FullPage => "Seule sur une page, aussi grande que possible.",
-                Placement::Landscape => {
-                    "Seule sur une page tournée, en grand ; le texte reprend ensuite au format normal."
-                }
+                Placement::Landscape => "Seule sur une page tournée, en grand.",
             },
         );
         ui.add_space(4.0);
         grid(ui, "image-grille", |ui| {
             label(ui, "Largeur");
             ui.horizontal(|ui| {
-                match &mut image.width_percent {
-                    Some(w) => {
-                        ui.add(egui::Slider::new(w, 10.0..=100.0).suffix(" %").integer());
-                    }
-                    None => {
-                        ui.label(RichText::new("taille d'origine").color(t.faint));
-                    }
+                let mut width = image.width_percent.unwrap_or(100.0);
+                if ui.add(egui::Slider::new(&mut width, 10.0..=100.0).suffix(" %").integer()).changed() {
+                    image.width_percent = Some(width);
                 }
-                let auto = image.width_percent.is_none();
-                if ui.small_button(if auto { "Régler" } else { "Auto" }).clicked() {
-                    image.width_percent = if auto { Some(100.0) } else { None };
+                if image.width_percent.is_some() {
+                    if ui.small_button("Auto").on_hover_text("Taille choisie par Nectar").clicked() {
+                        image.width_percent = None;
+                    }
+                } else {
+                    ui.label(RichText::new("auto").color(t.faint));
                 }
             });
             ui.end_row();
             label(ui, "Alignement");
             let mut align = image.align.unwrap_or(HAlign::Center);
-            ui.horizontal(|ui| {
-                if widgets::segmented(
-                    ui,
-                    &mut align,
-                    &[(HAlign::Left, "Gauche"), (HAlign::Center, "Centre"), (HAlign::Right, "Droite")],
-                ) {
-                    image.align = Some(align);
-                }
-            });
+            if widgets::segmented(
+                ui,
+                &mut align,
+                &[(HAlign::Left, "Gauche"), (HAlign::Center, "Centre"), (HAlign::Right, "Droite")],
+            ) {
+                image.align = Some(align);
+            }
             ui.end_row();
             label(ui, "Légende");
             let mut caption = image.caption.clone().unwrap_or_default();
@@ -232,64 +237,66 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         if image == &ImageOps::default() {
             ops.image = None;
         }
-        ui.label(RichText::new("La poignée à droite de l'image règle aussi sa largeur.").small().color(t.faint));
-        ui.add_space(10.0);
-    }
-
-    if let Some(headers) = &table_columns {
-        kicker(ui, "Colonnes du tableau");
-        ui.add_space(2.0);
-        let table = ops.table.get_or_insert_with(TableOps::default);
-        table.widths.resize(headers.len(), 0.0);
-        table.align.resize(headers.len(), None);
-        grid(ui, "colonnes-tableau", |ui| {
-            for (i, header) in headers.iter().enumerate() {
-                let name = if header.is_empty() { format!("Colonne {}", i + 1) } else { header.clone() };
-                label(ui, &name);
-                ui.horizontal(|ui| {
-                    let mut fixed = table.widths[i] > 0.0;
-                    if ui.checkbox(&mut fixed, "").on_hover_text("Largeur relative (sinon automatique)").changed() {
-                        table.widths[i] = if fixed { 1.0 } else { 0.0 };
-                    }
-                    if fixed {
-                        ui.add(
-                            egui::DragValue::new(&mut table.widths[i]).range(0.2..=10.0).speed(0.05).suffix(" part"),
-                        );
-                    } else {
-                        ui.label(RichText::new("auto").color(t.faint));
-                    }
-                    let mut align = table.align[i];
-                    choice(
-                        ui,
-                        &format!("align-col-{i}"),
-                        &mut align,
-                        &[
-                            (None, "—"),
-                            (Some(HAlign::Left), "Gauche"),
-                            (Some(HAlign::Center), "Centre"),
-                            (Some(HAlign::Right), "Droite"),
-                        ],
-                    );
-                    table.align[i] = align;
-                });
-                ui.end_row();
-            }
-        });
-        if table.widths.iter().all(|w| *w <= 0.0) && table.align.iter().all(Option::is_none) {
-            ops.table = None;
-        }
+        widgets::help(ui, "La poignée à droite de l'image règle aussi sa largeur.");
         ui.add_space(10.0);
     }
 
     theme::rule(ui, 1.0, false);
+    if let Some(headers) = &table_columns {
+        section(ui, "Colonnes du tableau", false, |ui| {
+            let table = ops.table.get_or_insert_with(TableOps::default);
+            table.widths.resize(headers.len(), 0.0);
+            table.align.resize(headers.len(), None);
+            grid(ui, "colonnes-tableau", |ui| {
+                for (i, header) in headers.iter().enumerate() {
+                    let name = if header.is_empty() { format!("Colonne {}", i + 1) } else { header.clone() };
+                    label(ui, &name);
+                    ui.horizontal(|ui| {
+                        let mut fixed = table.widths[i] > 0.0;
+                        if ui.checkbox(&mut fixed, "").on_hover_text("Largeur relative (sinon automatique)").changed() {
+                            table.widths[i] = if fixed { 1.0 } else { 0.0 };
+                        }
+                        if fixed {
+                            ui.add(
+                                egui::DragValue::new(&mut table.widths[i])
+                                    .range(0.2..=10.0)
+                                    .speed(0.05)
+                                    .suffix(" part"),
+                            );
+                        } else {
+                            ui.label(RichText::new("auto").color(t.faint));
+                        }
+                        let mut align = table.align[i];
+                        choice(
+                            ui,
+                            &format!("align-col-{i}"),
+                            &mut align,
+                            &[
+                                (None, "—"),
+                                (Some(HAlign::Left), "Gauche"),
+                                (Some(HAlign::Center), "Centre"),
+                                (Some(HAlign::Right), "Droite"),
+                            ],
+                        );
+                        table.align[i] = align;
+                    });
+                    ui.end_row();
+                }
+            });
+            if table.widths.iter().all(|w| *w <= 0.0) && table.align.iter().all(Option::is_none) {
+                ops.table = None;
+            }
+        });
+    }
+
     let mut apply_to_headings = false;
-    section(ui, "Autres réglages", false, |ui| {
+    section(ui, "Plus d'options", false, |ui| {
         if !is_figure {
             widgets::explained_check(
                 ui,
                 &mut ops.break_after,
-                "Fin de page après",
-                "Le reste de la page reste vide : la suite commence page suivante.",
+                "Finir la page ici",
+                "Ce qui suit ce bloc commence sur la page suivante.",
             );
         }
         widgets::explained_check(
@@ -335,9 +342,9 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
         }
     });
 
-    ui.add_space(8.0);
-    if ui.add_enabled(!current.is_empty(), egui::Button::new("Effacer les retouches de ce bloc")).clicked() {
-        ops = BlockOps::default();
+    if nudge_mm != 0.0 {
+        app.nudge(&ctx, &id, nudge_mm);
+        return;
     }
 
     if apply_to_headings && let Some(level) = heading_level {
@@ -365,17 +372,19 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui) {
                 ops.style = model.style.clone();
             }
         });
-        app.notify(format!("Retouches appliquées à {count} titres"), false);
+        app.notify_done(format!("Appliqué aux {count} titres de ce niveau"));
         return;
     }
 
     if ops != current {
+        let told = actions::change(&current, &ops);
         let owned_id = id.clone();
         let owned_excerpt = excerpt.clone();
         app.edit_layout(&ctx, move |layout| {
             let anchor = AnchorInfo { id: &owned_id, kind, line, excerpt: &owned_excerpt };
             *layout.ops_mut(anchor) = ops;
         });
+        app.notify_done(told);
     }
 }
 
@@ -501,20 +510,70 @@ fn appearance(ui: &mut egui::Ui, ops: &mut BlockOps, kind: BlockKind, heading: b
     }
 }
 
-/// Sans sélection : le format par défaut du document.
-fn document_section(app: &mut NectarApp, ui: &mut egui::Ui) {
+/// Sans sélection : comment s'y prendre, en trois temps, puis le format
+/// du document.
+fn first_steps(app: &mut NectarApp, ui: &mut egui::Ui) {
+    let t = theme::tokens(ui.ctx());
     let ctx = ui.ctx().clone();
-    let Some(project) = &app.project else { return };
-    let mut page = project.layout.page.clone();
-    kicker(ui, "Format du document");
+    ui.label(RichText::new("Retoucher la mise en page").font(FontId::new(17.0, theme::strong())));
+    ui.add_space(8.0);
+    for (number, text) in [
+        ("1", "Clique sur un titre, un paragraphe, une image ou un tableau dans les pages."),
+        (
+            "2",
+            "Choisis ce que tu veux : nouvelle page, page paysage, taille… La page montre ce qui va bouger avant que tu cliques.",
+        ),
+        ("3", "Pour ajuster au millimètre, glisse le bloc vers le haut ou le bas."),
+    ] {
+        ui.horizontal_top(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, t.accent);
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                number,
+                FontId::new(12.0, theme::mono()),
+                t.accent_ink,
+            );
+            ui.add(egui::Label::new(RichText::new(text).color(t.ink)).wrap());
+        });
+        ui.add_space(6.0);
+    }
     ui.add_space(2.0);
-    let current = super::page::Format::Paper(page.paper.clone(), page.landscape);
-    if let Some(super::page::Format::Paper(paper, landscape)) = super::page::document_picker(ui, &current) {
-        page.paper = paper;
-        page.landscape = landscape;
-    }
-    widgets::help(ui, "Le format de toutes les pages, sauf celles qui ont le leur.");
-    if page != project.layout.page {
-        app.edit_layout(&ctx, move |layout| layout.page = page);
-    }
+    widgets::help(ui, "Tout s'enregistre seul, et tout s'annule avec Ctrl + Z. Nectar place déjà le reste au mieux.");
+    ui.add_space(8.0);
+    egui::CollapsingHeader::new(RichText::new("Raccourcis").color(t.muted)).default_open(false).show(ui, |ui| {
+        for (keys, what) in [
+            ("Clic droit", "les actions d'un bloc"),
+            ("↑ / ↓", "bloc précédent ou suivant (sinon : défiler)"),
+            ("Alt + ↑ / ↓", "décaler d'1 mm (Maj : 5 mm)"),
+            ("Ctrl + Entrée", "le bloc passe à la page suivante"),
+            ("Suppr", "tout remettre sur le bloc"),
+            ("Ctrl + Z / Y", "annuler / rétablir"),
+            ("Numéro d'une page", "son format"),
+            ("F1", "l'aide complète"),
+        ] {
+            ui.horizontal(|ui| {
+                ui.add_sized([110.0, 16.0], egui::Label::new(RichText::new(keys).small().strong()));
+                ui.label(RichText::new(what).small().color(t.muted));
+            });
+        }
+    });
+    ui.add_space(12.0);
+    super::page::document_format(app, ui, &ctx);
+}
+
+/// Un encadré discret.
+fn card(ui: &mut egui::Ui, t: theme::Tokens, body: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new().fill(t.surface).stroke(egui::Stroke::new(1.0, t.rule)).inner_margin(10).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 3.0;
+        body(ui);
+    });
+}
+
+/// Des millimètres à la française : « 4 », « 2,5 ».
+fn millimetres(mm: f32) -> String {
+    let rounded = (mm * 2.0).round() / 2.0;
+    if rounded.fract() == 0.0 { format!("{rounded:.0}") } else { format!("{rounded:.1}").replace('.', ",") }
 }

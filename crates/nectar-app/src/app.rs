@@ -63,7 +63,8 @@ pub struct NectarApp {
     dirty_since: Option<Instant>,
     /// Dernière modification, pour regrouper un glisser en une seule annulation.
     last_edit: Option<Instant>,
-    status: Option<(String, bool, Instant)>,
+    /// Message du moment (bulle en bas des pages).
+    status: Option<Toast>,
     /// Bloc à amener à l'écran ; `true` : seulement s'il n'y est pas déjà.
     scroll_to: Option<(BlockId, bool)>,
     /// Défilement demandé au clavier (points d'écran).
@@ -299,12 +300,18 @@ impl NectarApp {
         let Some(project) = &self.project else { return };
         let Some(anchor) = project.document.anchors().into_iter().find(|a| a.id == id) else { return };
         let (kind, line, excerpt) = (anchor.kind, anchor.line, anchor.excerpt.to_string());
-        let mut ops = project.layout.ops_for(&project.document, id);
+        let before = project.layout.ops_for(&project.document, id);
+        let mut ops = before.clone();
         edit(&mut ops);
+        if ops == before {
+            return;
+        }
+        let told = panels::actions::change(&before, &ops);
         let id = id.clone();
         self.edit_layout(ctx, move |layout| {
             *layout.ops_mut(nectar_core::model::AnchorInfo { id: &id, kind, line, excerpt: &excerpt }) = ops;
         });
+        self.notify_done(told);
     }
 
     /// Décale un bloc verticalement (espace avant, en millimètres). Il ne
@@ -360,6 +367,8 @@ impl NectarApp {
         if let Some(previous) = self.undo.pop() {
             self.redo.push(std::mem::replace(&mut project.layout, previous));
             self.save_and_refresh(ctx);
+            self.status =
+                Some(Toast { text: "Annulé".into(), error: false, at: Instant::now(), offer: Some(Undo::Redo) });
         }
     }
 
@@ -368,6 +377,8 @@ impl NectarApp {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(&mut project.layout, next));
             self.save_and_refresh(ctx);
+            self.status =
+                Some(Toast { text: "Rétabli".into(), error: false, at: Instant::now(), offer: Some(Undo::Undo) });
         }
     }
 
@@ -401,7 +412,12 @@ impl NectarApp {
     }
 
     pub fn notify(&mut self, message: impl Into<String>, error: bool) {
-        self.status = Some((message.into(), error, Instant::now()));
+        self.status = Some(Toast { text: message.into(), error, at: Instant::now(), offer: None });
+    }
+
+    /// Une retouche faite : la bulle la décrit et propose de l'annuler.
+    pub fn notify_done(&mut self, message: impl Into<String>) {
+        self.status = Some(Toast { text: message.into(), error: false, at: Instant::now(), offer: Some(Undo::Undo) });
     }
 
     pub fn select(&mut self, id: Option<BlockId>, scroll: bool) {
@@ -524,6 +540,15 @@ impl NectarApp {
                         // plus haut ont changé de hauteur.
                         if self.rendered.as_ref().is_some_and(|r| r.positions != laid.positions) {
                             self.pending_anchor = self.view_anchor.clone();
+                        }
+                        // Sauf si le bloc retouché change de page : la vue le suit.
+                        if let Some(id) = &self.selected {
+                            let page =
+                                |r: &crate::worker::Layouted| r.positions.iter().find(|p| &p.id == id).map(|p| p.page);
+                            let before = self.rendered.as_ref().and_then(page);
+                            if before.is_some() && page(&laid) != before {
+                                self.scroll_to = Some((id.clone(), true));
+                            }
                         }
                         self.rendered = Some(*laid);
                         self.requested.clear();
@@ -660,7 +685,6 @@ impl NectarApp {
             }
             if pressed(Modifiers::NONE, Key::Delete) {
                 self.edit_block(ctx, &id, |ops| panels::actions::apply(ops, panels::actions::Quick::Clear));
-                self.notify("Retouches du bloc effacées (Ctrl+Z pour annuler)", false);
             }
         }
         // Sans bloc sélectionné, les flèches et Page préc./suiv. font défiler.
@@ -899,24 +923,57 @@ impl NectarApp {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let mono = |s: String| RichText::new(s).font(FontId::new(11.0, theme::mono())).color(t.faint);
+                    let link = |s: String, color: egui::Color32| {
+                        egui::Button::new(RichText::new(s).font(FontId::new(11.0, theme::mono())).color(color))
+                            .frame(false)
+                    };
                     match &self.rendered {
                         Some(r) => {
-                            ui.label(mono(format!("{} PAGES · {} MS", r.pages.len(), r.millis)));
+                            let pages = r.pages.len();
+                            ui.label(mono(format!("{pages} PAGE{}", if pages > 1 { "S" } else { "" })))
+                                .on_hover_text(format!("Mise en page en {} ms", r.millis));
+                            ui.label(mono("·".into()));
+                            // L'état de la mise en page, en un coup d'œil ; un clic ouvre Vérifier.
+                            let remarks =
+                                r.issues.iter().filter(|i| i.severity > nectar_core::assistant::Severity::Info).count();
+                            let (text, color) = if remarks == 0 {
+                                ("✔ PAGES PROPRES".to_string(), t.identity)
+                            } else {
+                                (
+                                    format!("{remarks} POINT{} À VOIR", if remarks > 1 { "S" } else { "" }),
+                                    ui.visuals().warn_fg_color,
+                                )
+                            };
+                            if ui.add(link(text, color)).on_hover_text("Ouvrir Vérifier").clicked() {
+                                self.tab = Tab::Check;
+                            }
+                            let automatic = r.choices.iter().filter(|c| !c.kind.global()).count();
+                            if automatic > 0 {
+                                ui.label(mono("·".into()));
+                                let text = format!(
+                                    "{automatic} AJUSTEMENT{} AUTOMATIQUE{}",
+                                    if automatic > 1 { "S" } else { "" },
+                                    if automatic > 1 { "S" } else { "" }
+                                );
+                                if ui
+                                    .add(link(text, t.faint))
+                                    .on_hover_text("Ce que Nectar a placé tout seul (dans Vérifier)")
+                                    .clicked()
+                                {
+                                    self.tab = Tab::Check;
+                                }
+                            }
                             let warnings = r.warnings.len() + usize::from(r.error.is_some());
                             if warnings > 0 {
-                                let text = RichText::new(format!(
-                                    "⚠ {warnings} AVERTISSEMENT{}",
-                                    if warnings > 1 { "S" } else { "" }
-                                ))
-                                .font(FontId::new(11.0, theme::mono()))
-                                .color(ui.visuals().warn_fg_color);
-                                if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                                ui.label(mono("·".into()));
+                                let text = format!("⚠ {warnings} AVERTISSEMENT{}", if warnings > 1 { "S" } else { "" });
+                                if ui.add(link(text, ui.visuals().warn_fg_color)).clicked() {
                                     self.show_warnings = !self.show_warnings;
                                 }
                             }
                             if !r.missing_fonts.is_empty() {
                                 ui.label(mono(format!(
-                                    "POLICES ABSENTES : {}",
+                                    "· POLICES ABSENTES : {}",
                                     r.missing_fonts.join(", ").to_uppercase()
                                 )))
                                 .on_hover_text("Remplacées par une police de secours de la même famille.");
@@ -927,16 +984,72 @@ impl NectarApp {
                         }
                         None => {}
                     }
-                    if let Some((message, error, at)) = &self.status
-                        && at.elapsed() < Duration::from_secs(8)
-                    {
-                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(message).color(if *error { t.danger } else { t.identity }));
-                        });
-                        ui.ctx().request_repaint_after(Duration::from_secs(1));
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(mono("RETOUCHES ENREGISTRÉES AUTOMATIQUEMENT".into())).on_hover_text(
+                            "À côté de la note, dans le dossier .nectar ; la note n'est jamais modifiée.",
+                        );
+                    });
                 });
             });
+    }
+
+    /// La bulle du moment : ce qui vient d'être fait, et « Annuler ».
+    fn toast(&mut self, ctx: &egui::Context, area: egui::Rect) {
+        let t = theme::tokens(ctx);
+        let Some(toast) = &self.status else { return };
+        let hovered_key = egui::Id::new("bulle-survolee");
+        let hovered = ctx.data(|d| d.get_temp::<bool>(hovered_key)).unwrap_or(false);
+        let life = Duration::from_secs(if toast.error { 10 } else { 6 });
+        if toast.at.elapsed() > life && !hovered {
+            self.status = None;
+            return;
+        }
+        ctx.request_repaint_after(Duration::from_millis(250));
+        let offer = toast.offer.filter(|o| match o {
+            Undo::Undo => !self.undo.is_empty(),
+            Undo::Redo => !self.redo.is_empty(),
+        });
+        let (text, error) = (toast.text.clone(), toast.error);
+        let mut clicked = None;
+        let mut close = false;
+        let response = egui::Area::new(egui::Id::new("bulle"))
+            .fixed_pos(egui::pos2(area.center().x, area.bottom() - 18.0))
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::new()
+                    .fill(if error { t.danger } else { t.ink })
+                    .inner_margin(egui::Margin { left: 14, right: 6, top: 6, bottom: 6 })
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&text).color(t.paper));
+                            if let Some(offer) = offer {
+                                ui.add_space(8.0);
+                                let label = match offer {
+                                    Undo::Undo => "Annuler",
+                                    Undo::Redo => "Rétablir",
+                                };
+                                let button =
+                                    egui::Button::new(RichText::new(label).strong().color(t.ink)).fill(t.accent);
+                                if ui.add(button).clicked() {
+                                    clicked = Some(offer);
+                                }
+                            }
+                            let cross = egui::Button::new(RichText::new("×").size(16.0).color(t.paper)).frame(false);
+                            if ui.add(cross).on_hover_text("Fermer").clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+            })
+            .response;
+        ctx.data_mut(|d| d.insert_temp(hovered_key, response.hovered() || response.contains_pointer()));
+        match clicked {
+            Some(Undo::Undo) => self.undo(ctx),
+            Some(Undo::Redo) => self.redo(ctx),
+            None if close => self.status = None,
+            None => {}
+        }
     }
 
     fn empty_state(&mut self, ui: &mut egui::Ui) {
@@ -1160,11 +1273,13 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Glisser au-dessus d'un saut de page :", "le saut est retiré, le bloc revient à la suite."),
             ("Défiler :", "molette, ↑ / ↓ (sans bloc sélectionné), Page préc. / Page suiv., Début / Fin."),
             ("Alt + ↑ / ↓ :", "même chose au millimètre (avec Maj : 5 mm)."),
+            ("Remonter / Descendre (panneau) :", "décale le bloc de 2 mm ; « Remettre » le replace."),
             (
                 "↓ Page suivante (Ctrl + Entrée) :",
                 "le bloc et tout ce qui le suit passent en haut de la page suivante.",
             ),
-            ("Lier au suivant :", "le bloc n'est jamais séparé du suivant par une fin de page."),
+            ("Garder avec la suite :", "le bloc et le suivant restent toujours sur la même page."),
+            ("Finir la page ici :", "ce qui suit le bloc commence sur la page suivante."),
             ("Ne pas couper :", "un tableau, une liste ou un code reste entier sur une page."),
             ("Poignée à droite d'une image :", "règle sa largeur."),
             ("Clic droit sur un bloc :", "les mêmes actions, en menu."),
@@ -1200,7 +1315,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
             ("Dernière page de quelques lignes :", "les paragraphes se resserrent un peu pour la supprimer."),
             (
                 "Pour refuser :",
-                "sélectionner le bloc puis « Laisser ce bloc tel quel » ; tout couper : Style → Placement automatique.",
+                "sélectionner le bloc puis « Garder tel quel » ; tout couper : Style → Placement automatique.",
             ),
         ],
     ),
@@ -1218,7 +1333,7 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Style et vérification",
         &[
-            ("Style :", "un preset en un clic, puis l'essentiel ; tout le reste dans « Réglages détaillés »."),
+            ("Style :", "un modèle en un clic, puis l'essentiel ; tout le reste dans « Réglages détaillés »."),
             (
                 "Vérifier :",
                 "ce que l'assistant a repéré (page à moitié vide, schéma à agrandir…), corrigeable en un clic.",
@@ -1228,7 +1343,12 @@ const HELP: &[(&str, &[(&str, &str)])] = &[
     (
         "Annuler, enregistrer, zoomer",
         &[
-            ("Ctrl + Z / Ctrl + Y :", "annuler, rétablir. Suppr : retirer les retouches du bloc."),
+            ("Ctrl + Z / Ctrl + Y :", "annuler, rétablir. Suppr : tout remettre sur le bloc."),
+            ("Après chaque retouche", "une bulle en bas dit ce qui a changé, avec « Annuler »."),
+            (
+                "« Ce que tu as changé »",
+                "(en haut du panneau) : les retouches du bloc, et « Tout remettre comme avant ».",
+            ),
             (
                 "Les retouches",
                 "s'enregistrent toutes seules, à côté de la note (dossier .nectar) ; la note n'est jamais modifiée.",
@@ -1285,9 +1405,10 @@ impl NectarApp {
             return;
         }
 
+        // Largeur fixe : le panneau ne saute pas quand on ouvre une section.
         egui::Panel::right("reglages")
-            .default_size(340.0)
-            .size_range(300.0..=520.0)
+            .resizable(false)
+            .exact_size(360.0)
             .frame(egui::Frame::new().fill(t.paper).inner_margin(egui::Margin::symmetric(16, 12)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
@@ -1389,11 +1510,11 @@ impl NectarApp {
                     ops.break_before = true;
                     ops.space_before_mm = None;
                 });
-                self.notify("Le bloc passe en haut de la page suivante (Ctrl+Z pour annuler)", false);
+                self.notify_done("Le bloc et la suite passent en haut de la page suivante");
             }
             if let Some(id) = action.unbreak {
                 self.edit_block(&ctx, &id, |ops| ops.break_before = false);
-                self.notify("Le bloc revient à la suite de la page précédente", false);
+                self.notify_done("Le bloc revient à la suite de la page précédente");
             }
             if action.more {
                 self.tab = Tab::Block;
@@ -1440,6 +1561,7 @@ impl NectarApp {
                     });
                 ctx.request_repaint_after(Duration::from_millis(100));
             }
+            self.toast(&ctx, ui.max_rect());
         });
 
         self.warnings_window(&ctx);
@@ -1472,4 +1594,19 @@ fn usual_width(views: &[PageView]) -> Option<f32> {
 
 fn first_line(text: &str) -> String {
     text.lines().take(2).collect::<Vec<_>>().join(" ")
+}
+
+/// Ce que la bulle propose.
+#[derive(Clone, Copy, PartialEq)]
+enum Undo {
+    Undo,
+    Redo,
+}
+
+/// Le message du moment, avec de quoi revenir en arrière.
+struct Toast {
+    text: String,
+    error: bool,
+    at: Instant,
+    offer: Option<Undo>,
 }

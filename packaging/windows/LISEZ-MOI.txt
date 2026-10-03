@@ -15,7 +15,7 @@ Rien à installer : tout tourne depuis ce dossier.
    Obsidian : les images et les retouches sont retrouvées toutes seules.
 
 3. Cliquer sur un bloc dans les pages pour le retoucher (onglet Bloc) ;
-   onglet Style pour le preset et les réglages ; onglet Vérifier pour
+   onglet Style pour le modèle et les réglages ; onglet Vérifier pour
    l'assistant ; « Exporter le PDF » en haut.
 
    « Démo Nectar (export).pdf » montre le résultat attendu de la démo.

@@ -111,6 +111,10 @@ fn picker_among(ui: &mut egui::Ui, id: &str, current: &Format, options: &[(Forma
                 chosen = Some(format.clone());
             }
         }
+    });
+    // « Autre » sur sa propre ligne : une liste déroulante ne passe pas à la
+    // ligne d'elle-même dans un panneau étroit.
+    ui.horizontal(|ui| {
         let other = !options.iter().any(|(f, _)| f == current);
         let text = match current {
             Format::Paper(paper, landscape) if other => {
@@ -118,10 +122,10 @@ fn picker_among(ui: &mut egui::Ui, id: &str, current: &Format, options: &[(Forma
                 format!("{name}{}", if *landscape { " paysage" } else { "" })
             }
             Format::Custom => "Libre".to_string(),
-            _ => "Autre".to_string(),
+            _ => "Autre format…".to_string(),
         };
         let text = RichText::new(text).color(if other { t.accent_ink } else { t.ink });
-        egui::ComboBox::from_id_salt(id).selected_text(text).width(90.0).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(id).selected_text(text).width(130.0).show_ui(ui, |ui| {
             for (paper, name) in OTHERS {
                 for landscape in [false, true] {
                     let format = Format::Paper((*paper).to_string(), landscape);
@@ -161,7 +165,18 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui, page: usize) {
         app.selected_page = None;
         return;
     };
-    let Some(owner) = app.page_owner(page) else { return };
+    let Some(owner) = app.page_owner(page) else {
+        // Page sans bloc de la note (page de garde, sommaire) : elle suit le
+        // format du document.
+        kicker(ui, &format!("Page {}", page + 1));
+        ui.add_space(2.0);
+        ui.label(RichText::new(describe(size)).font(egui::FontId::new(15.0, theme::strong())));
+        ui.add_space(6.0);
+        ui.label(RichText::new("Page de garde ou sommaire : elle prend le format du document.").color(t.muted));
+        ui.add_space(10.0);
+        document_format(app, ui, &ctx);
+        return;
+    };
     let Some(current) = app.page_format(page) else { return };
     let Some(project) = &app.project else { return };
     let ops = project.layout.ops_for(&project.document, &owner);
@@ -203,19 +218,30 @@ pub fn show(app: &mut NectarApp, ui: &mut egui::Ui, page: usize) {
             app.select(Some(owner.clone()), false);
         }
     });
-    if let Some(project) = &app.project {
-        let mut page_spec = project.layout.page.clone();
-        ui.add_space(6.0);
-        kicker(ui, "Format du document");
-        ui.add_space(2.0);
-        let current = Format::Paper(page_spec.paper.clone(), page_spec.landscape);
-        if let Some(Format::Paper(paper, landscape)) = document_picker(ui, &current) {
-            page_spec.paper = paper;
-            page_spec.landscape = landscape;
-        }
-        if page_spec != project.layout.page {
-            app.edit_layout(&ctx, move |layout| layout.page = page_spec);
-        }
+    ui.add_space(6.0);
+    document_format(app, ui, &ctx);
+}
+
+/// Le format de tout le document.
+pub fn document_format(app: &mut NectarApp, ui: &mut egui::Ui, ctx: &egui::Context) {
+    let Some(project) = &app.project else { return };
+    let mut page_spec = project.layout.page.clone();
+    kicker(ui, "Format du document");
+    ui.add_space(2.0);
+    let current = Format::Paper(page_spec.paper.clone(), page_spec.landscape);
+    if let Some(Format::Paper(paper, landscape)) = document_picker(ui, &current) {
+        page_spec.paper = paper;
+        page_spec.landscape = landscape;
+    }
+    super::widgets::help(ui, "Toutes les pages, sauf celles qui ont leur propre format.");
+    if page_spec != project.layout.page {
+        let told = format!(
+            "Tout le document en {}{}",
+            page_spec.paper.to_uppercase(),
+            if page_spec.landscape { " paysage" } else { "" }
+        );
+        app.edit_layout(ctx, move |layout| layout.page = page_spec);
+        app.notify_done(told);
     }
 }
 
